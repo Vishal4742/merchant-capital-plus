@@ -54,8 +54,9 @@ def unread(name):
     msgs = _lines()
     mine = [m for m in msgs[seen:] if m["to"] in (name, "all") and m["from"] != name]
     os.makedirs(BUS, exist_ok=True)
-    open(cur + ".tmp", "w").write(str(len(msgs)))
-    os.replace(cur + ".tmp", cur)  # atomic: concurrent watchers never read a half-written cursor
+    tmp = f"{cur}.{os.getpid()}.tmp"  # per-process temp name: two readers (hook + watcher) never collide
+    open(tmp, "w").write(str(len(msgs)))
+    os.replace(tmp, cur)  # atomic: concurrent watchers never read a half-written cursor
     return mine
 
 
