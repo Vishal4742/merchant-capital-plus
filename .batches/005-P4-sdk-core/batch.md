@@ -11,3 +11,5 @@ Log:
 - 03:04 round 1 all PASS (test, code, security, ux-ui, ci = run 42113974696 on bf648a6, 17/17).
 - 03:05 HUMAN GATE (grill me): "Fix now, then merge" (the 4 security MEDIUMs before main), keep the 300 s replay window, accept retries on create.
 - 03:10 round 2 fixes 3c131b4 (22/22, tsc clean, live run unchanged). Round 2 tester launched.
+- 03:18 round 2 all PASS (test 28/28, code, security, ux-ui); ci = run 42115910708 on df00acc, 28/28. USD quotes come back as priced rate 1 (claude-contracts 03:17); vouchers never discount sk_ sessions (03:19).
+- 03:22 closed under the human's 03:05 "Fix now, then merge"; PR sdk → main.

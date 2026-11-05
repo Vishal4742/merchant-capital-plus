@@ -31,7 +31,7 @@ signWebhook(rawBody, secret, t?) · SIGNATURE_HEADER = "MC-Signature" · Gateway
 - [ ] `sessions.create` sends `POST {baseUrl}/api/v1/sessions` with:
   - `Authorization: Bearer <secretKey>`, the `content-type` header, and `idempotency-key` when given;
   - body `{ amount: String(amount), reference: orderId, currency?, items?, returnUrl? }`, leaving out fields that weren't given.
-- [ ] `sessions.retrieve(id)` URL-encodes the id. `payments.list` builds `?limit=&cursor=` only from the given params.
+- [ ] `sessions.retrieve(id)` refuses an id that doesn't match `^[\w-]{1,64}$` before any request (round 2; it replaced URL-encoding). `payments.list` builds `?limit=&cursor=` only from the given params.
 - [ ] A 4xx throws `GatewayError` with `status` and the server's `error` text, with no retry. A 5xx or a network error is retried up to `maxRetries` times with the same idempotency key, then throws (`status` 0 when unreachable). A non-JSON answer throws, even with status 200.
 - [ ] `currency` ≠ USDT plus a reply without that currency → `GatewayError`, so 25 EUR is never charged as 25 USDT on a server without FR-GW-11.
 - [ ] The constructor throws on:
