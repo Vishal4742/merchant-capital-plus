@@ -44,7 +44,7 @@
  Offers: Arkiv Rabdi entities `mcplus.offer.v1`, expiry = offer deadline.
 ```
 
-**Design rules:** the chain is the source of truth; no log scans (Ankr caps `eth_getLogs` at 1,000 blocks, the official RPC at 10,000), so state comes from Multicall and history from Blockscout `/api/v2/addresses/{a}/logs`. Every payment function is permissionless, so anyone can submit a signed authorization if our relayer is down.
+**Design rules:** the chain is the source of truth; no log scans (Ankr caps `eth_getLogs` at 1,000 blocks, the official RPC at 10,000), so state comes from Multicall and history from Blockscout's `/api?module=logs&action=getLogs` endpoint (used in `apps/web/lib/onchain.ts`, verified live; Ankr caps `eth_getLogs` below 2,000 blocks). Every payment function is permissionless, so anyone can submit a signed authorization if our relayer is down.
 
 ## 2. Contracts: the interface between lanes (**ABI FROZEN at gate G3**, 2026-11-06, batch 005-P3-advance; changes only via agentbus + the human)
 
@@ -60,7 +60,7 @@ Deploy order: `InvestorRegistry(owner)` → `ClaimToken(registry, admin, LOCK_WI
 | `payInvoice(uint256 id, address from, uint256 amount, uint256 validAfter, uint256 validBefore, bytes32 salt, uint8 v, bytes32 r, bytes32 s) → paymentId` | anyone (relayer) | Credits `amount` (≥ 1 USDT, or exactly what is still owed; partial payments allowed). **Fee on top:** the payer signs `value = amount + relayFee`, nonce `invoiceNonce(id, amount, salt)` |
 | `paySale(address merchant, bytes32 orderRef, address from, uint256 amount, uint256 validAfter, uint256 validBefore, bytes32 salt, uint8 v, bytes32 r, bytes32 s) → paymentId` | anyone (relayer) | Fee inside the price; each `(merchant, orderRef)` paid once (`OrderPaid`); refuses merchant = 0 / MerchantPay / market / USDT and `orderRef` 0 (`InvalidOrder`) |
 | `refund(uint256 paymentId, uint256 amount)` | that payment's merchant | `transferFrom(merchant → payer)`, cumulative ≤ gross, works while paused; never touches investors |
-| `setRelayFee(fee, recipient)`, `setMarket(market)` (once), `sweep(to)` (stray USDT), `pause`/`unpause` | owner | |
+| `setRelayFee(fee, recipient)` (≤ `MAX_FEE` 0.25 USDT), `setMarket(market)` (once), `sweep(to)` (stray USDT), `pause`/`unpause` | owner | |
 Money flow: pull gross → fee to `feeRecipient` → if `market.hasClaimsOn(merchant, invoiceId)` send net to the market and call `onPayment` (holdback base = the sale price, or an invoice's credited amount), else pay the merchant directly. Nonce = `keccak256(abi.encode(chainid, address(this), uint8 kind, uint256 ref, bytes32 orderRef, uint256 amount, bytes32 salt))`, kind `INVOICE=1`/`SALE=2`, sale `ref = uint256(uint160(merchant))`, invoice `ref = id`, `orderRef = 0`. Views: `invoices(id)` → `(merchant, uint64 dueDate, uint8 status 0 None/1 Open/2 Paid/3 Cancelled, customer, uint128 amount, uint128 paid)` · `payments(id)` → `(merchant, uint96 gross, payer, uint96 refunded)` · `saleOf(merchant, orderRef)` · `saleNonce` · `invoiceNonce` · `market` · `relayFee` · `feeRecipient`. Ids start at 1 (`Paid.invoiceId == 0` = a sale).
 Events: `InvoiceCreated` · `InvoiceCancelled` · `Paid(paymentId, merchant, payer, invoiceId, orderRef, gross, fee, toInvestors, toMerchant)` · `Refunded(paymentId, amount, totalRefunded)` · `RelayFeeSet(fee, recipient)` · `MarketSet(market)` · `Swept(to, amount)`. Errors: `ZeroAddress, WrongAmount, InvalidDueDate, InvoiceNotOpen, NotMerchant, InvalidOrder, OrderPaid, FeeTooHigh, RefundTooLarge, MarketAlreadySet, InvoiceFinanced` (+ OZ `EnforcedPause`). Consumer rule: count an order as paid only if `payments(saleOf(...))` has `gross == session amount && payer == from`; `orderRef` = 32 random bytes per session.
 
@@ -139,9 +139,9 @@ Vercel projects: `apps/web`, `apps/relayer`, `apps/shop` (push to deploy) + Neon
 
 | Lane | Owner (agentbus name) | Folders |
 |---|---|---|
-| Contracts, tests, deploy/verify, seed script, shared ABI | **claude-contracts** (worktree `~/ethglobal-contracts`, branch `contracts`) | `contracts/`, `packages/shared/` |
-| Relayer service: `/relay`, `/schedule`, `/health`, drain guard, rate limits (`rel_*` tables), keepers (fee swap, due-date settlement) | **claude-relayer** (human 20:57; worktree `~/ethglobal-relayer`, branch `relayer`) | `apps/relayer/` |
-| Web app, demo shop, Anon-RPC transport, Arkiv writer, CSV, webhooks | **claude-frontend** (`~/ethglobal`, branch `main`) | `apps/web/`, `apps/shop/` |
+| Contracts, tests, deploy/verify, seed script, shared ABI; after the G4 contract freeze also the demo shop on the SDK (v2.0) | **claude-contracts** (worktree `~/ethglobal-contracts`, branch `contracts`) | `contracts/`, `packages/shared/`, `apps/shop/` (after the freeze) |
+| Relayer service: `/relay`, `/schedule`, `/health`, drain guard, rate limits (`rel_*` tables), keepers (fee swap, due-date settlement) | **claude-relayer** (human 20:57; worktree `~/ethglobal-relayer`, branch `relayer`); after the drain guard also the SDK and payment-button script (v2.0) | `apps/relayer/`, `packages/sdk/` |
+| Web app: gateway dashboard (links, pages, QR, vouchers on Arkiv, multi-currency, reports, settlements, API keys, webhooks, /docs), checkout, Capital tab, Anon-RPC transport | **claude-frontend** (`~/ethglobal`, branch `main`) | `apps/web/` |
 | Research, README sections, `arkiv/*.md`, `WHITECHAIN_FEEDBACK.md`, `AI_USAGE.md`, pitch + video script | **claude-research** (this session) drafts, human edits | root docs |
 | Review, screenshots | opencode | none |
 | Accounts, faucet, Arkiv key, Ankr key, decisions, booth pitch, narrated video | **human** | none |
