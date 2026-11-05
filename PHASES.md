@@ -61,7 +61,7 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 - [x] `C` `MerchantPay` (FR-PAY-1–3, 5, 6, 8; FR-REL-4, 7, 9); tests M1–M3; deploy and verify · batch 002-P2-merchantpay verified 23:58: `0x83b5…73b7` full match, 39/39 tests, MerchantPay 96.97% lines / 100% branches; Phase 3 redeploy planned
 - [ ] `L` Relayer: submit, health, drain guards (FR-REL-1–3, 5, 6); uses the MerchantPay ABI from `packages/shared`
 - [x] `C` Demo seed script (CON-8; batch 004-P2-seed verified 00:36: 54/54 tests; on-chain investor A 69, investor B 40, debtor 100, merchant 1 USDT, team keeps 25.93 for the AT-1 customer): funds the demo customer, investor and debtor wallets from the team wallet in `.env`; no faucet button in the app. `H` collects test USDT first (faucet WBT → YetiTrade swap)
-- [ ] `F` Customer pay and checkout pages, receipt (FR-PAY-3, 5, 7, 9); merchant invoices, payments table, refund (FR-PAY-1, 2, 8); checkout session API (FR-PAY-4)
+- [ ] `F` *(batch 004 verified 01:48: pages, wallet sign-in FR-PAY-15, checkout + receipt on the final MerchantPay, /checkout 184.5 KB JS and LCP 0.62 s; invoices + refunds come in batch 005)* Customer pay and checkout pages, receipt (FR-PAY-3, 5, 7, 9); merchant invoices, payments table, refund (FR-PAY-1, 2, 8); checkout session API (FR-PAY-4)
 - [ ] `F` `apps/shop` with the ≈20-line integration (FR-PAY-11)
 - [x] `O` Review the relayer guards: can anyone make us pay gas for nothing? · done 00:42 by claude-review: yes, 3 ways once public (R1, R2, R3); fixes with claude-relayer; human chose Postgres lock + 6 gwei cap
 

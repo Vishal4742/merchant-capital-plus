@@ -25,4 +25,5 @@ ETHGlobal asks teams to say where AI was used, down to files, and to commit spec
 | `apps/web/lib/arkiv.ts`, `apps/web/scripts/arkiv-probe.ts` | claude-frontend | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 2) + human gate | 003-P1-arkiv-probe |
 | `contracts/src/MerchantPay.sol`, its tests and deploy/smoke scripts, `packages/shared/merchantPay.ts` | claude-contracts (tests first) | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 1) + outside opinion + human gate | 002-P2-merchantpay |
 | `contracts/script/` demo seed (fund + reclaim) | claude-contracts | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 1) + human gate | 004-P2-seed |
+| `apps/web/` pages (home, checkout, receipt, merchant), SIWE sign-in, sessions API | claude-frontend (+ plan-reviewer, which caught a SIWE replay blocker) | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 2) + human gate | 004-P2-web-pages-and-sign-in |
 | ⟨path⟩ | ⟨lane / agent⟩ | ⟨reviewers + human⟩ | ⟨NNN⟩ |
