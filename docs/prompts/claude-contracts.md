@@ -18,3 +18,5 @@ Then:
 6. Commit only your lane's files, in small commits on `contracts`; push every 1-2 hours; merge into `main` after each closed batch. No force-push, no history rewrites, never commit .env.
 7. Anything not in the SRS is a proposal: ask the human before folding it in. Same error 3 times: stop, post it on agentbus, ask.
 ```
+
+**v2.0 update (2026-11-06 02:45):** the product is now a stablecoin payment gateway (SRS 2.0 §3.9, PHASES P4/P5); lanes are in ARCHITECTURE §8. Fast mode: PIPELINE §3a. HANDOFF, research and the pitch are local only (`~/ethglobal/...`), never git add them.

@@ -148,9 +148,10 @@ Vercel projects: `apps/web`, `apps/relayer`, `apps/shop` (push to deploy) + Neon
 
 | Lane | Owner (agentbus name) | Folders |
 |---|---|---|
-| Contracts, tests, deploy/verify, seed script, shared ABI; after the G4 contract freeze also the demo shop on the SDK (v2.0) | **claude-contracts** (worktree `~/ethglobal-contracts`, branch `contracts`) | `contracts/`, `packages/shared/`, `apps/shop/` (after the freeze) |
-| Relayer service: `/relay`, `/schedule`, `/health`, drain guard, rate limits (`rel_*` tables), keepers (fee swap, due-date settlement) | **claude-relayer** (human 20:57; worktree `~/ethglobal-relayer`, branch `relayer`); after the drain guard also the SDK and payment-button script (v2.0) | `apps/relayer/`, `packages/sdk/` |
-| Web app: gateway dashboard (links, pages, QR, vouchers on Arkiv, multi-currency, reports, settlements, API keys, webhooks, /docs), checkout, Capital tab, Anon-RPC transport | **claude-frontend** (`~/ethglobal`, branch `main`) | `apps/web/` |
+| Contracts, tests, deploy/verify, seed script, shared ABI; **after the G4 contract freeze: the gateway backend API** (v2.0: links, pages, vouchers, FX quotes, reports, settlements, API keys, webhooks; Neon `app_gw_*` tables) | **claude-contracts** (worktree `~/ethglobal-contracts`, branch `contracts`) | `contracts/`, `packages/shared/`; after the freeze `apps/web/app/api/v1/{links,pages,vouchers,quotes,reports,settlements,keys,webhooks}/`, `apps/web/lib/server/`, `apps/web/db/` |
+| Relayer service: `/relay`, `/schedule`, `/health`, drain guard, rate limits (`rel_*` tables), keepers (fee swap, due-date settlement) | **claude-relayer** (human 20:57; worktree `~/ethglobal-relayer`, branch `relayer`); then the fee-swap keeper | `apps/relayer/` |
+| SDK, one-line payment button, demo shop on the SDK (v2.0) | **claude-sdk** (human 02:40 "use all"; worktree `~/ethglobal-sdk`, branch `sdk`; prompt `docs/prompts/claude-sdk.md`) | `packages/sdk/`, `apps/shop/` |
+| Web app UI: gateway dashboard screens (links, pages, QR, vouchers incl. the Arkiv writer, FX display, reports, settlements, API keys, webhooks, /docs, test-mode badge), checkout, Capital tab, Anon-RPC transport; existing API routes (sessions, invoices, auth) | **claude-frontend** (`~/ethglobal`, branch `main`) | `apps/web/` except the backend lane's API folders |
 | Research, README sections, `arkiv/*.md`, `WHITECHAIN_FEEDBACK.md`, `AI_USAGE.md`, pitch + video script | **claude-research** (this session) drafts, human edits | root docs |
 | Review, screenshots | opencode | none |
 | Accounts, faucet, Arkiv key, Ankr key, decisions, booth pitch, narrated video | **human** | none |
