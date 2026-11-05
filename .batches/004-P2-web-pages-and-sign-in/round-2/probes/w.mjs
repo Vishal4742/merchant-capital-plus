@@ -1,0 +1,11 @@
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const { chromium } = require("/Users/vg890/.npm/_npx/e41f203b7505f1fb/node_modules/playwright");
+const S = new URL("../shots/", import.meta.url).pathname;
+const b = await chromium.launch();
+const ctx = await b.newContext({ viewport:{width:375,height:812}, colorScheme:"light" });
+const p = await ctx.newPage(); await p.goto("http://localhost:3100/merchant"); await p.waitForTimeout(3000);
+await p.getByRole("button",{name:/Sign in/}).click(); await p.waitForTimeout(800);
+console.log(await p.getByRole("alert").allInnerTexts());
+await p.screenshot({ path:`${S}merchant-nowallet-375-light.png`, fullPage:true });
+await b.close();
