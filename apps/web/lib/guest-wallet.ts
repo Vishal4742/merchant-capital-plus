@@ -1,11 +1,10 @@
 // Browser-only guest wallet for customers (DEP-3: Privy failed NFR-8, decided 2026-11-05 20:31).
 import { isHex, verifyTypedData, zeroHash, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { whitechainSepolia } from "viem/chains";
+import { receiveTypes, usdtDomain } from "./usdt.ts";
 
 const STORAGE_KEY = "mcplus.guestKey";
 const UNREADABLE = "The saved guest wallet is unreadable.";
-const USDT = "0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7";
 
 // ponytail: the key lives in this browser's localStorage, so clearing site data loses it and any XSS
 // could read it. Stated in the README limitations; upgrade to a passkey-wrapped key if this ships.
@@ -25,17 +24,6 @@ export function getGuestAccount() {
   return privateKeyToAccount(key);
 }
 
-const receiveTypes = {
-  ReceiveWithAuthorization: [
-    { name: "from", type: "address" },
-    { name: "to", type: "address" },
-    { name: "value", type: "uint256" },
-    { name: "validAfter", type: "uint256" },
-    { name: "validBefore", type: "uint256" },
-    { name: "nonce", type: "bytes32" },
-  ],
-} as const;
-
 /**
  * DEP-3 proof: sign the USDT ReceiveWithAuthorization shape on chain 1874 and verify it locally.
  * The message can never move funds: value 0, payee is the signer itself, and validBefore 0 has passed.
@@ -43,7 +31,7 @@ const receiveTypes = {
 export async function proveTypedDataSigning(): Promise<{ address: Hex; valid: boolean }> {
   const account = getGuestAccount();
   const typedData = {
-    domain: { name: "Tether USD", version: "1", chainId: whitechainSepolia.id, verifyingContract: USDT },
+    domain: usdtDomain,
     types: receiveTypes,
     primaryType: "ReceiveWithAuthorization",
     message: {

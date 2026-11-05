@@ -15,12 +15,12 @@ Repayment is enforced where the money arrives. One customer payment is split, in
 ### Whitechain (Operate · Scale · Tokenize; one prize)
 | Requirement | Evidence |
 |---|---|
-| Contracts deployed + verified on 1874 | MerchantPay [0x83b5…73b7](https://explorer.testnet.whitechain.io/address/0x83b53Cc0a5A67fAd41bCc56e2ac40465Cf1573b7) (full match; redeployed once in Phase 3) · CapitalMarket ⟨link⟩ · ClaimToken ⟨link⟩ · InvestorRegistry ⟨link⟩ |
+| Contracts deployed + verified on 1874 (all full Blockscout matches) | MerchantPay [0xab81…4251](https://explorer.testnet.whitechain.io/address/0xab817593253a0a37de723072827d88fe0ca54251) · CapitalMarket [0xecd6…0abe](https://explorer.testnet.whitechain.io/address/0xecd63a369d23dfddc6bfac921e41a86760c20abe) · ClaimToken [0xce9b…c388](https://explorer.testnet.whitechain.io/address/0xce9b171a5c485a41dced9d7f043733bddc26c388) · InvestorRegistry [0x2934…3e74](https://explorer.testnet.whitechain.io/address/0x293430fae87ca79844c6e3a64e8044078c4d3e74) · (Phase 2 preview MerchantPay 0x83b5…73b7 is paused) |
 | USDT payment in the main flow | Sale split in one tx [0xae155c49…](https://explorer.testnet.whitechain.io/tx/0xae155c49b9e10c098ff3f6146dd29256c75a52acaac85a3367e0c8e30e3cfb1a) (2 USDT → 0.10 fee + 1.90 merchant; payer 0 WBT) · invoice payment ⟨tx⟩ · advance repayment split ⟨tx⟩ |
 | **Operate:** drop-in in ≈20 lines | `apps/shop` integration: ⟨N⟩ lines (⟨file links⟩); merchant view ⟨screenshot⟩, customer view ⟨screenshot⟩; refund [0xbd91e67e…](https://explorer.testnet.whitechain.io/tx/0xbd91e67e672cf3a1c94e0fbf82335be719e2c77a4e0499328a9b767d3347f939); CSV export ⟨link⟩ |
 | **Scale:** zero crypto steps for the payer | Customer pays with one "Confirm payment" from a wallet the page creates for them (no WBT, no seed phrase, no chain name) ⟨screenshot⟩ |
 | **Scale:** who pays gas / how the relayer gets WBT / what stops draining | The merchant pays a 0.10 USDT fee inside each payment; the relayer swaps fees to WBT on YetiTrade ⟨tx⟩; drain guard: allowlisted calls, simulate first, fee in the tx, gas caps, rate limits, daily WBT budget ⟨code⟩ ⟨tests⟩ |
-| **Tokenize:** real transfer rules + lifecycle | ERC-1155 claim token with ERC-7943 rules (KYC allowlist via EAS, ≤8 holders, maturity lock, freeze on default) ⟨code⟩; blocked transfer ⟨revert tx⟩; advance funded → repaid → settled ⟨txs⟩ |
+| **Tokenize:** real transfer rules + lifecycle | ERC-1155 claim token with ERC-7943 rules (investor allowlist (simulated KYC), ≤8 holders, maturity lock, admin freeze) ⟨code⟩; blocked transfer ⟨revert tx⟩; advance funded → repaid → settled ⟨txs⟩ |
 | Rail proof (Phase 1) | A payer with **0 WBT and nonce 0** sends 1 USDT through our relayer: [tx](https://explorer.testnet.whitechain.io/tx/0xc4629df10e9c3d259253ac368448db50d1783465555d3d0aa19de335f31c847e) (94,034 gas, paid by the relayer) · stub [PullStub](https://explorer.testnet.whitechain.io/address/0x51e2E2A530c9dabe6147D55F9bb7fcD47219325d) |
 | Feedback | `WHITECHAIN_FEEDBACK.md` |
 
@@ -69,10 +69,11 @@ Test funds: claim WBT at faucet.testnet.whitechain.io, then swap some to the pri
 
 ## Limitations (honest)
 - Testnet only (official USD₮ isn't on Whitechain mainnet yet). Maturity lock 60 s and grace 120 s on testnet so the demo can show them; 1 day / 7 days in production.
-- KYC is simulated by our compliance key issuing EAS attestations (stands in for WhiteBIT KYC).
+- KYC is simulated: our compliance key keeps an investor allowlist (stands in for WhiteBIT KYC). EAS attestations, debtor acknowledgement, pay-on-due-date and default/recourse were cut for time.
 - Demo wallets were funded by a one-off seed script from a team wallet (test USDT swapped from faucet WBT on YetiTrade). The app has no faucet button.
 - The customer's wallet is a guest key kept in the browser (no email recovery). We tested Privy's email login and dropped it: it always sends analytics with the wallet address to its servers, and we don't ship trackers.
 - A merchant could take sales outside our checkout; default rules, recourse and public sales stats mitigate this, they don't prevent it.
+- **Admin trust (testnet):** one deployer key (`0xb4E7…714D`) is the compliance admin and the contract owner. It can force-transfer claims between eligible investors, freeze claim units and revoke investor eligibility (ERC-7943 rules, simulated KYC), and it can pause MerchantPay. Ownership uses `Ownable2Step`; production would put these roles behind a multisig.
 - Cut for time: default and recourse handling (a claim that is never repaid stays outstanding; no freeze-and-recourse lien).
 - ⟨anything else cut from the cut list⟩
 
