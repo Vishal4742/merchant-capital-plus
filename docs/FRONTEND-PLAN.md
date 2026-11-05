@@ -56,7 +56,7 @@ No wagmi and no react-query. Every signature is typed data, and viem does that a
 - No landing page: no SRS item asks for one.
 - No faucet or "get test USDT" button anywhere (CON-8). Demo wallets are funded by claude-contracts' seed script.
 - **Design (human approved 2026-11-05 21:30): "Mercury + dither".**
-  - The spec is the clickable demo `design-refs/merchant-capital-demo.html` (made after the start, our own work) and the design system https://claude.ai/artifact/1FqWSDshf1hweQ6k7wLixx.
+  - The spec is the clickable demo `design-refs/merchant-capital-demo.html` (made after the start, our own work) and our design system tokens (`apps/web/app/tokens.css`).
   - Tokens:
     - one blue `accent` #3b4fd9 (dark #8796ff)
     - Instrument Sans at 420/500, Instrument Serif italic for one phrase, Geist Mono for data

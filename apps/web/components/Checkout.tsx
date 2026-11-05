@@ -6,8 +6,9 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import type { Address, Hex } from "viem";
-import { buttonClasses } from "@/components/Button";
+import { Confirming } from "@/components/Confirming";
 import { HoldButton } from "@/components/HoldButton";
+import { FAILED, outcome, type PayAnswer } from "@/lib/outcome";
 import { EXPLORER } from "@/lib/usdt";
 
 // The signer (viem + the guest key) loads after first paint, so it never slows the sheet (NFR-12).
@@ -33,10 +34,6 @@ type Receipt = { receiptId: string; txHash: Hex | null };
 // already have paid, so they must never be sent to a new checkout (security R1 S1), and it never offers the
 // button again (002 security D4).
 type Phase = "ready" | "confirming" | "expired";
-
-// When we can't know whether the payment went out, never say "Nothing was charged".
-const UNCONFIRMED = "We couldn't confirm this payment yet. Don't pay again; check this page again in a few minutes.";
-const FAILED = "The payment didn't go through. Nothing was charged.";
 
 /** The sheet already shows what happened (confirming or expired): no extra error line. */
 class Shown extends Error {}
@@ -74,19 +71,11 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
         setPhase("confirming");
         throw new Shown();
       }
-      const data = (await res.json().catch(() => ({}))) as Partial<Receipt> & { error?: string };
-      // a receipt id means it's paid, now or earlier (a 409 "Already paid" after a reload or a second tab)
-      if (data.receiptId) return setReceipt({ receiptId: data.receiptId, txHash: data.txHash ?? null });
-      if (res.status === 410) {
-        setPhase("expired");
-        throw new Shown();
-      }
-      // 409: another attempt is in flight or pending. Any 5xx but 503 (busy, nothing sent) may have gone out.
-      if (res.status === 409 || (res.status >= 500 && res.status !== 503)) {
-        setPhase("confirming");
-        throw new Shown();
-      }
-      throw new Error(data.error ?? FAILED);
+      const result = outcome(res.status, (await res.json().catch(() => ({}))) as PayAnswer);
+      if (result.kind === "paid") return setReceipt({ receiptId: result.receiptId ?? sessionId, txHash: result.txHash });
+      if (result.kind === "error") throw new Error(result.message);
+      setPhase(result.kind === "closed" ? "expired" : "confirming");
+      throw new Shown();
     } catch (e) {
       if (!(e instanceof Shown)) setError(e instanceof Error ? e.message : FAILED);
       throw e; // returns the hold button to idle
@@ -159,16 +148,10 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
             </span>
           </p>
           {phase === "confirming" ? (
-            <div role="status" className="grid gap-3 rounded-md border border-hairline p-4">
-              <span className="justify-self-start rounded-pill border border-current px-3 py-0.5 text-xs font-medium tracking-wide text-warning">Confirming</span>
-              <p className="text-sm">{UNCONFIRMED}</p>
-              {/* a full reload: the server settles the attempt from the chain and shows the receipt if it went through */}
-              <button type="button" onClick={() => window.location.reload()} className={buttonClasses("quiet", "justify-self-start")}>
-                Check again
-              </button>
-            </div>
+            <Confirming />
           ) : phase === "expired" ? (
-            <p role="alert" className="text-sm text-critical">
+            // expiry isn't an error: the warning token, not red (UX review 004 R2 L2)
+            <p role="status" className="text-sm text-warning">
               This checkout has expired. Ask {merchantName} for a new one.
             </p>
           ) : sale ? (
@@ -176,7 +159,7 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
               <HoldButton label={`Hold to pay ${amountText}`} busyLabel="Paying" doneLabel="Paid" onConfirm={pay} aria-describedby="pay-hint" className="w-full" />
               <p id="pay-hint" className="text-center text-sm text-ink-muted">
                 You pay exactly {amountText} USDT. No fees for you.
-                <span className="sr-only"> Press and hold the button, or press Enter, to pay.</span>
+                <span className="block">Press and hold the button, or press Enter, to pay.</span>
               </p>
             </div>
           ) : (

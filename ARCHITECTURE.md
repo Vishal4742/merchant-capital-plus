@@ -109,6 +109,30 @@ M1 pay invoice + nonce binding + direct `transferWithAuthorization` can't bypass
 | Reads | `lib/anon.ts`: viem `http(ANKR, { fetchFn: worker.fetch, timeout: 60_000, retryCount: 1 })` (Anon-RPC 0.4.0; Nym worker hash `0xf13a448a…1fceb8` pinned in code, because the specifier owner can call `setWorker`), `batch: { multicall: true }`, Nym default, Tor fallback, a "Private reads · 100%" meter chip. `/pay` and `/checkout` make no browser chain reads (SRS 1.1 FR-PRIV-1). Needs a mainnet bootstrap RPC for one specifier read, a sandboxed iframe (CSP), lazy-load the 18 MB Nym bundle |
 | Design | HANDOFF.md "Design system lock v8" (Mercury reference, Instrument Sans/Serif + Geist Mono, one blue `#3b4fd9`, glass over a dithered Marine Drive night scene) + references in `design-refs/`; confirm with the human in Phase 2 |
 
+## 4b. Payment gateway (v2.0, human 2026-11-06; SRS §3.9 FR-GW-1–14)
+Razorpay/Stripe-style gateway, **strictly Whitechain testnet**. Functional reference only (the human's Razorpay test-mode recording and public docs); never copy their text, layouts or assets. Shapes below are the lanes' agreements on agentbus; **the backend owner (claude-contracts, after its freeze) finalises them in its batch 007 spec**.
+
+**Flow (every product reuses it):** link / page / invoice / button → `POST /api/v1/sessions` (amount in USDT after an optional FX quote and voucher) → hosted `/checkout/{id}` → the payer signs one EIP-3009 authorization (`validBefore` = session expiry) → relayer `/relay` (shared secret from the web server) → MerchantPay `paySale` / `payInvoice` → mined receipt = settled (T+0, straight to the merchant wallet) → signed webhook → receipt `/r/{id}`.
+
+| Area | Route (apps/web) | Owner | Notes |
+|---|---|---|---|
+| Sessions | `POST /api/v1/sessions` (`sk_`), `GET /api/v1/sessions/{id}` | frontend (exists) | `Idempotency-Key` header here only |
+| Payments | `GET /api/v1/payments` | frontend (exists) | the SDK's `payments.list` |
+| Links | `/api/v1/links` CRUD | contracts (batch 007) | single-use or reusable, `reference_id` unique per merchant, `expire_by`, status active/paid/expired/cancelled |
+| Pages | `/api/v1/pages` CRUD | contracts | slug, title, items or open amount; vanity `/@{merchant-slug}` |
+| Vouchers | `/api/v1/vouchers` CRUD + atomic redeem | contracts | percent or amount off, max redemptions, expiry, min amount, first-time-only; mirrored to Arkiv as `mcplus.voucher.v1` with `code_hash = HMAC-SHA256(VOUCHER_HASH_SECRET, merchant ‖ code)` |
+| FX quotes | `POST /api/v1/quotes` → `{quote_id, usdt_amount, rate, source, fetched_at, expires_at}` | contracts | **USD = USDT 1:1** (stated at checkout); EUR, GBP, INR, AED, SGD at a public ECB-based rate, cached ≤ 15 min, quote locked 10 min |
+| Reports | `/api/v1/reports/*` | contracts | computed from on-chain `Paid` / `Refunded` logs (no tables); KPIs gross, net, refunds, fees, count, success rate, new vs returning payers; 7d/30d with delta; CSV |
+| Settlements | `/api/v1/settlements` | contracts | per payment: gross, fee, investor share, merchant net, tx hash, settled_at; balance card = merchant wallet USDT |
+| Keys | `/api/v1/keys` | contracts | `pk_test_…` / `sk_test_…`, only a hash stored, secret shown once |
+| Webhooks | `/api/v1/webhooks` + delivery log + replay | contracts | events `payment.succeeded`, `payment.refunded`; header `MC-Signature` (format owned by claude-sdk's verifier), retries 1 m / 5 m / 30 m |
+
+**SDK and button (claude-sdk, `packages/sdk`):** `new Gateway(sk, {baseUrl, fetch, timeoutMs, maxRetries})` · `sessions.create(params, {idempotencyKey})` · `sessions.retrieve` · `payments.list` · `webhooks.constructEvent(raw, header, secret, {toleranceSec})` + `WebhookSignatureError` · `signWebhook` (tests). Button: `<script src="…/button.js">` + `data-session` (created on the shop's server with `sk_`) or `data-link`; the browser never sets the amount. Demo shop (`apps/shop`) ≤ 20 lines (AT-14).
+
+**UI (claude-frontend):** dashboard home (6 KPI tiles + gross chart), links, pages, QR (link URL, optional EIP-681), vouchers, invoices (line items, print view), settlements + balance, webhooks log, API keys, `/docs` (3 steps + simulate payment), checkout (expiry countdown, clear states, voucher field, FX line, "You paid 0 gas"), "Test mode · Whitechain testnet" banner everywhere. Capital tab in Phase 5.
+
+**Data:** Neon tables `app_gw_*` (links, pages, vouchers, redemptions, keys, webhook endpoints and deliveries, quotes) owned by the gateway API; `app_*` sessions owned by the web app; `rel_*` by the relayer. Lanes never read each other's tables; they call each other's routes.
+
 ## 5. Arkiv (`@arkiv-network/sdk` **1.0.1**, Rabdi testnet 7794095)
 
 The SDK changed in 1.0 (payloads and `buildQuery` are gone): read the source, use the Arkiv agent skill, never write from memory.

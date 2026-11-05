@@ -1,4 +1,4 @@
-/* Merchant Capital+ — generated from the design system's tokens.json (https://claude.ai/artifact/1FqWSDshf1hweQ6k7wLixx).
+/* Merchant Capital+ — generated from our design system tokens (tokens.json).
    App differences: font families point at next/font variables, the dark theme also follows the OS,
    and --shadow-glow (hover glow of the primary button) is added. Edit tokens.json, then regenerate. */
 :root, [data-theme="light"] {

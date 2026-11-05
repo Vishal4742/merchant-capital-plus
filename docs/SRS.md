@@ -196,7 +196,7 @@ Priority: **M** = must (never cut), **S** = should, **C** = could (first to cut)
 | FR-GW-8 | **Developer docs:** a `/docs` page with a 3-step integration (button, SDK, webhooks) and copyable test keys | M | 4 |
 | FR-GW-9 | **Reports:** gross, net, fees, refunds and payment count by day for a chosen date range, a sales chart, and CSV export (supersedes FR-PAY-12) | M | 4 |
 | FR-GW-10 | **Settlements:** a page listing each payment's settlement to the merchant wallet, with its transaction link, showing that settlement is instant (T+0) | M | 4 |
-| FR-GW-11 | **Multi-currency prices:** the merchant prices in USD, EUR, GBP, INR, AED or SGD; checkout converts to USDT at a public FX rate (display and quote only), shows the rate and its time, and locks it for the session | M | 4 |
+| FR-GW-11 | **Multi-currency prices:** the merchant prices in USD, EUR, GBP, INR, AED or SGD; USD converts 1:1 to USDT (a dollar stablecoin, stated at checkout; human 03:02); the others convert at a public FX rate (display and quote only), shows the rate and its time, and locks it for the session | M | 4 |
 | FR-GW-12 | **Discount vouchers:** the merchant creates codes (percent or fixed off, expiry, usage limit); the customer applies one at checkout; each code is an Arkiv entity that expires with the code, and redemptions are counted on our server | M | 4 |
 | FR-GW-13 | **Gift vouchers:** a customer buys a prepaid USDT voucher that someone else redeems at that merchant | C | 5 |
 | FR-GW-14 | **Test mode everywhere:** every page shows a "Test mode · Whitechain testnet" badge; no mainnet path exists | M | 4 |

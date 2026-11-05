@@ -3,7 +3,7 @@ import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 
 let settled = async () => null;
-mock.module("../lib/onchain.ts", { namedExports: { saleSettled: (...args) => settled(...args) } });
+mock.module("../lib/onchain.ts", { namedExports: { saleSettled: (...args) => settled(...args), readUsdtBalance: async () => 1_000_000_000n } });
 const { createSession, getSession, markPending, recordPayment } = await import("../lib/sessions.ts");
 const { settlePending } = await import("../lib/settle.ts");
 

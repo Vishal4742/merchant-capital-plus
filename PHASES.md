@@ -48,7 +48,7 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 - [x] `C` Foundry project (`prague`); a stub contract pulls USDT with `receiveWithAuthorization`, submitted by a relayer key (DEP-1); measure the gas of a routed payment · batch 001-P1-rail-proof, verified 21:55: PullStub `0x51e2E2A530c9dabe6147D55F9bb7fcD47219325d` (explorer-verified), relayed pull tx `0xc4629df1…c847e` 94,034 gas, payer nonce 0 / 0 WBT
 - [x] `F` Next.js skeleton passing tsc, lint and build; one Anon-RPC read inside our app (DEP-6); guest wallet for the customer (DEP-3 decided: Privy failed the tracker check); one Arkiv write + read (DEP-5) · batch 001-P1-web-rail-proofs verified 22:05; Arkiv write + read proven live in batch 003-P1-arkiv-probe (tx `0x2d651b87…771e`, checked by claude-research 23:47)
 - [x] `L` FR-REL-1 stub: `POST /relay` + `GET /health` (localhost only) · batch 001-P1-relay-stub verified 22:14: 18/18 tests, tsc 0, live `/health` shows the real WBT balance, replay rejected with 422 and no nonce change, relayed pull `0x9f5efc75…e000`
-- [ ] `H`+`F` Vercel projects (`apps/web`, `apps/relayer`, `apps/shop`) and Neon connected · Neon done 01:00 (`DATABASE_URL`, pooled, tested); **Vercel still open**
+- [x] `H`+`F` Vercel projects (`apps/web`, `apps/relayer`, `apps/shop`) and Neon connected · Neon done 01:00 (`DATABASE_URL`, pooled, tested); Vercel projects created 03:14 (merchant-capital-web, -relayer, -shop; empty, no deploy yet)
 
 ✅ **Gate G1 (verified by claude-research 22:05):** an explorer link of a relayed USDT pull where the payer holds 0 WBT, plus one private read in our app.
 **If blocked:** same error three times → post on agentbus and ask Whitechain's dev Telegram (stuck rule).
@@ -61,8 +61,8 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 - [x] `C` `MerchantPay` (FR-PAY-1–3, 5, 6, 8; FR-REL-4, 7, 9); tests M1–M3; deploy and verify · batch 002-P2-merchantpay verified 23:58: `0x83b5…73b7` full match, 39/39 tests, MerchantPay 96.97% lines / 100% branches; Phase 3 redeploy planned
 - [ ] `L` *(batch 002 drain guard verified 02:55: 36/36 tests, 5/5 checks, AT-10 PullStub half; Postgres lock + rate limits + budget = batch 003)* Relayer: submit, health, drain guards (FR-REL-1–3, 5, 6); uses the MerchantPay ABI from `packages/shared`
 - [x] `C` Demo seed script (CON-8; batch 004-P2-seed verified 00:36: 54/54 tests; on-chain investor A 69, investor B 40, debtor 100, merchant 1 USDT, team keeps 25.93 for the AT-1 customer): funds the demo customer, investor and debtor wallets from the team wallet in `.env`; no faucet button in the app. `H` collects test USDT first (faucet WBT → YetiTrade swap)
-- [ ] `F` *(batch 004 verified 01:48: pages, wallet sign-in FR-PAY-15, checkout + receipt on the final MerchantPay, /checkout 184.5 KB JS and LCP 0.62 s; invoices + refunds come in batch 005)* Customer pay and checkout pages, receipt (FR-PAY-3, 5, 7, 9); merchant invoices, payments table, refund (FR-PAY-1, 2, 8); checkout session API (FR-PAY-4)
-- [ ] `F` `apps/shop` with the ≈20-line integration (FR-PAY-11)
+- [x] `F` *(batch 004 verified 01:48: pages, wallet sign-in FR-PAY-15, checkout + receipt on the final MerchantPay, /checkout 184.5 KB JS and LCP 0.62 s; invoices + refunds in batch 005 verified 03:16: 133 tests, fork E2E on the final MerchantPay: fee on top, part payments, exact-approval refunds)* Customer pay and checkout pages, receipt (FR-PAY-3, 5, 7, 9); merchant invoices, payments table, refund (FR-PAY-1, 2, 8); checkout session API (FR-PAY-4)
+- [ ] `S` `apps/shop` with the ≈20-line integration (FR-PAY-11) · moved to claude-sdk (v2.0); needed for G2's AT-1 shop sale
 - [x] `O` Review the relayer guards: can anyone make us pay gas for nothing? · done 00:42 by claude-review: yes, 3 ways once public (R1, R2, R3); fixes with claude-relayer; human chose Postgres lock + 6 gwei cap
 
 **Gate G2:** AT-1 (gasless sale), AT-2 (refund), AT-10 (relayer rejects a bad call), and the speed budgets NFR-4, NFR-12, NFR-14 measured.
@@ -91,14 +91,14 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 - [ ] `F` Multi-currency prices with a locked FX quote at checkout (FR-GW-11)
 - [ ] `F` Reports with a sales chart and CSV, and a Settlements page (FR-GW-9, FR-GW-10)
 - [ ] `F` API keys, webhooks, a `/docs` page and the test-mode badge (FR-GW-6, 7, 8, 14)
-- [ ] `S` SDK + payment-button script in `packages/sdk` (FR-GW-4, FR-GW-5), started now by claude-sdk
-- [ ] `C` Capital on chain: AT-6, AT-7, AT-8 live, the E1 event-ABI snapshot and the NFR-10 coverage report (batch 006); then **contracts freeze**
+- [ ] `S` *(SDK core verified 03:21, batch 005-P4-sdk-core: Gateway sessions/payments/webhooks, zero deps; button.js next)* SDK + payment-button script in `packages/sdk` (FR-GW-4, FR-GW-5)
+- [x] `C` Capital on chain: AT-6, AT-7, AT-8 live, the E1 event-ABI snapshot and the NFR-10 coverage report (batch 006); then **contracts freeze** · batch 006 verified 03:13: AT-6 investors paid 58.8393 + 39.2262, AT-7 debtor 100.10 → 60 + 40 in one tx, AT-8 canTransfer(A, non-eligible) = false; contracts FROZEN
 - [ ] `S` Rebuild `apps/shop` on the SDK or button in ≤ 20 lines (FR-PAY-11, AT-14)
 - [ ] `C` After the freeze: the gateway backend API in `apps/web/app/api/v1/{links,pages,vouchers,quotes,reports,settlements,keys,webhooks}` + Neon `app_gw_*` tables (FR-GW-1, 2, 6, 7, 9, 10, 11, 12 server side); claude-frontend builds the screens against it
 - [ ] `F` Private reads by default on dashboard pages, with the meter (FR-PRIV-1–3)
 - [ ] `F` Record every Arkiv problem (post it to claude-research)
 
-**Gate G4:** AT-11 to AT-15 (gateway) and AT-6 to AT-8 (Capital on chain).
+**Gate G4:** AT-11 to AT-15 (gateway) and AT-6 to AT-8 (Capital on chain). AT-8 counts its **contract half** here (the transfer reverts and `canTransfer` returns the reason); the UI "shows the reason first" half is checked at G5 with the Capital tab (human 03:02).
 **If Arkiv fails three times:** store voucher codes in Postgres only and drop the Arkiv track (DEP-5).
 
 ---
