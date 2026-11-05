@@ -42,8 +42,8 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 ## Phase 1: Rail proofs
 **Goal:** prove the risky assumptions before building on them.
 
-- [ ] `H` Create the repo; first commit = AGENTS.md, CLAUDE.md, PIPELINE.md, docs/SRS.md, ARCHITECTURE.md, PHASES.md, `tools/{pipeline-gate,batch-start,batch-close}.sh`, `.claude/agents/*`, `.claude/settings.json` (gate hook)
-- [ ] `R` Run `bash ~/.claude/skills/three-techniques/scripts/setup.sh typescript` in the repo (ECC + Ponytail, commands, agents); merge the gate hook back if the merge touched it; restart sessions; **prove the gate fires** (an edit under `apps/` with no batch is denied) — PIPELINE.md §9
+- [x] `H` Create the repo (local `main` 6b0ccd4 at 20:26; GitHub remote pending); first commit = AGENTS.md, CLAUDE.md, PIPELINE.md, docs/SRS.md, ARCHITECTURE.md, PHASES.md, `tools/{pipeline-gate,batch-start,batch-close}.sh`, `.claude/agents/*`, `.claude/settings.json` (gate hook)
+- [x] `R` Run `bash ~/.claude/skills/three-techniques/scripts/setup.sh typescript` in the repo (ECC + Ponytail, commands, agents); merge the gate hook back if the merge touched it; restart sessions; **prove the gate fires** (an edit under `apps/` with no batch is denied) — PIPELINE.md §9
 - [ ] From here on, every task in this file runs as a PIPELINE.md batch (`bash tools/batch-start.sh <phase> <slug>`)
 - [ ] `C` Foundry project (`prague`); a stub contract pulls USDT with `receiveWithAuthorization`, submitted by a relayer key (DEP-1); measure the gas of a routed payment
 - [ ] `F` Next.js skeleton passing tsc, lint and build; one Anon-RPC read inside our app (DEP-6); Privy test (DEP-3: signs typed data on 1874, no third-party trackers, about an hour) → any failure = guest wallet; one Arkiv write + read (DEP-5)
