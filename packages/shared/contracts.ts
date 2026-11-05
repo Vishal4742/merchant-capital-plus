@@ -6,10 +6,10 @@ export const chainId = 1874 as const;
 
 export const addresses = {
   usdt: "0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7",
-  merchantPay: "0x8effc3e20e99af309cb367e33716b1e7ca71248f",
-  capitalMarket: "0xeadf4cde549c65cb06d2b53f9b9ce0c0a4d6e940",
-  claimToken: "0xedb4865bea8cfbcd15e60e3da8ddaa90a355aa10",
-  investorRegistry: "0x0e71e47ee75f9c0530207c381b2a538127a1018c",
+  merchantPay: "0xab817593253a0a37de723072827d88fe0ca54251",
+  capitalMarket: "0xecd63a369d23dfddc6bfac921e41a86760c20abe",
+  claimToken: "0xce9b171a5c485a41dced9d7f043733bddc26c388",
+  investorRegistry: "0x293430fae87ca79844c6e3a64e8044078c4d3e74",
 } as const;
 
 export const KIND_INVOICE = 1 as const; // MerchantPay nonce kinds
@@ -1897,6 +1897,11 @@ export const capitalMarketAbi = [
   },
   {
     "type": "error",
+    "name": "MerchantCannotFund",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotMerchant",
     "inputs": []
   },
@@ -2001,6 +2006,13 @@ export const claimTokenAbi = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "acceptOwnership",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -2328,6 +2340,19 @@ export const claimTokenAbi = [
   {
     "type": "function",
     "name": "owner",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pendingOwner",
     "inputs": [],
     "outputs": [
       {
@@ -2711,6 +2736,25 @@ export const claimTokenAbi = [
   },
   {
     "type": "event",
+    "name": "OwnershipTransferStarted",
+    "inputs": [
+      {
+        "name": "previousOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "OwnershipTransferred",
     "inputs": [
       {
@@ -3061,6 +3105,13 @@ export const investorRegistryAbi = [
   },
   {
     "type": "function",
+    "name": "acceptOwnership",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "expiryOf",
     "inputs": [
       {
@@ -3100,6 +3151,19 @@ export const investorRegistryAbi = [
   {
     "type": "function",
     "name": "owner",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pendingOwner",
     "inputs": [],
     "outputs": [
       {
@@ -3163,6 +3227,25 @@ export const investorRegistryAbi = [
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OwnershipTransferStarted",
+    "inputs": [
+      {
+        "name": "previousOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       }
     ],
     "anonymous": false
