@@ -234,7 +234,7 @@ test('RPC pre-checks reject in one round with their code and never simulate or s
     ['payer_has_code', 422, () => ({ code: delegated })],
     ['replay', 422, (p) => ({ used: [p.message.nonce] })],
     ['insufficient_funds', 422, () => ({ balance: 999_999n })],
-    ['gas_price_cap', 503, () => ({ gasPrice: 10_000_000_001n })],
+    ['gas_price_cap', 503, () => ({ gasPrice: 6_000_000_001n })],
     ['would_revert', 422, () => ({ on: { 'eth_call:pull': () => { throw rpcError(3, 'execution reverted: TetherToken: auth expired', REVERT_DATA); } } })],
   ];
   for (const [code, status, setup] of cases) {
@@ -252,7 +252,7 @@ test('every simulation carries the same gas limit and fees the relayer signs wit
   assert.equal(node.simulations.length, 2, 'pre-check round + inside the lock');
   for (const call of node.simulations) {
     assert.equal(call.gas, '0x61a80');
-    assert.equal(call.maxFeePerGas, '0x2540be400');
+    assert.equal(call.maxFeePerGas, '0x165a0bc00');
   }
 });
 
@@ -273,7 +273,7 @@ test('a valid pull is signed with capped gas and fees, sent once with eth_sendRa
   assert.equal(tx.type, 'eip1559');
   assert.equal(tx.nonce, 7);
   assert.equal(tx.gas, 400_000n);
-  assert.equal(tx.maxFeePerGas, 10_000_000_000n);
+  assert.equal(tx.maxFeePerGas, 6_000_000_000n);
   assert.equal(tx.maxPriorityFeePerGas, 1_000_000n);
   assert.equal(tx.value ?? 0n, 0n);
   const call = decodeFunctionData({ abi: PULL_STUB_ABI, data: tx.data! });
@@ -552,7 +552,7 @@ test('an authorization that drops under 30 s during the in-lock simulate/nonce s
 
 test('RPC pre-checks are judged in spec order: replay, payer_has_code, insufficient_funds, gas_price_cap, would_revert', async () => {
   const revert = { 'eth_call:pull': () => { throw rpcError(3, 'execution reverted: TetherToken: auth invalid', REVERT_DATA); } };
-  const allBad = (nonce: Hex): NodeOptions => ({ used: [nonce], code: `0xef0100${'ab'.repeat(20)}`, balance: 0n, gasPrice: 10_000_000_001n, on: revert });
+  const allBad = (nonce: Hex): NodeOptions => ({ used: [nonce], code: `0xef0100${'ab'.repeat(20)}`, balance: 0n, gasPrice: 6_000_000_001n, on: revert });
   const steps: [string, number, (nonce: Hex) => NodeOptions][] = [
     ['replay', 422, allBad],
     ['payer_has_code', 422, (n) => ({ ...allBad(n), used: [] })],

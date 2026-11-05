@@ -19,7 +19,7 @@ export const MAX_BODY_BYTES = 4096;
 // Drain guard (ARCHITECTURE §3 points 4–6; limits approved by the human 2026-11-05 22:53).
 const FEES = {
   gas: 400_000n,
-  maxFeePerGas: 10_000_000_000n, // 10 gwei
+  maxFeePerGas: 6_000_000_000n, // 6 gwei: break-even ≈6.2 gwei at 217k gas and the 0.10 USDT fee (human 00:45, drain review R5)
   // ponytail: constant tip = the node's own suggestion (0.001 gwei). Upgrade: read eth_maxPriorityFeePerGas, capped, if the testnet gets busy.
   maxPriorityFeePerGas: 1_000_000n,
 } as const;
