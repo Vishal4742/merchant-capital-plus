@@ -99,9 +99,9 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 ## Phase 5: Extras and integration
 **Goal:** the full lifecycle and a demo that runs cleanly twice.
 
-- [ ] `C` EAS eligibility (FR-KYC-2, 3; test I1); debtor acknowledgement and due-date payment (FR-PAY-13, 14); default and recourse (FR-ADV-7, FR-INV-6, 7; test C6); admin force/freeze (FR-TOK-5); tests F1, E1; coverage report (NFR-10)
-- [ ] `L` Fee swap keeper (FR-REL-8); `/schedule` + due-date keeper (FR-PAY-14 relayer side)
-- [ ] `F` Acknowledge and "pay on due date" screens; EAS attest/revoke on the compliance desk; merchant stats on Arkiv (FR-ARK-6); seed demo data
+- [ ] `C` ~~EAS eligibility (FR-KYC-2, 3; test I1); debtor acknowledgement and due-date payment (FR-PAY-13, 14); default and recourse (FR-ADV-7, FR-INV-6, 7; test C6)~~ **CUT (human 02:02: would force a redeploy of all three contracts; contracts freeze after G4)**; still in: admin force/freeze (FR-TOK-5), tests F1, E1 and the coverage report (NFR-10) in contracts batch 006
+- [ ] `L` Fee swap keeper (FR-REL-8); ~~`/schedule` + due-date keeper (FR-PAY-14 relayer side)~~ cut with FR-PAY-14
+- [ ] `F` ~~Acknowledge and "pay on due date" screens; EAS attest/revoke on the compliance desk~~ cut (human 02:02); merchant stats on Arkiv (FR-ARK-6); seed demo data
 - [ ] `O` Screenshot every screen state
 
 **Gate G5:** the whole demo (AT-1 to AT-9) runs twice in a row with no manual fixes.
@@ -136,11 +136,11 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 1. FR-ARK-6 merchant stats entity
 2. FR-PAY-10 webhooks → shop polls the receipt
 3. FR-REL-8 fee swap → one manual swap linked in the README
-4. FR-PAY-14 due-date payment → debtor pays by hand
+~~4. FR-PAY-14 due-date payment → debtor pays by hand~~ **CUT (human 02:02)**
 5. ~~FR-ADV-7 / FR-INV-6 default and recourse~~ **CUT (human 00:34)**
-6. FR-PAY-13 debtor acknowledgement
+~~6. FR-PAY-13 debtor acknowledgement~~ **CUT (human 02:02)**
 7. FR-INV-3 several investors per invoice → one investor
-8. FR-KYC-2–3 EAS → owner list
+~~8. FR-KYC-2–3 EAS → owner list~~ **CUT (human 02:02)**
 9. ~~DEP-3 Privy → guest wallet~~ (done: guest wallet chosen at Phase 1)
 10. FR-INV-* invoice financing → advance only (Tokenize still qualifies)
 
