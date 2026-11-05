@@ -1,0 +1,94 @@
+VERDICT: PASS
+
+# Security review: 001-P1-relay-stub, round 3 (reviewer-security)
+
+This is the first security review of the batch. Rounds 1 and 2 ran no reviewers (batch.md:13, :15), so there is no earlier review to diff against.
+
+Nothing blocks a stub that only runs on 127.0.0.1. A request can only make the relayer call `PullStub.pull`. The key doesn't leak through responses, logs or files. But the "localhost only until Phase 2" rule is enforced only in `dev.ts`. The Vercel handlers in `api/` have no such guard, and the prize USDT accepts ERC-1271 contract signers, which means about 3 requests can drain the hot wallet once the relayer is reachable from the internet. Everything under "OPEN, before any public deploy" has to land before `apps/relayer` gets a Vercel project with the key in its env. PHASES.md:50 plans that Vercel project for Phase 1, before the drain guard exists, so the timing matters (NEEDS THE USER #1).
+
+Safety: I sent no transactions and made no POST /relay. The chain reads were plain JSON-RPC (`eth_getBlockByNumber`, `eth_getBalance`, `eth_getTransactionCount`) plus Blockscout GETs. I printed no `.env` value. From `.env` I read only variable names, and a script compared the values in memory and printed nothing. I edited no product code.
+
+## Answers to the questions asked
+
+1. **Can a request call anything other than `PullStub.pull`?** No. The target is the constant `PULL_STUB` (`api/relay.ts:5`). The ABI has one function (`src/relayer.ts:17-19`). `parsePull` builds a fixed 8-tuple and drops every other field (`src/relayer.ts:64-90`), and no native `value` is ever set. viem 2.57.13 takes only `chainId/gas/fees/nonce/type` from the node's `eth_fillTransaction` answer and keeps our `to/data/value` (`node_modules/viem/_esm/actions/wallet/prepareTransactionRequest.js:176-245`), so a node can't redirect the call either. The tests decode the signed raw transaction: `test/relayer.test.ts:118-138` checks it goes to the stub as `pull` with the exact args, and `:201-217` checks that a client-supplied `to/target/data/functionName` is ignored.
+2. **Can a request make it pay gas for nothing?** Yes, three ways. All are Phase 2 drain-guard items, and today only a process on this machine or a browser tab on it can reach them: dust pulls with no fee or minimum (S4), ERC-1271 gas burning, up to ~0.2 WBT per request (S2), and duplicates or front-runs that pass simulation and then revert on-chain (S5). Simulate-before-send (`src/relayer.ts:102-105`) stops plain reverts only. The live replay returned 422 and the relayer nonce stayed at 3.
+3. **Is "localhost only" enforced in code?** Partly. `dev.ts:29` listens on `127.0.0.1` only, and the tester saw that with `lsof`. `api/relay.ts` and `api/health.ts` are Vercel functions with no host check. Today they fail closed only because `relayerClient()` throws when no key is set (`src/relayer.ts:35`). That depends on what the human puts in Vercel's env, not on the code (S1).
+4. **Can the key leak?** Not through any normal path. Error text is viem's `shortMessage` or a fixed string (`src/relayer.ts:50-52`), and `:262` tests that the RPC URL and host never show up in a response. `dev.ts:26` logs `e.message` only for errors that escape the handlers, which in practice means the fixed missing-key message. The one exception is S9: a malformed key value can end up in stderr. It is LOW because that value can't be a working key.
+5. **Tester's `--env-file=../../.env` point vs NFR-3:** see S8. The code meets the spec's grep criterion. At runtime it falls short of what NFR-3 intends, because the HTTP-facing dev process holds the deployer, Arkiv writer, payer and collector keys plus the OpenAI and supermemory keys. Today nothing can read them out. This should be fixed before Phase 2.
+6. **Body cap after buffering, no send lock, receipt wait:** S6 (LOW, local DoS), S5 and S3 (Phase 2; S3 is a false-success bug that a one-line change fixes), and the receipt-wait notes under S5.
+
+## DONE (what I checked, and how)
+
+- **Required grep** `grep -nE '(PRIVATE_KEY|SECRET|0x[0-9a-fA-F]{64})'` over the batch's 17 files: the 8 `apps/relayer` files without node_modules, `notes/phase-1-relayer.md`, and everything in `.batches/001-P1-relay-stub/`. I masked 64-hex values in the output. Hits:
+  - `src/relayer.ts:34-35`: the env var *name* `RELAYER_PRIVATE_KEY` and its fixed error message. Not a secret.
+  - `spec.md:6, :30, :55`, `build-relayer.md:17`, `round-1/test.md:20`, `round-2/test.md:22`, `round-3/test.md:22, :66`, `round-3/review-code.md:10`, `notes/phase-1-relayer.md:6`: env var names in prose. Not secrets.
+  - Two unique 64-hex values. Both are public tx hashes, confirmed on Blockscout `/api/v2/transactions/…`:
+    - `0x9f5efc75…e000`: `ok success`, from `0xdd02…a651` to `0x51e2…325d`, `pull`, 91,164 gas, nonce 2. Found at `build-relayer.md:22, :23`, `round-2/test.md:19`, `round-3/test.md:19`, `notes/phase-1-relayer.md:8`.
+    - `0xc4629df1…847e`: `ok success`, same from/to, `pull`, 94,034 gas, nonce 1. Found at `build-relayer.md:16`.
+  - None of the 64-hex values matches a `.env` value. A second scan (scratchpad `hexscan.py`, compares in memory, prints only matches) found **0** `.env` values of 8+ characters in any of the 17 files.
+- **Lockfile** (`package-lock.json`): 36 packages, all `resolved` from `https://registry.npmjs.org/`, every one with an `integrity` hash, none with install scripts. viem 2.57.13, ox 0.14.59, @noble/curves 1.9.1, ws 8.21.0.
+- **`.env` handling:** root `.env` is a symlink and is git-ignored (`.gitignore:2`). `git check-ignore -v apps/relayer/.env` → `.gitignore:29:.env`, so a per-app `.env` would be ignored as well. `RPC_URL` is not set, so the relayer uses the Ankr default. Probe with a dummy variable: values loaded by `node --env-file` don't show up in `ps eww` (`ps shows probe var: 0`). That beats `env $(cat .env)`.
+- **Prize USDT accepts contract signers.** `0xcedf…55a7` is an EIP-1967 proxy over the verified `TetherTokenV2` at `0x26425662D126412128967ECf0a02EC48573026F7`. The `(v,r,s)` `receiveWithAuthorization` (TetherTokenV2.sol:296-317) calls `_receiveWithAuthorizationValidityCheck` (EIP3009.sol:121-149) → `SignatureChecker.isValidSignatureNow` (EIP3009.sol:209-221), and if `from` has code it does `staticcall`s `isValidSignature` and forwards all remaining gas (SignatureChecker.sol:47-50, :68-78). The binding still holds: `to == msg.sender` (EIP3009.sol:130), so a signature made for PullStub can't be redeemed anywhere else. `transferWithAuthorization` uses a different typehash, so it can't redeem it either.
+- **Chain facts** (Ankr, block 12,299,439): block gas limit 40,000,000, base fee 5 gwei. Relayer `0xdd02…a651`: nonce 3, balance 0.498377508835749934 WBT, the same as the tester's reading, so nothing has been sent since.
+- **viem behaviour I relied on, read in the installed source:** `waitForTransactionReceipt` resolves with the *replacement's* receipt when another transaction takes our nonce (`_esm/actions/public/waitForTransactionReceipt.js:215-245`). noble-curves throws `expected valid private key: 1 <= n < N, got <value>` for a key out of range (`@noble/curves/esm/abstract/utils.js:193-194`, called from `abstract/weierstrass.js:273`).
+- **Input handling:** the regexes are anchored with bounded quantifiers (no ReDoS). `JSON.parse` runs only after the 4 KB byte check. A `__proto__` key in the JSON becomes an own property, so nothing is polluted. Every 400 error is a fixed string, so input is never echoed back. 422 text comes from TetherToken/PullStub revert reasons. Neither the relayer nor PullStub logs PII or puts it on-chain, and there are no third-party calls besides the RPC.
+
+## OPEN: blocking for the localhost stub
+
+None.
+
+## OPEN: fix before any public deploy (the deploy batch / Phase 2), and before `apps/relayer` gets a Vercel project with the key
+
+**S1, MEDIUM: the localhost-only boundary is not in the code.** `api/relay.ts:7-9` (and `api/health.ts:3-5`) are deployable Vercel functions with no check on where the request came from. `dev.ts:19` always builds `http://127.0.0.1…`, but Vercel would serve `/api/relay` publicly. ARCHITECTURE §6 says Vercel deploys on push, and PHASES.md:50 plans the `apps/relayer` project for Phase 1.
+- Exploit: the human links the project and adds `RELAYER_PRIVATE_KEY` to its env (ARCHITECTURE §3 says the key goes in "`.env` / Vercel env"). Then any push, or a merge to `main`, publishes an unguarded relayer. With S2, about 3 requests drain the wallet. With S4, about 1,100 dust requests do.
+- Fix (owner claude-relayer, 2 lines, can land in this commit): at the top of `POST` in `api/relay.ts`, *before* `relayerClient()`:
+  ```ts
+  // Phase 1: local-only (spec, Out of scope). Remove in the deploy batch together with the drain guard.
+  const { hostname } = new URL(request.url);
+  if (hostname !== '127.0.0.1' && hostname !== 'localhost') return Response.json({ error: 'relay is local-only until the Phase 2 drain guard' }, { status: 503 });
+  ```
+  Add one test: `POST(new Request('https://x.vercel.app/api/relay', { method: 'POST', body }))` → 503 with no RPC call. `dev.ts` behaves the same as before. If this doesn't land now, NEEDS THE USER #1 is the only control.
+
+**S2, HIGH once public / LOW today: an ERC-1271 signer makes the relayer pay up to the block gas limit.** `src/relayer.ts:102-103` simulates and `:109` sends with no `gas` cap, so the gas limit is whatever the node estimates through `eth_fillTransaction`.
+- Exploit: the attacker deploys a contract as `from` whose `isValidSignature` burns about 35M gas and then returns the magic value, gives it 1 base unit of USDT, and POSTs `value: "1"`. Simulation passes, the node estimates about 35M gas, and the relayer pays about 35M × 5 gwei ≈ 0.175 WBT. Three requests empty 0.498 WBT. A contract signer can also pass the simulation and then fail on-chain (its validity can depend on block or state; SignatureChecker.sol:60-61 says so), so simulate-before-send doesn't protect against it.
+- Fix (claude-relayer; ARCHITECTURE §3 guard 5): set `gas` on the request we sign, e.g. `simulateContract({ …, gas: 400_000n })`. The `eth_call` then runs under the same cap, and a gas-burning signature fails in simulation (422, free). Add guard 3's pre-check `eth_getCode(from) === '0x'` unless smart wallets are meant to be supported. EIP-7702-delegated EOAs have code as well, so that's a product decision. With the cap, the worst case is 400k × 10 gwei = 0.004 WBT per request, and rate limits and the budget limit the total. Optional now: the cap is one argument and also closes S10's gas half.
+
+**S3, MEDIUM (Phase 2 must; LOW for the stub): a replaced transaction is reported as success.** `src/relayer.ts:110-112` checks only `receipt.status`. When another transaction from the relayer key takes the same nonce, viem returns the replacement's receipt (see DONE), and `relay()` answers `200 {txHash: <ours>}` for a pull that never ran.
+- Same-nonce collisions are realistic here. Concurrent requests have no lock (`:95`), and claude-contracts' forge scripts send from the same key (batch.md:6: "shared relayer key, avoid nonce clash"). In Phase 2, `/pay` releasing content or a `payment.succeeded` webhook on that 200 means the merchant hands over goods for nothing. (The payer loses nothing, because their authorization is still unused.)
+- Fix (claude-relayer, one line): `if (receipt.status !== 'success' || receipt.transactionHash !== txHash) return Response.json({ error: 'transaction reverted or replaced', txHash }, { status: 502 });`. Webhooks should also confirm the `Paid` event, not just the relayer's 200 (claude-frontend, Phase 2).
+
+**S4, MEDIUM (already scoped to Phase 2): dust drain, no fee and no minimum.** `parsePull` only requires `value > 0` (`src/relayer.ts:81`). A 1-base-unit pull costs the relayer about 91k gas ≈ 0.00046 WBT. About 1,090 requests drain the wallet, and the attacker pays about 0.001 USDT in total plus free signatures.
+- Fix: FR-REL-4 (1 USDT minimum, 0.10 fee inside the tx) and FR-REL-5 (per-payer/IP rate limits, daily WBT budget, 503 when it's used up). PullStub has no fee path, so `pull` has to leave the allowlist when MerchantPay arrives. It must never be relayed publicly. Owners: claude-relayer (guards), claude-contracts (MerchantPay fee/minimum).
+
+**S5, MEDIUM (Phase 2): simulate-then-send race, no send lock, receipt wait.**
+- Two identical bodies, a double-click, or a client retry while the first tx is still pending all pass simulation against `latest`. Depending on how the node fills nonces, either the second send fails (502, no gas spent, signature still valid) or it gets the next nonce, gets mined, and reverts with `auth invalid` (relayer pays). Anyone can also front-run by submitting the same authorization to PullStub directly (FR-REL-7), and then the relayer's tx reverts.
+- Fix: ARCHITECTURE §3's advisory lock has to cover simulate → send → receipt, or at least simulate against `pending`. It only serializes this service, so forge scripts and keepers need their own key or have to send through the relayer (NEEDS THE USER #3). Also guard 10: alert on every failed tx.
+- Receipt wait (`:11`, `:110`): after 30 s, or about 12.6 s of failed receipt lookups, the answer is 502 *with* `txHash`, and the tx may still get mined. The EIP-3009 nonce makes that safe against double-charging, but the client should poll that `txHash` rather than re-POST, because a re-POST hits the duplicate-revert path above. In the deploy batch, check the Vercel function's max duration against 30 s plus retries, so a timeout can't drop the `txHash`.
+
+**S6, LOW: dev.ts buffers the whole body before the 4 KB check.** `dev.ts:17-18` collects every chunk, and only then does `src/relayer.ts:65` check the 4 KB limit. Node's `http` server has no default body limit.
+- Exploit: a local process, or a browser tab (S7), POSTs a few GB to `/relay` and the dev process runs out of memory. Only availability is affected, and only locally. On Vercel the platform's request-body limit applies; confirm the figure in the deploy batch.
+- Fix (claude-relayer): count bytes in the loop and answer 413 once past `MAX_BODY_BYTES`. Export the constant so there's one limit.
+
+**S7, LOW (localhost today): a browser can reach the dev server (CSRF, DNS rebinding).** `dev.ts:13-22` checks no `Host`, `Origin` or `Content-Type`.
+- Exploit: a page the human opens while `npm run dev` runs does `fetch('http://127.0.0.1:8787/relay', { method: 'POST', mode: 'no-cors', body })`. That's a `text/plain` simple request, so the browser sends no preflight. A DNS-rebinding page can do the same, because the `Host` header is ignored. Combined with S2, a few requests drain the wallet. Browser protections for public sites calling localhost differ between browsers and versions, so don't count on them.
+- Fix (claude-relayer, 2 lines in `dev.ts`): answer 403 unless `req.headers.host` is `127.0.0.1:${PORT}` or `localhost:${PORT}`, and 415 unless the POST has `content-type: application/json`. A JSON content type forces a preflight, and `OPTIONS` already gets a 404. When the frontend needs CORS, allowlist its exact origin, never `*`.
+
+**S8, LOW today / MEDIUM by Phase 2: `npm run dev` loads the whole root `.env` (NFR-3).** `package.json:9` puts 17 variables into the HTTP-facing dev process, among them `DEPLOYER_PRIVATE_KEY` (MerchantPay's owner in Phase 2), `ARKIV_PRIVATE_KEY` (NFR-3: "Arkiv writer key only in the web app"), `PAYER_PRIVATE_KEY`, `COLLECTOR1..3_PRIVATE_KEY`, `ARKIV_ACCESS_KEY`, `OPENAI_API_KEY` and `SUPERMEMORY_*`.
+- Today none of them can leak. No code path goes from a request to `process.env`, the code doesn't log the environment, it starts no child processes, Node reports are off, and `ps` can't see them (probe above).
+- The exposure is latent. A future debug line, an error serializer, a compromised dependency in that process, or a `--report-on-fatalerror` run would carry the owner key and other lanes' keys along with the relayer's. The spec's grep criterion passes, but NFR-3's "one secret per service" isn't met at runtime.
+- Fix (claude-relayer for the script, the human for the file): `"dev": "node --env-file=.env dev.ts"`, plus an `apps/relayer/.env` that holds only `RELAYER_PRIVATE_KEY`. It's already git-ignored. Create it without printing anything, e.g. `grep '^RELAYER_PRIVATE_KEY=' ../../.env > .env`. Do it in the commit step if the human agrees (NEEDS THE USER #2), and before Phase 2 at the latest.
+
+**S9, LOW: a malformed key value can reach stderr.** `src/relayer.ts:35` accepts any 64-hex string. If the value is 0 or at least the curve order, `privateKeyToAccount` (`:36`) throws noble's `… got <value as a decimal>`, `dev.ts:26` prints it, and on Vercel the function log would record it. That value can't be a working key, so no live key leaks. It is still the one path where the env value can reach a log.
+- Fix (claude-relayer): wrap `privateKeyToAccount` in `try/catch` and throw the existing fixed message instead.
+
+**S10, INFO: the node picks gas and fees.** `eth_fillTransaction` sets `gas`, `maxFeePerGas` and `maxPriorityFeePerGas` (build-relayer.md:30), with no cap on our side. A faulty or compromised RPC could overpay from the hot wallet.
+- Fix: FR-REL-5 / ARCHITECTURE §3 guard 5 sets `gas ≤ 400k` and `maxFeePerGas ≤ 10 gwei` on the request we sign (already in notes/phase-1-relayer.md:17).
+
+**S11, INFO (owner claude-contracts, stub only):** `PullStub` has no sweep, so USDT sent to it directly is stuck there for good (`PullStub.sol:31-56`). A `pull` forwards exactly `value`, so nothing is left behind in normal use. MerchantPay replaces it in Phase 2. Nothing to do unless the stub is kept.
+
+## NEEDS THE USER (PIPELINE.md §11)
+
+1. **Before this batch is pushed:** confirm that no Vercel project is linked to `apps/relayer`, or that it has no `RELAYER_PRIVATE_KEY` in its env. Don't add the key to Vercel until the deploy batch ships the drain guard, or land S1's 2-line guard in this commit. PHASES.md:50 plans the `apps/relayer` Vercel project in Phase 1, i.e. before the guard exists.
+2. **Scope the dev env (S8):** OK to create `apps/relayer/.env` with only the relayer key and point `npm run dev` at it? It's a key file, so the human should create it or approve the no-print `grep` above.
+3. **Shared relayer key:** claude-contracts' forge scripts send from the relayer key (batch.md:6). The Phase 2 advisory lock won't serialize them, which brings back nonce clashes and S3's false successes. Decide whether scripts and keepers get their own key, or whether every send goes through the relayer.
+4. Standing flags: relayer key use (nothing sent during this review; nonce 3, 0.498377508835749934 WBT). New dependencies: viem 2.57.13, dev typescript 7.0.2 and @types/node 26.6.6 (36 packages in the lockfile, all from npmjs with integrity hashes, no install scripts).
