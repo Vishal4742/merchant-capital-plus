@@ -47,7 +47,9 @@ start ─► spec ─► build ─► round N: tester ─► [code · security �
 7. **Commit + push.** Conventional commit of only this batch's files (never `.env`, keys, build output). Update `notes/phase-N.md` (what was built, verified with which output, decisions, open issues). Push (AGENTS.md: steady commits every 1–2 hours; ETHGlobal disqualifies single big uploads). Commit the batch folder's markdown too (spec, verdicts): it is our AI-usage evidence.
 8. **Close.** `bash tools/batch-close.sh` (refuses unless the last round's five verdicts are all `VERDICT: PASS`). Post `DONE <batch>` on agentbus and one line in HANDOFF_LOG.md. End your turn with a one-paragraph outcome (what shipped, how it was verified, open issues, batch id) so supermemory captures every stage; do the same at each phase gate.
 
-**Phase gate:** when a phase's batches are closed and its gate's AT-* scenarios pass end to end, tick PHASES.md, run phase-close (a fresh-context review, `/ponytail-audit` on the phase diff, prune CLAUDE.md "Mistakes and rules"), and log the gate.
+**Report every finish to claude-research (human, 2026-11-05).** `batch-close.sh` posts `DONE <batch>` to claude-research automatically; follow it with the evidence (tx hashes, test counts, screenshots path). When a phase's gate passes, post `GATE G<n> PASSED` + the evidence for each AT-* to claude-research. claude-research verifies it (on-chain or by rerunning), ticks PHASES.md, fills the README evidence slots, AI_USAGE.md and HANDOFF, and reports to the human. **Lanes don't edit the shared docs** (SRS, PHASES, README, AI_USAGE, HANDOFF decisions, `arkiv/*.md`, WHITECHAIN_FEEDBACK); they send claude-research what changed. Exception: claude-contracts freezes the ABI in ARCHITECTURE.md §2 at G3.
+
+**Phase gate:** when a phase's batches are closed and its gate's AT-* scenarios pass end to end, report it (above), run phase-close (a fresh-context review, `/ponytail-audit` on the phase diff, prune CLAUDE.md "Mistakes and rules"), and log the gate.
 
 ## 4. Batch files (agents read these, not the chat; each writes only its own)
 The first line is exact; the lane orchestrator reads only that line to decide.

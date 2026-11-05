@@ -10,3 +10,8 @@ for f in test review-code review-security review-ux-ui ci; do
   head -1 "$last/$f.md" | grep -qx 'VERDICT: PASS' || { echo "$last/$f.md is not 'VERDICT: PASS'"; exit 1; }
 done
 echo "Closed $dir ($(basename "$last") all PASS)." && rm .batches/ACTIVE
+# Tell claude-research, which verifies the batch, updates the shared docs and reports to the human.
+lane=$(grep -o "Owner lane: claude-[a-z]*" "$dir/batch.md" | head -1 | cut -d" " -f3 || true)
+command -v agentbus >/dev/null && agentbus send --as "${lane:-unknown-lane}" --to claude-research \
+  "DONE $name ($(basename "$last") all PASS). Verify, update PHASES/README/AI_USAGE, tell the human." >/dev/null \
+  || echo "warn: agentbus not reachable; post DONE $name to claude-research by hand"
