@@ -23,7 +23,7 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 
 **H**
 - [ ] Claim faucet WBT from home (limited per wallet, IP and GitHub account): relayer hot wallet first, then demo customer and investor wallets; swap part to USDT on YetiTrade
-- [ ] Keys: Ankr (code `Whitechain2026`), Arkiv access key + Rabdi funds, Privy app id, Vercel + Neon, an empty public GitHub repo (keys in `.env` only, CON-7)
+- [ ] Keys: Ankr (code `Whitechain2026`), Arkiv access key + Rabdi funds, Vercel + Neon, an empty public GitHub repo (keys in `.env` only, CON-7)
 - [ ] Start the `claude-contracts` session: "You are claude-contracts. Read AGENTS.md, HANDOFF.md, docs/SRS.md, ARCHITECTURE.md, PHASES.md and the build plan. Planning only until hacking starts."
 - [x] Tell the frontend session: the idea is Merchant Capital+, its name is `claude-frontend`, and it rewrites `docs/FRONTEND-PLAN.md` against the SRS
 - [ ] Optional: product name and design direction
@@ -46,7 +46,7 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 - [x] `R` Run `bash ~/.claude/skills/three-techniques/scripts/setup.sh typescript` in the repo (ECC + Ponytail, commands, agents); merge the gate hook back if the merge touched it; restart sessions; **prove the gate fires** (an edit under `apps/` with no batch is denied) — PIPELINE.md §9
 - [ ] From here on, every task in this file runs as a PIPELINE.md batch (`bash tools/batch-start.sh <phase> <slug>`)
 - [ ] `C` Foundry project (`prague`); a stub contract pulls USDT with `receiveWithAuthorization`, submitted by a relayer key (DEP-1); measure the gas of a routed payment
-- [ ] `F` Next.js skeleton passing tsc, lint and build; one Anon-RPC read inside our app (DEP-6); Privy test (DEP-3: signs typed data on 1874, no third-party trackers, about an hour) → any failure = guest wallet; one Arkiv write + read (DEP-5)
+- [ ] `F` Next.js skeleton passing tsc, lint and build; one Anon-RPC read inside our app (DEP-6); guest wallet for the customer (DEP-3 decided: Privy failed the tracker check); one Arkiv write + read (DEP-5)
 - [ ] `H`+`F` Vercel projects (`apps/web`, `apps/relayer`, `apps/shop`) and Neon connected
 
 **Gate G1:** an explorer link of a relayed USDT pull where the payer holds 0 WBT, plus one private read in our app.
@@ -139,7 +139,7 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 6. FR-PAY-13 debtor acknowledgement
 7. FR-INV-3 several investors per invoice → one investor
 8. FR-KYC-2–3 EAS → owner list
-9. DEP-3 Privy → guest wallet
+9. ~~DEP-3 Privy → guest wallet~~ (done: guest wallet chosen at Phase 1)
 10. FR-INV-* invoice financing → advance only (Tokenize still qualifies)
 
 **Never cut:** real USDT in the main flow · verified contracts · gasless payment · refund · **the advance (FR-ADV-1–6)** · at least one transfer rule and the settlement rule shown live · the separate demo shop · a user-facing Arkiv read · private reads by default · all required files.

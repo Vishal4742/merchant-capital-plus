@@ -108,7 +108,7 @@ M1 pay invoice + nonce binding + direct `transferWithAuthorization` can't bypass
 | `apps/web` compliance desk | Add/remove eligible investors (owner list in Phase 3, EAS attest/revoke in Phase 5) |
 | `apps/web` API | `POST /api/v1/sessions` (merchant secret) → checkout URL; webhooks `payment.succeeded` / `payment.refunded` (HMAC-SHA256, sent after the relayer's receipt); Arkiv writer (server-only key); CSV route |
 | `apps/shop` | Separate demo café store; **≈20-line integration**: `POST /api/buy` (≈8 lines) + button (≈4) + webhook handler (≈8). Count the lines in the README |
-| Wallets | Customer: Privy embedded wallet (email), **unverified on 1874, tested in Phase 1** (DEP-3: signs, no trackers, about an hour); any failure → guest wallet. Merchant/investor: injected wallet. UI never says "sign", "gas" or "Whitechain" to the customer |
+| Wallets | Customer: **guest wallet** (a key kept in the browser; human 20:31, Privy failed DEP-3 because it always sends analytics with the wallet address to auth.privy.io). Merchant/investor: injected wallet. UI never says "sign", "gas" or "Whitechain" to the customer |
 | Reads | `lib/anon.ts`: viem `custom` transport over `worker.fetch` (Anon-RPC 0.4.0), `batch: { multicall: true }`, Nym default, Tor fallback, a "Private reads · 100%" meter chip. `/pay` and `/checkout` make no browser chain reads (SRS 1.1 FR-PRIV-1). Needs a mainnet bootstrap RPC for one specifier read, a sandboxed iframe (CSP), lazy-load the 18 MB Nym bundle |
 | Design | HANDOFF.md "Design system lock v7" (cream editorial, one cobalt accent, Clash Display / Satoshi / Geist Mono) + references in `design-refs/`; confirm with the human in Phase 2 |
 
@@ -147,12 +147,12 @@ Vercel projects: `apps/web`, `apps/relayer`, `apps/shop` (push to deploy) + Neon
 | Web app, demo shop, Anon-RPC transport, Arkiv writer, CSV, webhooks | **claude-frontend** (the existing frontend session) | `apps/web/`, `apps/shop/` |
 | Research, README sections, `arkiv/*.md`, `WHITECHAIN_FEEDBACK.md`, `AI_USAGE.md`, pitch + video script | **claude-research** (this session) drafts, human edits | root docs |
 | Review, screenshots | opencode | none |
-| Accounts, faucet, Privy app id, Arkiv key, Ankr key, decisions, booth pitch, narrated video | **human** | none |
+| Accounts, faucet, Arkiv key, Ankr key, decisions, booth pitch, narrated video | **human** | none |
 
 Claim files on agentbus before editing (`CLAIM <path>` / `DONE <path>`); two sessions never edit the same file. Requirements: docs/SRS.md. Phases and gates: PHASES.md.
 
 ## 9. Open items (resolve in Phase 1)
-1. Privy embedded wallet signing on 1874 (else the guest wallet).
+1. ~~Privy embedded wallet signing on 1874~~ decided: guest wallet.
 2. Full gas of one routed payment (estimate 200–250k), which sets whether 0.10 USDT covers it.
 3. Does the Ankr hacker key raise the `eth_getLogs` range? (We don't depend on it.)
-4. Does Privy send telemetry? Matters for CROPS ("no third-party trackers").
+4. ~~Does Privy send telemetry?~~ Yes, to auth.privy.io with no off switch, so it was dropped.

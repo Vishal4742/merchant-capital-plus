@@ -18,7 +18,7 @@ Repayment is enforced where the money arrives. One customer payment is split, in
 | Contracts deployed + verified on 1874 | MerchantPay ⟨link⟩ · CapitalMarket ⟨link⟩ · ClaimToken ⟨link⟩ · InvestorRegistry ⟨link⟩ |
 | USDT payment in the main flow | Shop sale ⟨tx⟩ · invoice payment ⟨tx⟩ · advance repayment split ⟨tx⟩ |
 | **Operate:** drop-in in ≈20 lines | `apps/shop` integration: ⟨N⟩ lines (⟨file links⟩); merchant view ⟨screenshot⟩, customer view ⟨screenshot⟩; refund ⟨tx⟩; CSV export ⟨link⟩ |
-| **Scale:** zero crypto steps for the payer | Customer pays with an email login and one "Confirm payment" (no WBT, no seed phrase, no chain name) ⟨screenshot⟩ |
+| **Scale:** zero crypto steps for the payer | Customer pays with one "Confirm payment" from a wallet the page creates for them (no WBT, no seed phrase, no chain name) ⟨screenshot⟩ |
 | **Scale:** who pays gas / how the relayer gets WBT / what stops draining | The merchant pays a 0.10 USDT fee inside each payment; the relayer swaps fees to WBT on YetiTrade ⟨tx⟩; drain guard: allowlisted calls, simulate first, fee in the tx, gas caps, rate limits, daily WBT budget ⟨code⟩ ⟨tests⟩ |
 | **Tokenize:** real transfer rules + lifecycle | ERC-1155 claim token with ERC-7943 rules (KYC allowlist via EAS, ≤8 holders, maturity lock, freeze on default) ⟨code⟩; blocked transfer ⟨revert tx⟩; advance funded → repaid → settled ⟨txs⟩ |
 | Feedback | `WHITECHAIN_FEEDBACK.md` |
@@ -40,7 +40,7 @@ Every chain read the app makes in the browser goes through Anon-RPC by default (
 - Testnet only (official USD₮ isn't on Whitechain mainnet yet). Maturity lock 60 s and grace 120 s on testnet so the demo can show them; 1 day / 7 days in production.
 - KYC is simulated by our compliance key issuing EAS attestations (stands in for WhiteBIT KYC).
 - Demo wallets were funded by a one-off seed script from a team wallet (test USDT swapped from faucet WBT on YetiTrade). The app has no faucet button.
-- ⟨Customer wallet: Privy email login, or a guest wallet in the browser if Privy failed the Phase 1 test⟩
+- The customer's wallet is a guest key kept in the browser (no email recovery). We tested Privy's email login and dropped it: it always sends analytics with the wallet address to its servers, and we don't ship trackers.
 - A merchant could take sales outside our checkout; default rules, recourse and public sales stats mitigate this, they don't prevent it.
 - ⟨anything cut from the cut list⟩
 

@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Version | 1.1 (pre-event planning; no code before the hackathon starts) |
-| Changes | 1.1 (human approved 2026-11-05 19:50): FR-TOK-8 → M, Phase 4 (AT-8 needs it at G4); FR-PRIV-1 and FR-PRIV-4 reworded (pay and checkout pages make no browser chain reads); CON-8 added (demo funding by seed script); DEP-3 pass criteria; demo amounts divided by 10 in AT-3–AT-7 to fit the test USDT we can collect |
+| Changes | 1.1 (human approved 2026-11-05 19:50): FR-TOK-8 → M, Phase 4 (AT-8 needs it at G4); FR-PRIV-1 and FR-PRIV-4 reworded (pay and checkout pages make no browser chain reads); CON-8 added (demo funding by seed script); DEP-3 pass criteria (Privy then failed them, guest wallet); demo amounts divided by 10 in AT-3–AT-7 to fit the test USDT we can collect |
 | Status | Approved scope, locked by the human 2026-11-05 |
 | Related | ARCHITECTURE.md (design and ABI), PHASES.md (delivery plan), `research_notes/Mumbai hackathon idea validation/build_H1_merchant_capital.md` (design detail and sources), HANDOFF.md (decisions, event facts) |
 | Change control | Requirements change only through HANDOFF.md + an agentbus message; IDs are never reused |
@@ -78,7 +78,7 @@ Whitechain Sepolia 1874 (OP Stack, `prague` EVM); reads through `rpc.ankr.com/wh
 |---|---|---|
 | DEP-1 | USDT `receiveWithAuthorization` works as verified (payee must be the caller) | Stop and ask Whitechain's dev Telegram |
 | DEP-2 | Faucet gives 2 WBT/day per wallet, IP and GitHub account | Pool WBT across team wallets |
-| DEP-3 | Privy embedded wallets sign typed data on 1874, load no third-party trackers, and integrate in about an hour (tested in Phase 1) | Any check fails → guest wallet in the browser, stated in the README limitations |
+| DEP-3 | Privy embedded wallets sign typed data on 1874, load no third-party trackers, and integrate in about an hour (tested in Phase 1) | Any check fails → guest wallet in the browser, stated in the README limitations **Result (human, 2026-11-05 20:31): failed.** Privy always posts its own analytics to auth.privy.io, including the wallet address on every typed-data signature, with no off switch, and it pins a second viem (2.57.8) → guest wallet |
 | DEP-4 | EAS predeploy `0x4200…0021` works for attestations | Owner-managed allowlist |
 | DEP-5 | Arkiv SDK 1.0.1 and the Rabdi testnet are available | Drop the Arkiv track; keep offers on-chain |
 | DEP-6 | Anon-RPC Nym and Tor networks reach Whitechain (tested) | Fall back to direct reads, disclosed |

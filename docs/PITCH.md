@@ -4,7 +4,7 @@
 | Time | Say | Show |
 |---|---|---|
 | 0:00–0:20 | "Bandra Beans waits 60 days for a 1,000 USDT catering invoice, and no bank lends against fifty-dollar sales. Stripe and Shopify fix this with capital repaid from sales, but only inside their walls." | Merchant dashboard |
-| 0:20–1:10 | "A customer pays 25 USDT with an email login. No gas, no wallet app." | Shop checkout → explorer: one tx splits 20% to the investor, the 0.10 fee, the rest to the merchant. Relayer `/health` and the drain limits |
+| 0:20–1:10 | "A customer pays 25 USDT with one tap. No gas, no wallet app, no sign-up." | Shop checkout → explorer: one tx splits 20% to the investor, the 0.10 fee, the rest to the merchant. Relayer `/health` and the drain limits |
 | 1:10–2:10 | "The shop lists an invoice. Meera, KYC'd through EAS, buys it at 1.9% off. A transfer to a non-KYC wallet reverts. On the due date the payment lands with Meera in the same transaction." | Arkiv offer book with countdown → buy → blocked transfer → settlement |
 | 2:10–2:40 | "Repayment is enforced where the money arrives. A card rail can't route one payment to three parties under rules nobody can change." | Split diagram |
 | 2:40–3:00 | "Ready for mainnet when official USD₮ lands. We'd like to keep building in the Builders Program." | Close |
