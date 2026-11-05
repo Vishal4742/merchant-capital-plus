@@ -7,6 +7,13 @@ solc_version = "0.8.38"
 evm_version = "prague"
 optimizer = true
 optimizer_runs = 200
+# Explicit relative remappings only. Auto-detection pulls an absolute local path in from OZ's nested
+# remappings.txt; it lands in the metadata hash, so other machines and Blockscout could only partially match.
+auto_detect_remappings = false
+remappings = [
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+    "forge-std/=lib/forge-std/src/",
+]
 
 [rpc_endpoints]
 whitechain = "https://rpc.ankr.com/whitechain_testnet"
