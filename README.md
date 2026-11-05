@@ -21,6 +21,7 @@ Repayment is enforced where the money arrives. One customer payment is split, in
 | **Scale:** zero crypto steps for the payer | Customer pays with one "Confirm payment" from a wallet the page creates for them (no WBT, no seed phrase, no chain name) ⟨screenshot⟩ |
 | **Scale:** who pays gas / how the relayer gets WBT / what stops draining | The merchant pays a 0.10 USDT fee inside each payment; the relayer swaps fees to WBT on YetiTrade ⟨tx⟩; drain guard: allowlisted calls, simulate first, fee in the tx, gas caps, rate limits, daily WBT budget ⟨code⟩ ⟨tests⟩ |
 | **Tokenize:** real transfer rules + lifecycle | ERC-1155 claim token with ERC-7943 rules (KYC allowlist via EAS, ≤8 holders, maturity lock, freeze on default) ⟨code⟩; blocked transfer ⟨revert tx⟩; advance funded → repaid → settled ⟨txs⟩ |
+| Rail proof (Phase 1) | A payer with **0 WBT and nonce 0** sends 1 USDT through our relayer: [tx](https://explorer.testnet.whitechain.io/tx/0xc4629df10e9c3d259253ac368448db50d1783465555d3d0aa19de335f31c847e) (94,034 gas, paid by the relayer) · stub [PullStub](https://explorer.testnet.whitechain.io/address/0x51e2E2A530c9dabe6147D55F9bb7fcD47219325d) |
 | Feedback | `WHITECHAIN_FEEDBACK.md` |
 
 ### Arkiv (Build on Arkiv)

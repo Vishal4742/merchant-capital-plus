@@ -18,4 +18,5 @@ ETHGlobal asks teams to say where AI was used, down to files, and to commit spec
 ## Per-file record (filled at each batch close)
 | File / folder | Written by | Reviewed by | Batch |
 |---|---|---|---|
+| `contracts/` (foundry.toml, src/PullStub.sol, test/, script/), `.gitmodules` | claude-contracts (tests first: RED 7ab43b5 → GREEN 8710439) | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 1) + human gate | 001-P1-rail-proof |
 | ⟨path⟩ | ⟨lane / agent⟩ | ⟨reviewers + human⟩ | ⟨NNN⟩ |
