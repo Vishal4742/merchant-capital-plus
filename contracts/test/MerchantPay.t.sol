@@ -492,7 +492,9 @@ contract MerchantPayForkTest is Test {
     function test_RevertWhen_InvoiceAmountAboveUint96() public {
         vm.expectRevert(MerchantPay.WrongAmount.selector);
         vm.prank(merchant);
-        mp.createInvoice(address(0), uint128(type(uint96).max) + 1, uint64(block.timestamp + 1 days), bytes32(0));
+        mp.createInvoice(
+            address(0), uint128(type(uint96).max - 250_000) + 1, uint64(block.timestamp + 1 days), bytes32(0)
+        ); // amount + max fee must fit uint96
     }
 
     function test_RevertWhen_CancellingPartPaidInvoice() public {

@@ -87,6 +87,7 @@ contract CapitalMarket is ICapitalMarket, ReentrancyGuardTransient {
     error AlreadyFunded();
     error WrongUnits();
     error NothingOwed();
+    error MerchantCannotFund();
 
     constructor(address merchantPay_, IClaimToken claimToken_, IERC20 usdt_) {
         if (merchantPay_ == address(0) || address(claimToken_) == address(0) || address(usdt_) == address(0)) {
@@ -300,6 +301,8 @@ contract CapitalMarket is ICapitalMarket, ReentrancyGuardTransient {
         }
         if (units == 0 || uint256(offer.sold) + units > offer.face) revert WrongUnits();
         merchant = offer.merchant;
+        // A merchant buying its own claim could route revenue around its own advance lien (security review M1).
+        if (investor == merchant) revert MerchantCannotFund();
         if (offer.kind == OFFER_INVOICE) {
             // forge-lint: disable-next-line(unused-return) only the status and paid fields matter here
             (,, uint8 status,,, uint128 paid) = merchantPay.invoices(offer.invoiceId);

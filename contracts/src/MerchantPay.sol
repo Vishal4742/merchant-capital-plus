@@ -110,7 +110,8 @@ contract MerchantPay is Ownable2Step, Pausable, ReentrancyGuardTransient {
         external
         returns (uint256 id)
     {
-        if (amount < MIN_PAYMENT || amount > type(uint96).max) revert WrongAmount();
+        // gross = amount + fee must fit the uint96 payment record
+        if (amount < MIN_PAYMENT || amount > type(uint96).max - MAX_FEE) revert WrongAmount();
         if (dueDate <= block.timestamp) revert InvalidDueDate();
         id = ++invoiceCount;
         invoices[id] = Invoice(msg.sender, dueDate, InvoiceStatus.Open, customer, amount, 0);
@@ -171,9 +172,11 @@ contract MerchantPay is Ownable2Step, Pausable, ReentrancyGuardTransient {
         bytes32 r,
         bytes32 s
     ) external nonReentrant whenNotPaused returns (uint256 paymentId) {
-        if (merchant == address(0) || merchant == address(this) || orderRef == bytes32(0)) {
-            revert InvalidOrder();
-        }
+        // MerchantPay, the market or USDT as the merchant would strand the USDT.
+        if (
+            merchant == address(0) || merchant == address(this) || merchant == address(market)
+                || merchant == address(usdt) || orderRef == bytes32(0)
+        ) revert InvalidOrder();
         if (amount < MIN_PAYMENT) revert WrongAmount();
         if (saleOf[merchant][orderRef] != 0) revert OrderPaid();
         uint256 fee = relayFee;

@@ -432,4 +432,33 @@ contract CapitalMarketForkTest is Test {
         assertEq(market.outstanding(claimId), FACE - payment);
         assertEq(_bal(address(market)), 0, "no dust");
     }
+
+    // ---------- round-2 guards (security review M1, L1; tester LOW) ----------
+
+    function test_RevertWhen_MerchantFundsItsOwnClaim() public {
+        uint256 claimId = _listAdvance();
+        vm.expectRevert(CapitalMarket.MerchantCannotFund.selector);
+        vm.prank(merchant);
+        market.fund(claimId, 1e6);
+    }
+
+    function test_RevertWhen_SaleMerchantIsTheMarketOrUsdt() public {
+        address[2] memory sinks = [address(market), address(USDT)];
+        for (uint256 i = 0; i < sinks.length; ++i) {
+            bytes32 nonce = mp.saleNonce(sinks[i], keccak256("o"), 5e6, "s");
+            (uint8 v, bytes32 r, bytes32 s) = _sig(customerKey, customer, address(mp), 5e6, nonce);
+            vm.expectRevert(MerchantPay.InvalidOrder.selector);
+            vm.prank(anyone);
+            mp.paySale(sinks[i], keccak256("o"), customer, 5e6, 0, validBefore, "s", v, r, s);
+        }
+    }
+
+    function test_RevertWhen_MarketConstructedWithZeroAddress() public {
+        vm.expectRevert(CapitalMarket.BadTerms.selector);
+        new CapitalMarket(address(0), claims, USDT);
+        vm.expectRevert(CapitalMarket.BadTerms.selector);
+        new CapitalMarket(address(mp), ClaimToken(address(0)), USDT);
+        vm.expectRevert(CapitalMarket.BadTerms.selector);
+        new CapitalMarket(address(mp), claims, IERC20(address(0)));
+    }
 }
