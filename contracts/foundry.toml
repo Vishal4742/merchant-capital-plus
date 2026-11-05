@@ -23,4 +23,6 @@ remappings = [
 exclude_lints = ["block-timestamp"]
 
 [rpc_endpoints]
-whitechain = "https://rpc.ankr.com/whitechain_testnet"
+# The public Ankr RPC rate-limits parallel fork tests (HTTP 429, seen as a bare EvmError: Revert in fuzz runs);
+# throttle and retry instead of failing. Exact replays of every failing counterexample passed (batch 005 round 2).
+whitechain = { endpoint = "https://rpc.ankr.com/whitechain_testnet", retries = 10, retry_backoff = 2000, compute_units_per_second = 100 }
