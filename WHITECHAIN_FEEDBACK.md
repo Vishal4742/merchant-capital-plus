@@ -27,6 +27,9 @@ Honest notes from building Merchant Capital+ on Whitechain Sepolia (chain 1874).
 6. **The public RPC is behind Cloudflare,** which can challenge privacy-network (Tor) traffic; the Ankr endpoint works through Anon-RPC.
 7. **Mainnet status is stated three ways** (homepage "shipped", FAQ "testnet only", prize page "planned for November"), and official USD₮ on mainnet is "in later releases".
 8. *(Oct 25)* The USDT contract was hard to identify on the explorer; its dispatcher looked like old Tether while behaving like OpenZeppelin.
+9. *(Nov 5, build)* **Foundry's default EVM target doesn't run on 1874.** Foundry 1.8.6 defaults to `osaka`; on 1874 the Osaka opcode CLZ fails with `NotActivated`, while Prague features (PUSH0, MCOPY, TSTORE, BLS, EIP-2935) work. Nothing in the docs says which hardfork the chain runs, so we probed it with `cast call --create`. A line "Whitechain Sepolia runs Prague; set `evm_version = \"prague\"`" in the developer docs would save every Foundry team this probe.
+10. *(Nov 5, build)* **viem's built-in `whitechainSepolia` points at the Cloudflare-fronted RPC,** so wallets and SDKs that use the chain's default RPC (Privy, viem) inherit the Cloudflare endpoint unless each app overrides it. We pass the Ankr URL explicitly.
+11. *(Nov 5)* **Faucet limits are per wallet, per IP and per GitHub account, 2 WBT a day.** One faucet claim swaps to about 149 test USDT, so a demo with realistic invoice sizes (10,000 USDT) is impossible for a team; we divided every demo amount by 10. A testnet USDT faucet, or a builder grant of test USDT at the booth, would let teams show real-sized invoices.
 
 ## Suggestions
 1. Document the test-USDT route (YetiTrade) on the faucet page, and update the token-list docs page to v3.
