@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Version | 1.1 (pre-event planning; no code before the hackathon starts) |
-| Changes | 1.1 (human approved 2026-11-05 19:50): FR-TOK-8 → M, Phase 4 (AT-8 needs it at G4); FR-PRIV-1 and FR-PRIV-4 reworded (pay and checkout pages make no browser chain reads); CON-8 added (demo funding by seed script); DEP-3 pass criteria (Privy then failed them, guest wallet); demo amounts divided by 10 in AT-3–AT-7 to fit the test USDT we can collect |
+| Changes | 1.1 (human approved 2026-11-05 19:50): FR-TOK-8 → M, Phase 4 (AT-8 needs it at G4); FR-PRIV-1 and FR-PRIV-4 reworded (pay and checkout pages make no browser chain reads); CON-8 added (demo funding by seed script); DEP-3 pass criteria (Privy then failed them, guest wallet); demo amounts divided by 10 in AT-3–AT-7 to fit the test USDT we can collect; FR-PRIV-4 lists the Nym worker's own traffic (human 21:18) |
 | Status | Approved scope, locked by the human 2026-11-05 |
 | Related | ARCHITECTURE.md (design and ABI), PHASES.md (delivery plan), `research_notes/Mumbai hackathon idea validation/build_H1_merchant_capital.md` (design detail and sources), HANDOFF.md (decisions, event facts) |
 | Change control | Requirements change only through HANDOFF.md + an agentbus message; IDs are never reused |
@@ -177,7 +177,7 @@ Priority: **M** = must (never cut), **S** = should, **C** = could (first to cut)
 | FR-PRIV-1 | Every chain read the app makes in the browser goes through Anon-RPC by default (Nym, Tor fallback); the customer pay and checkout pages make no browser chain reads (amount and merchant come from our server) | M | 4 |
 | FR-PRIV-2 | Arkiv reads use the same private transport | S | 4 |
 | FR-PRIV-3 | A visible meter shows the share of reads that were private | S | 4 |
-| FR-PRIV-4 | Exclusions (relayer writes, the bootstrap read, explorer history, the server-side read behind the pay and checkout pages) are listed in the README | M | 6 |
+| FR-PRIV-4 | Exclusions (relayer writes, the bootstrap read, explorer history, the server-side read behind the pay and checkout pages, the Nym worker's own plain traffic (directory lookups to validator.nymtech.net, one WSS to a Nym entry gateway, bundle fallbacks unpkg.com / raw.githubusercontent.com after jsDelivr)) are listed in the README | M | 6 |
 
 ---
 

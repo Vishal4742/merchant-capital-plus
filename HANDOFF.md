@@ -26,7 +26,7 @@ Names: `claude-contracts`, `claude-frontend`, `claude-research`, `opencode`, `hu
 - **Tracks:** Whitechain (one prize; judged in Operate + Scale + Tokenize) · Arkiv Build · EF Anon-RPC (+ CROPS).
 - **Why:** best odds of the shortlist (53–88%, research/odds.py), fits all three Whitechain tracks, and matches the Whitechain workshop's asks (B2B2C, "Tokenize… borrowing and lending", "build what business actually needs"). Anon-RPC tested on Whitechain.
 - **Build order (human approved): unique part first.** P2 Operate + Scale core → **P3 the advance repaid from checkout** → P4 invoice financing + Arkiv + Anon-RPC → P5 extras. The advance is on the never-cut list.
-- **Lanes:** claude-contracts (contracts, relayer, shared ABI) · claude-frontend (apps/web, apps/shop) · claude-research (docs, README, pitch) · opencode review · human. zcode is out.
+- **Lanes:** claude-contracts (contracts, seed script, shared ABI) · claude-relayer (apps/relayer, keepers; added by the human 20:57) · claude-frontend (apps/web, apps/shop) · claude-research (docs, README, pitch) · opencode review · human. zcode is out.
 - **Rival:** an invoice-financing stack (InvoiceRegistry / ReceivableMarket) is already on testnet. Never claim "first"; lead with advances repaid from checkout.
 - **Superseded and deleted:** PayKit and agent pocket money (old docs moved to the Trash 2026-11-05 19:13). Don't revive them.
 - **Commit rule (human approved):** small commits per lane, pushed every 1–2 hours from 21:00 (AGENTS.md).
@@ -102,7 +102,13 @@ Names: `claude-contracts`, `claude-frontend`, `claude-research`, `opencode`, `hu
 - Whitechain never sponsored ETHGlobal before → judged strictly against its brief.
 - Partner prizes are judged by sponsor teams (same people who run workshops) → pitch idea to them Thu before 21:00.
 
-## Design system lock (2026-11-05 v7 — matches the human's Pinterest board)
+## Design system lock v8 (LOCKED by the human 2026-11-05 21:30, via claude-frontend)
+- **Reference:** Mercury. The human rejected the cream, white and dark mocks.
+- **System:** https://claude.ai/artifact/1FqWSDshf1hweQ6k7wLixx (private to the human until shared). Instrument Sans 420/500 + Instrument Serif italic + Geist Mono; one blue `#3b4fd9`; glass panels over a dithered Marine Drive night scene.
+- **Spec:** clickable demo `design-refs/merchant-capital-demo.html` (local, git-ignored with the other references) + the system page above.
+- **Code:** claude-frontend copies `tokens.css` into `apps/web` in the first Phase 2 UI batch.
+
+## ~~Design system lock v7~~ (superseded by v8 above; kept for history)
 Supersedes v6. Built from the `refrence design` board (`pinterest.com/vg8904937/refrence-design`, 30 captures in `~/.agents/taste/pins/board/`) plus the profile in `~/.agents/taste/TASTE.md`.
 - **Register:** cream editorial / print. The board's centre of gravity is type-led editorial and warm neutral, not dark UI.
 - **Ground:** cream `#F3ECDF`; a 4px halftone dot grain is printed into the `body` background. Surface `#FBF7EF`, raised `#E9DFCD`.

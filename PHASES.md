@@ -2,7 +2,7 @@
 
 How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the requirements it delivers, tasks by owner, and an **exit gate** made of acceptance tests (SRS §6). **Rule: a phase's gate must pass before the next phase's core work starts.** Tick boxes as you go and log each passed gate in HANDOFF_LOG.md. Design and ABI: ARCHITECTURE.md. Event deadlines: HANDOFF.md.
 
-**Owners:** `C` claude-contracts · `F` claude-frontend · `R` claude-research · `O` opencode (review only) · `H` human.
+**Owners:** `C` claude-contracts · `L` claude-relayer · `F` claude-frontend · `R` claude-research · `O` opencode (review only) · `H` human.
 **Order = unique part first.** Phase 2 qualifies Operate + Scale; **Phase 3 delivers the advance repaid from checkout (our differentiator, never cut)**; Phase 4 adds invoice financing, Arkiv and Anon-RPC. After any passed gate the product is complete enough to submit.
 
 | Phase | Name | Delivers (SRS IDs) | Exit gate | Tracks secured |
@@ -24,7 +24,7 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 **H**
 - [ ] Claim faucet WBT from home (limited per wallet, IP and GitHub account): relayer hot wallet first, then demo customer and investor wallets; swap part to USDT on YetiTrade
 - [ ] Keys: Ankr (code `Whitechain2026`), Arkiv access key + Rabdi funds, Vercel + Neon, an empty public GitHub repo (keys in `.env` only, CON-7)
-- [ ] Start the `claude-contracts` session: "You are claude-contracts. Read AGENTS.md, HANDOFF.md, docs/SRS.md, ARCHITECTURE.md, PHASES.md and the build plan. Planning only until hacking starts."
+- [x] Start the `claude-contracts` session: "You are claude-contracts. Read AGENTS.md, HANDOFF.md, docs/SRS.md, ARCHITECTURE.md, PHASES.md and the build plan. Planning only until hacking starts."
 - [x] Tell the frontend session: the idea is Merchant Capital+, its name is `claude-frontend`, and it rewrites `docs/FRONTEND-PLAN.md` against the SRS
 - [ ] Optional: product name and design direction
 
@@ -35,16 +35,16 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 
 **C / F:** read the SRS and ARCHITECTURE.md; plan tests and screens. No product code (CON-1).
 
-**Gate G0:** WBT and USDT in the wallets · three Claude sessions named on agentbus · the documents above exist.
+✅ **Gate G0 (verified by claude-research 21:05):** WBT and USDT in the wallets · three Claude sessions named on agentbus · the documents above exist.
 
 ---
 
 ## Phase 1: Rail proofs
 **Goal:** prove the risky assumptions before building on them.
 
-- [x] `H` Create the repo (local `main` 6b0ccd4 at 20:26; GitHub remote pending); first commit = AGENTS.md, CLAUDE.md, PIPELINE.md, docs/SRS.md, ARCHITECTURE.md, PHASES.md, `tools/{pipeline-gate,batch-start,batch-close}.sh`, `.claude/agents/*`, `.claude/settings.json` (gate hook)
+- [x] `H` Create the repo (`main` 6b0ccd4 at 20:26, public on GitHub: Vishal4742/merchant-capital-plus); first commit = AGENTS.md, CLAUDE.md, PIPELINE.md, docs/SRS.md, ARCHITECTURE.md, PHASES.md, `tools/{pipeline-gate,batch-start,batch-close}.sh`, `.claude/agents/*`, `.claude/settings.json` (gate hook)
 - [x] `R` Run `bash ~/.claude/skills/three-techniques/scripts/setup.sh typescript` in the repo (ECC + Ponytail, commands, agents); merge the gate hook back if the merge touched it; restart sessions; **prove the gate fires** (an edit under `apps/` with no batch is denied) — PIPELINE.md §9
-- [ ] From here on, every task in this file runs as a PIPELINE.md batch (`bash tools/batch-start.sh <phase> <slug>`)
+- [x] From here on, every task in this file runs as a PIPELINE.md batch (`bash tools/batch-start.sh <phase> <slug>`)
 - [ ] `C` Foundry project (`prague`); a stub contract pulls USDT with `receiveWithAuthorization`, submitted by a relayer key (DEP-1); measure the gas of a routed payment
 - [ ] `F` Next.js skeleton passing tsc, lint and build; one Anon-RPC read inside our app (DEP-6); guest wallet for the customer (DEP-3 decided: Privy failed the tracker check); one Arkiv write + read (DEP-5)
 - [ ] `H`+`F` Vercel projects (`apps/web`, `apps/relayer`, `apps/shop`) and Neon connected
@@ -58,7 +58,7 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 **Goal:** a merchant gets paid gaslessly and can refund; a separate shop integrates in about 20 lines.
 
 - [ ] `C` `MerchantPay` (FR-PAY-1–3, 5, 6, 8; FR-REL-4, 7, 9); tests M1–M3; deploy and verify
-- [ ] `C` Relayer: submit, health, drain guards (FR-REL-1–3, 5, 6)
+- [ ] `L` Relayer: submit, health, drain guards (FR-REL-1–3, 5, 6); uses the MerchantPay ABI from `packages/shared`
 - [ ] `C` Demo seed script (CON-8): funds the demo customer, investor and debtor wallets from the team wallet in `.env`; no faucet button in the app. `H` collects test USDT first (faucet WBT → YetiTrade swap)
 - [ ] `F` Customer pay and checkout pages, receipt (FR-PAY-3, 5, 7, 9); merchant invoices, payments table, refund (FR-PAY-1, 2, 8); checkout session API (FR-PAY-4)
 - [ ] `F` `apps/shop` with the ≈20-line integration (FR-PAY-11)
@@ -98,7 +98,8 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 ## Phase 5: Extras and integration
 **Goal:** the full lifecycle and a demo that runs cleanly twice.
 
-- [ ] `C` EAS eligibility (FR-KYC-2, 3; test I1); debtor acknowledgement and due-date payment (FR-PAY-13, 14); default and recourse (FR-ADV-7, FR-INV-6, 7; test C6); admin force/freeze (FR-TOK-5); fee swap (FR-REL-8); tests F1, E1; coverage report (NFR-10)
+- [ ] `C` EAS eligibility (FR-KYC-2, 3; test I1); debtor acknowledgement and due-date payment (FR-PAY-13, 14); default and recourse (FR-ADV-7, FR-INV-6, 7; test C6); admin force/freeze (FR-TOK-5); tests F1, E1; coverage report (NFR-10)
+- [ ] `L` Fee swap keeper (FR-REL-8); `/schedule` + due-date keeper (FR-PAY-14 relayer side)
 - [ ] `F` Acknowledge and "pay on due date" screens; EAS attest/revoke on the compliance desk; merchant stats on Arkiv (FR-ARK-6); seed demo data
 - [ ] `O` Screenshot every screen state
 

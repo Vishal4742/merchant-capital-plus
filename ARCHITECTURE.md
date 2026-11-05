@@ -90,13 +90,13 @@ A revoked investor can't trade but **still receives payouts** (payouts are USDT 
 ### Foundry tests (claude-contracts; coverage before the gate G6 freeze)
 M1 pay invoice + nonce binding + direct `transferWithAuthorization` can't bypass · M2 paySale, fee cap, minimum · M3 refund cap, merchant only, never touches holders · C5 advance lien (bps on gross, capped, one per merchant, removed at cap) · C1 list rules · C2 fund DvP + ineligible investor reverts · C3 pro-rata push, remainder to last holder, Settled · C4 partial payments burn units · C6 default after GRACE, recourse lien · T1 transfer rules (ineligible, after lock, frozen, 9th holder; revoked still gets payouts) · T2 admin-only force/freeze · I1 EAS fork test · F1 fuzz `Σ payouts + merchant + fee == gross`, market USDT == Σ owed · E1 event ABI snapshot.
 
-## 3. Relayer (`apps/relayer`, claude-contracts)
+## 3. Relayer (`apps/relayer`, claude-relayer)
 
 - `POST /relay {action, args, sig}`, `action ∈ {paySale, payInvoice, fund, acknowledge, register}` → `{txHash, paymentId?}` or 4xx with a reason. Content is released only after the receipt (1–2 s).
 - `POST /schedule`: stores a debtor's pre-signed authorization with `validAfter = dueDate` (it can only pay that one invoice to MerchantPay); a keeper submits it when due.
 - `GET /health` → `{wbt, gasSpentToday, budgetLeft, usdtFeesUnswapped, paused}`, shown on the merchant dashboard (Scale asks who pays gas).
 - **Drain guard:** (1) target + selector allowlist; (2) simulate before sending, never send a revert; (3) x402-style pre-checks (signature, balance, window, `authorizationState`); (4) fee inside the tx, minimum payment 1 USDT; (5) `maxFeePerGas ≤ 10 gwei`, gas limit 400k; (6) `validBefore ≤ now + 15 min`; (7) rate limits per payer, merchant and IP in SQL; (8) daily WBT budget, 503 when exhausted; (9) hot wallet ≤ 0.5 WBT, topped up by the swap job; (10) pause switch + alert on any failed tx. One hot key, serialized sends (Postgres advisory lock), key only in `.env` / Vercel env.
-- **Where the WBT comes from:** faucet 2 WBT/day ≈ 1,600–2,000 payments (gas per payment ~200–250k, estimate). Fee-swap keeper: `SwapRouter02.exactInputSingle(USDT → WWBT, fee 3000, minOut = QuoterV2 − 1%)` then `WWBT.withdraw` to the relayer EOA. Pool is shallow (≈99k USDT): swap small amounts. Mainnet story: same swap, or a merchant gas deposit (README only).
+- **Where the WBT comes from:** faucet 2 WBT/day ≈ 1,600–2,000 payments. Measured on 1874 (batch 001-P1-rail-proof): relayed EIP-3009 pull + forward of 1 USDT = **94,034 gas** live (5 gwei, L1 fee ≈ 6k wei) = 0.00047 WBT ≈ 0.035 USDT; PullStub deploy 230,639. Estimate for a full routed payment: 180–200k with no lien, 230–260k with one advance lien push + burn ≈ 0.086–0.097 USDT, just under the 0.10 fee; many holders would exceed it. Fee-swap keeper: `SwapRouter02.exactInputSingle(USDT → WWBT, fee 3000, minOut = QuoterV2 − 1%)` then `WWBT.withdraw` to the relayer EOA. Pool is shallow (≈99k USDT): swap small amounts. Mainnet story: same swap, or a merchant gas deposit (README only).
 
 ## 4. Apps (claude-frontend)
 
@@ -109,8 +109,8 @@ M1 pay invoice + nonce binding + direct `transferWithAuthorization` can't bypass
 | `apps/web` API | `POST /api/v1/sessions` (merchant secret) → checkout URL; webhooks `payment.succeeded` / `payment.refunded` (HMAC-SHA256, sent after the relayer's receipt); Arkiv writer (server-only key); CSV route |
 | `apps/shop` | Separate demo café store; **≈20-line integration**: `POST /api/buy` (≈8 lines) + button (≈4) + webhook handler (≈8). Count the lines in the README |
 | Wallets | Customer: **guest wallet** (a key kept in the browser; human 20:31, Privy failed DEP-3 because it always sends analytics with the wallet address to auth.privy.io). Merchant/investor: injected wallet. UI never says "sign", "gas" or "Whitechain" to the customer |
-| Reads | `lib/anon.ts`: viem `custom` transport over `worker.fetch` (Anon-RPC 0.4.0), `batch: { multicall: true }`, Nym default, Tor fallback, a "Private reads · 100%" meter chip. `/pay` and `/checkout` make no browser chain reads (SRS 1.1 FR-PRIV-1). Needs a mainnet bootstrap RPC for one specifier read, a sandboxed iframe (CSP), lazy-load the 18 MB Nym bundle |
-| Design | HANDOFF.md "Design system lock v7" (cream editorial, one cobalt accent, Clash Display / Satoshi / Geist Mono) + references in `design-refs/`; confirm with the human in Phase 2 |
+| Reads | `lib/anon.ts`: viem `http(ANKR, { fetchFn: worker.fetch, timeout: 60_000, retryCount: 1 })` (Anon-RPC 0.4.0; Nym worker hash `0xf13a448a…1fceb8` pinned in code, because the specifier owner can call `setWorker`), `batch: { multicall: true }`, Nym default, Tor fallback, a "Private reads · 100%" meter chip. `/pay` and `/checkout` make no browser chain reads (SRS 1.1 FR-PRIV-1). Needs a mainnet bootstrap RPC for one specifier read, a sandboxed iframe (CSP), lazy-load the 18 MB Nym bundle |
+| Design | HANDOFF.md "Design system lock v8" (Mercury reference, Instrument Sans/Serif + Geist Mono, one blue `#3b4fd9`, glass over a dithered Marine Drive night scene) + references in `design-refs/`; confirm with the human in Phase 2 |
 
 ## 5. Arkiv (`@arkiv-network/sdk` **1.0.1**, Rabdi testnet 7794095)
 
@@ -127,7 +127,7 @@ Vercel projects: `apps/web`, `apps/relayer`, `apps/shop` (push to deploy) + Neon
 |---|---|---|
 | Chain | Whitechain Sepolia **1874** (0x752), OP Stack, 1 s blocks, 5 gwei floor, gas limit 40M. **Set `evm_version = "prague"` explicitly:** Foundry 1.8.6 defaults to `osaka`, and Osaka is not active on 1874 (CLZ → `NotActivated`); PUSH0, MCOPY, TSTORE/TLOAD, BLS and EIP-2935 work | on-chain probes (`research_notes/build_prep/contracts_prep.md`) |
 | RPC | `https://rpc.ankr.com/whitechain_testnet` (code **Whitechain2026**, CORS `*`, no Cloudflare); backup `https://rpc.testnet.whitechain.io` (Cloudflare) | curl |
-| Explorer | `https://explorer.testnet.whitechain.io` (Blockscout); verify with `forge verify-contract --verifier blockscout --verifier-url https://explorer.testnet.whitechain.io/api/` (no API key) | dry run reached Blockscout; own bytecode verified at first deploy |
+| Explorer | `https://explorer.testnet.whitechain.io` (Blockscout); verify (no API key): `forge verify-contract --verifier blockscout …` **fails with forge 1.8.6** ("Missing solc version: 0.8.38"). Working path: `forge verify-contract <addr> <path:Name> --show-standard-json-input > in.json`, then `curl -X POST https://explorer.testnet.whitechain.io/api/v2/smart-contracts/<addr>/verification/via/standard-input -F compiler_version=v0.8.38+commit.1835d247 -F contract_name=<Name> -F license_type=mit -F constructor_args=<hex> -F files[0]=@in.json`; set `auto_detect_remappings = false` for a full match | used by claude-contracts on PullStub (batch 001-P1-rail-proof) |
 | USDT | `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7`, 6 dp, EIP-1967 proxy; EIP-712 name **"Tether USD"**, version **"1"**; `receiveWithAuthorization` enforces `to == msg.sender`; `validAfter` enforced ("auth early"); `transferWithAuthorization` ≈ 84.4k gas | cast / eth_call |
 | EAS / SchemaRegistry | `0x4200000000000000000000000000000000000021` / `0x4200000000000000000000000000000000000020` (OP predeploys, live) | eth_call |
 | Multicall3 / Permit2 | `0xcA11bde05977b3631167028862bE2a173976CA11` / `0x000000000022D473030F116dDEE9F6B43aC78BA3` | eth_getCode |
@@ -143,8 +143,9 @@ Vercel projects: `apps/web`, `apps/relayer`, `apps/shop` (push to deploy) + Neon
 
 | Lane | Owner (agentbus name) | Folders |
 |---|---|---|
-| Contracts, tests, deploy/verify, relayer, keepers, shared ABI | **claude-contracts** (a new Claude Code session) | `contracts/`, `apps/relayer/`, `packages/shared/` |
-| Web app, demo shop, Anon-RPC transport, Arkiv writer, CSV, webhooks | **claude-frontend** (the existing frontend session) | `apps/web/`, `apps/shop/` |
+| Contracts, tests, deploy/verify, seed script, shared ABI | **claude-contracts** (worktree `~/ethglobal-contracts`, branch `contracts`) | `contracts/`, `packages/shared/` |
+| Relayer service: `/relay`, `/schedule`, `/health`, drain guard, rate limits (`rel_*` tables), keepers (fee swap, due-date settlement) | **claude-relayer** (human 20:57; worktree `~/ethglobal-relayer`, branch `relayer`) | `apps/relayer/` |
+| Web app, demo shop, Anon-RPC transport, Arkiv writer, CSV, webhooks | **claude-frontend** (`~/ethglobal`, branch `main`) | `apps/web/`, `apps/shop/` |
 | Research, README sections, `arkiv/*.md`, `WHITECHAIN_FEEDBACK.md`, `AI_USAGE.md`, pitch + video script | **claude-research** (this session) drafts, human edits | root docs |
 | Review, screenshots | opencode | none |
 | Accounts, faucet, Arkiv key, Ankr key, decisions, booth pitch, narrated video | **human** | none |
@@ -153,6 +154,6 @@ Claim files on agentbus before editing (`CLAIM <path>` / `DONE <path>`); two ses
 
 ## 9. Open items (resolve in Phase 1)
 1. ~~Privy embedded wallet signing on 1874~~ decided: guest wallet.
-2. Full gas of one routed payment (estimate 200–250k), which sets whether 0.10 USDT covers it.
+2. Full gas of one routed payment: the pull alone is measured at 94k; the routed payment (180–260k estimate) is measured with `forge --gas-report` in Phase 2 before the 0.10 USDT fee is fixed.
 3. Does the Ankr hacker key raise the `eth_getLogs` range? (We don't depend on it.)
 4. ~~Does Privy send telemetry?~~ Yes, to auth.privy.io with no off switch, so it was dropped.
