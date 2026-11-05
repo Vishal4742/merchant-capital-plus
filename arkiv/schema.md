@@ -9,7 +9,7 @@ One entity per discount code. Expiration = the code's expiry (`ExpirationTime.at
 | Column | Type | Indexed | Why |
 |---|---|---|---|
 | merchant | addr | yes | the merchant's code list; scopes a lookup to one shop |
-| code_hash | str (0x + 64 hex) | yes | checkout looks the code up by `keccak256(merchant, code)`. The plain code is never written |
+| code_hash | str (0x + 64 hex) | yes | checkout looks the code up by `HMAC-SHA256(VOUCHER_HASH_SECRET, merchant ‖ code)` (keyed with a server-only secret, so short codes cannot be guessed offline from the public entity). The plain code is never written |
 | kind | str | yes | "percent" or "amount" |
 | value | u64 | no | percent points, or micro-units of `currency` |
 | currency | str | yes | "USDT": filter vouchers usable for a payment |
