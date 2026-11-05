@@ -1,0 +1,4 @@
+# forge script output: commit only run-latest.json of live broadcasts (the deployment record)
+broadcast/**/dry-run/
+broadcast/**/run-[0-9]*.json
+broadcast/**/*.lock
