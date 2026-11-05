@@ -6,7 +6,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "dev": "node --env-file=../../.env dev.ts",
+    "dev": "node --env-file=.env dev.ts",
     "test": "node --test",
     "typecheck": "tsc --noEmit"
   },
