@@ -33,7 +33,21 @@ Private-read proof (Phase 1): the app read Whitechain blocks through Nym (e.g. b
 **CROPS:** C: payment functions are permissionless, so anyone can submit a signed authorization if our relayer is down · O: ⟨license⟩ · P: private reads by default, no personal data on-chain or on Arkiv · S: non-custodial, keys stay on the user's device.
 
 ## Architecture
-⟨diagram from ARCHITECTURE.md §1⟩ · Contracts: `contracts/` · Relayer: `apps/relayer/` · Apps: `apps/web/`, `apps/shop/`
+Full-stack: Next.js frontend, two TypeScript servers (relayer, web API), Postgres for sessions and rate limits only, and Solidity contracts on Whitechain that hold every money rule.
+
+```
+Shop server ──POST /api/v1/sessions──► Web API (apps/web) ──► checkout link
+Customer /pay (no chain reads in the browser) ── signs a USDT authorization, no gas
+        ▼
+Relayer (apps/relayer): allowlist · payer has no code · signature, balance, window, replay
+        · rate limits · daily gas budget · simulate first ── pays the WBT gas
+        ▼
+MerchantPay (one tx): pull USDT ─► 0.10 fee to relayer ─► advance holdback to investors ─► rest to merchant
+        ▼
+receipt → signed webhook to the shop
+Dashboards read the chain privately via Anon-RPC (Nym), one Multicall per screen; offers live on Arkiv.
+```
+Contracts: `contracts/` (Solidity 0.8.38, Foundry) · Relayer: `apps/relayer/` (Node, viem) · Apps: `apps/web/`, `apps/shop/` (Next.js 16) · Details: `ARCHITECTURE.md`
 
 ## Setup
 ⟨commands: install, env vars from `.env.example`, `forge test`, run apps⟩
