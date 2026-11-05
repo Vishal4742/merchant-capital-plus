@@ -73,8 +73,8 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 ## Phase 3: Advance (our differentiator)
 **Goal:** a merchant raises cash today and every later sale repays investors automatically.
 
-- [ ] `C` `InvestorRegistry` owner list (FR-KYC-1)
-- [ ] `C` `ClaimToken` rules (FR-TOK-1–4, 6, 7) and `CapitalMarket` advance path (FR-ADV-1–5); tests C2, C5, T1 (basic); deploy and verify
+- [x] `C` `InvestorRegistry` owner list (FR-KYC-1) · batch 005 checked 02:40
+- [x] `C` `ClaimToken` rules (FR-TOK-1–4, 6, 7) and `CapitalMarket` advance path (FR-ADV-1–5); tests C2, C5, T1 (basic); deploy and verify · batch 005 checked 02:40: 150/150 tests, 81.6% line coverage, all four contracts fully verified; **G3 live evidence must be re-run on the final addresses**
 - [ ] `C` **Freeze the ABI** in `packages/shared` and ARCHITECTURE.md §2; later changes go through agentbus
 - [ ] `F` Merchant "Cash advance" with the total cost shown before signing (FR-ADV-1, 6); investor funding flow (FR-ADV-3); payments table shows the split; compliance desk with the owner list (FR-KYC-1)
 
