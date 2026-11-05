@@ -1,0 +1,104 @@
+// Merchant sign-in with a wallet (SIWE, EIP-4361): the server hands out a one-time nonce, the merchant's
+// wallet signs a sign-in message (no gas, no money), and the server sets an HMAC-signed session cookie.
+// Server-only. No password, no email, and nothing stored but the cookie.
+import { createHmac, timingSafeEqual } from "node:crypto";
+import { getAddress, isAddress, verifyMessage, type Address, type Hex } from "viem";
+import { parseSiweMessage, validateSiweMessage } from "viem/siwe";
+
+export const SESSION_COOKIE = "mc_session";
+export const NONCE_COOKIE = "mc_nonce";
+export const SESSION_TTL_S = 8 * 60 * 60;
+export const NONCE_TTL_S = 5 * 60;
+/** A signed sign-in message may be valid for at most this long, so a captured signature soon dies. */
+export const MAX_MESSAGE_TTL_S = 10 * 60;
+const CLOCK_SKEW_MS = 60_000;
+export const SIGN_IN_CHAIN_ID = 1874;
+
+/** AUTH_SECRET signs the session cookie. Sign-in is off until it is set (at least 32 characters). */
+export function authSecret(): string | undefined {
+  const secret = process.env.AUTH_SECRET;
+  return secret && secret.length >= 32 ? secret : undefined;
+}
+
+const mac = (payload: string, secret: string) => createHmac("sha256", secret).update(payload).digest();
+const tagOk = (payload: string, tag: string, secret: string) => {
+  const given = Buffer.from(tag, "base64url"), expected = mac(payload, secret);
+  return given.length === expected.length && timingSafeEqual(given, expected);
+};
+
+export function signSession(address: Address, secret: string, now = Date.now()): string {
+  const payload = Buffer.from(JSON.stringify({ a: getAddress(address), e: now + SESSION_TTL_S * 1000 })).toString("base64url");
+  return `${payload}.${mac(payload, secret).toString("base64url")}`;
+}
+
+/** The signed-in address, or null if the cookie is missing, forged, edited or expired. */
+export function readSession(token: string | undefined, secret: string, now = Date.now()): Address | null {
+  if (!token) return null;
+  const [payload, tag, extra] = token.split(".");
+  if (!payload || !tag || extra !== undefined || !tagOk(payload, tag, secret)) return null;
+  try {
+    const { a, e } = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { a?: unknown; e?: unknown };
+    if (typeof a !== "string" || !isAddress(a) || typeof e !== "number" || e <= now) return null;
+    return getAddress(a);
+  } catch {
+    return null;
+  }
+}
+
+// The nonce cookie carries the nonce, when we issued it, and our HMAC. A cookie is caller-controlled, so a plain
+// nonce would let anyone replay a captured signature by naming its nonce (plan review, batch 004).
+export function signNonce(nonce: string, secret: string, now = Date.now()): string {
+  const payload = `${nonce}.${now}`;
+  return `${payload}.${mac(payload, secret).toString("base64url")}`;
+}
+
+/** The nonce if the cookie is one we issued in the last NONCE_TTL_S, else null. */
+export function readNonce(token: string | undefined, secret: string, now = Date.now()): string | null {
+  const [nonce, at, tag, extra] = (token ?? "").split(".");
+  if (!nonce || !at || !tag || extra !== undefined || !tagOk(`${nonce}.${at}`, tag, secret)) return null;
+  const issued = Number(at);
+  return Number.isSafeInteger(issued) && now - issued <= NONCE_TTL_S * 1000 && issued <= now + CLOCK_SKEW_MS ? nonce : null;
+}
+
+// Nonces already used for a sign-in, until their cookie would have expired anyway: a captured request can't be
+// replayed inside the 5 min window. ponytail: per process, like the sessions; moves to Neon with them.
+const usedNonces = new Map<string, number>();
+
+/** True the first time a nonce is used; false after that. */
+export function consumeNonce(nonce: string, now = Date.now()): boolean {
+  for (const [old, until] of usedNonces) if (until <= now) usedNonces.delete(old);
+  if (usedNonces.has(nonce)) return false;
+  usedNonces.set(nonce, now + NONCE_TTL_S * 1000 + CLOCK_SKEW_MS);
+  return true;
+}
+
+/** Checks a SIWE message (our domain, the nonce we issued, chain 1874, expiring within 10 min) and its signature. */
+export async function verifySignIn(input: { message: string; signature: Hex; nonce: string; domain: string; now?: Date }): Promise<Address | null> {
+  if (input.message.length > 2_000) return null;
+  const parsed = parseSiweMessage(input.message);
+  const now = input.now ?? new Date();
+  if (!parsed.address || parsed.chainId !== SIGN_IN_CHAIN_ID) return null;
+  // viem only checks expiry when the message has one: require it, and keep it short
+  if (!parsed.expirationTime || parsed.expirationTime.getTime() > now.getTime() + MAX_MESSAGE_TTL_S * 1000) return null;
+  if (!validateSiweMessage({ message: parsed, nonce: input.nonce, domain: input.domain, time: now })) return null;
+  const valid = await verifyMessage({ address: parsed.address, message: input.message, signature: input.signature }).catch(() => false);
+  return valid ? getAddress(parsed.address) : null;
+}
+
+/** Reads one cookie from a request's Cookie header (route handlers stay framework-free and testable). */
+export function cookieFrom(request: Request, name: string): string | undefined {
+  for (const part of (request.headers.get("cookie") ?? "").split(";")) {
+    const [key, ...rest] = part.trim().split("=");
+    if (key !== name) continue;
+    try {
+      return decodeURIComponent(rest.join("="));
+    } catch {
+      return undefined; // a malformed %-escape is just a missing cookie, not a server error
+    }
+  }
+  return undefined;
+}
+
+export function setCookie(name: string, value: string, maxAgeS: number, secure: boolean): string {
+  return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeS}${secure ? "; Secure" : ""}`;
+}
