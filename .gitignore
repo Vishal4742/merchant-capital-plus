@@ -24,3 +24,6 @@ contracts/cache/
 contracts/broadcast/*/31337/
 coverage/
 lcov.info
+
+.claude/worktrees/
+.env
