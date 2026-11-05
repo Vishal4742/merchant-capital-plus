@@ -11,11 +11,8 @@ test("baseUrl: http://[::1]:3000 and http://localhost ok; http remote, ftp, java
   for (const u of ["http://example.com", "ftp://x", "javascript:alert(1)", "", "nope"]) assert.throws(() => mk(u), u);
 });
 
-test("baseUrl with user:pass is accepted or refused, but never leaks creds into a header", async () => {
-  let seen = "";
-  const f = (async (u: string) => { seen = String(u); return new Response(JSON.stringify({ id: "a", url: "u", amount: "1.00", expiresAt: "x" }), { status: 200 }); }) as never;
-  try { await mk("https://user:pass@host.example", f).sessions.create({ amount: 1 }); } catch { return; }
-  console.log("userinfo url seen by fetch:", seen);
+test("baseUrl with user:pass is refused (batch 007: the password would leak into fetch errors)", () => {
+  assert.throws(() => mk("https://user:pass@host.example"), /baseUrl/);
 });
 
 test("toleranceSec 0 is accepted and rejects any non-current timestamp", () => {
