@@ -1,6 +1,6 @@
 # Merchant Capital+
 
-**Shops on Whitechain take gasless USDT payments, and get cash today: sell an invoice at a discount, or take an advance that every future sale repays automatically.**
+**A stablecoin payment gateway for merchants who sell internationally: payment links, payment pages, invoices, QR codes, discount vouchers, multi-currency prices, sales reports and instant settlement in USDT on Whitechain, with a one-line payment button and an SDK. Customers pay with zero gas. Plus Capital: get paid early from future sales.** Testnet only (Whitechain Sepolia).
 
 > Status: pre-event skeleton (written before hacking starts, Start Fresh). Slots marked `⟨…⟩` are filled with real links during the build. Requirements: `docs/SRS.md`. Design: `ARCHITECTURE.md`. How we built it: `PIPELINE.md`, `AI_USAGE.md`.
 
