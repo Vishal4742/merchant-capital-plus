@@ -7,7 +7,7 @@ const STORAGE_KEY = "mcplus.guestKey";
 const UNREADABLE = "The saved guest wallet is unreadable.";
 const USDT = "0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7";
 
-// shortcut: the key lives in this browser's localStorage, so clearing site data loses it and any XSS
+// ponytail: the key lives in this browser's localStorage, so clearing site data loses it and any XSS
 // could read it. Stated in the README limitations; upgrade to a passkey-wrapped key if this ships.
 export function getGuestAccount() {
   const stored = localStorage.getItem(STORAGE_KEY);

@@ -25,7 +25,7 @@ Repayment is enforced where the money arrives. One customer payment is split, in
 | Feedback | `WHITECHAIN_FEEDBACK.md` |
 
 ### Arkiv (Build on Arkiv)
-Financing offers are Arkiv entities (`mcplus.offer.v1`) that expire at the offer deadline; the investor offer book and "my live offers" read them. Writer address: ⟨0x…⟩ · Runnable query: ⟨snippet⟩ · `arkiv/schema.md`, `friction.md`, `reach.md`, `why-arkiv.md`, `how-you-use-arkiv.md`.
+Financing offers are Arkiv entities (`mcplus.offer.v1`) that expire at the offer deadline; the investor offer book and "my live offers" read them. Writer address: `0xF216677A6c7635c34e7dD58927B98D141d538Cbe` · Live proof (Phase 1 probe): create tx [0x2d651b87…771e](https://rabdi.explorer.arkiv.network/tx/0x2d651b87c027419949d12cb650c7ca70ce7b65246e802fc44e213b0fc42b771e) (block 258050; create 3.2 s, `ownedBy` query 285 ms) · Runnable query: [https://rabdi.explorer.arkiv.network/entity-explorer](https://rabdi.explorer.arkiv.network/entity-explorer) with `arkiv.schema = str('mcplus.probe.v1')`, or `node --env-file=../../.env scripts/arkiv-probe.ts` from `apps/web` (needs `ARKIV_PRIVATE_KEY` + `ARKIV_ACCESS_KEY`) · `arkiv/schema.md`, `friction.md`, `reach.md`, `why-arkiv.md`, `how-you-use-arkiv.md`.
 
 ### Ethereum Foundation (Anon-RPC · CROPS)
 Every chain read the app makes in the browser goes through Anon-RPC by default (Nym, Tor fallback), including Arkiv reads: ⟨traffic share⟩ private. The customer pay and checkout pages make no browser chain reads at all (the amount and merchant come from our server), so they can't leak the payer's IP. Exclusions (disclosed): relayer writes over HTTPS, the two mainnet bootstrap reads (eth_call to ethereum-rpc.publicnode.com), explorer history lookups, the server-side read behind the pay and checkout pages, and the Nym worker's own plain traffic (directory lookups to validator.nymtech.net, one WSS to a Nym entry gateway, bundle fallbacks unpkg.com / raw.githubusercontent.com after jsDelivr). These carry no wallet data.
@@ -50,7 +50,22 @@ Dashboards read the chain privately via Anon-RPC (Nym), one Multicall per screen
 Contracts: `contracts/` (Solidity 0.8.38, Foundry) · Relayer: `apps/relayer/` (Node, viem) · Apps: `apps/web/`, `apps/shop/` (Next.js 16) · Details: `ARCHITECTURE.md`
 
 ## Setup
-⟨commands: install, env vars from `.env.example`, `forge test`, run apps⟩
+Requirements: Node 26, Foundry 1.8.6, git. Everything runs on Whitechain Sepolia (chain 1874); no mainnet funds are needed.
+
+```bash
+git clone --recursive https://github.com/Vishal4742/merchant-capital-plus && cd merchant-capital-plus
+cp .env.example .env          # fill in the values; never commit .env
+
+# Contracts (Foundry; fork tests run against Whitechain Sepolia with the real USDT)
+cd contracts && forge build && forge test -vv && cd ..
+
+# Relayer (localhost only until its drain guard ships): http://127.0.0.1:8787
+cd apps/relayer && npm ci && npm test && npm run dev        # GET /health, POST /relay
+
+# Web app (merchant, investor, customer pages): http://localhost:3000
+cd apps/web && npm ci && npm run typecheck && npm test && npm run dev
+```
+Test funds: claim WBT at faucet.testnet.whitechain.io, then swap some to the prize USDT (`0xcedfB561…f55a7`) on testnet.yetitrade.fi. CI runs the same checks on every push (`.github/workflows/ci.yml`).
 
 ## Limitations (honest)
 - Testnet only (official USD₮ isn't on Whitechain mainnet yet). Maturity lock 60 s and grace 120 s on testnet so the demo can show them; 1 day / 7 days in production.
