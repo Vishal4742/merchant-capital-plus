@@ -73,6 +73,7 @@ Test funds: claim WBT at faucet.testnet.whitechain.io, then swap some to the pri
 - Demo wallets were funded by a one-off seed script from a team wallet (test USDT swapped from faucet WBT on YetiTrade). The app has no faucet button.
 - The customer's wallet is a guest key kept in the browser (no email recovery). We tested Privy's email login and dropped it: it always sends analytics with the wallet address to its servers, and we don't ship trackers.
 - A merchant could take sales outside our checkout; default rules, recourse and public sales stats mitigate this, they don't prevent it.
+- **Admin trust (testnet):** one deployer key (`0xb4E7…714D`) is the compliance admin and the contract owner. It can force-transfer claims between eligible investors, freeze claim units and revoke investor eligibility (ERC-7943 rules, simulated KYC), and it can pause MerchantPay. Ownership uses `Ownable2Step`; production would put these roles behind a multisig.
 - Cut for time: default and recourse handling (a claim that is never repaid stays outstanding; no freeze-and-recourse lien).
 - ⟨anything else cut from the cut list⟩
 

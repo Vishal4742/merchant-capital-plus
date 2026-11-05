@@ -21,7 +21,7 @@ jobs:
       # Fork tests run against Whitechain Sepolia through the public Ankr RPC in foundry.toml (no key).
       - run: forge build
         working-directory: contracts
-      - run: forge test -vv
+      - run: forge test -vv -j 1   # one thread: the public Ankr RPC rate-limits parallel fork tests (HTTP 429)
         working-directory: contracts
 
   web:

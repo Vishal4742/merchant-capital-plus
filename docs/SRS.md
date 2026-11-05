@@ -115,7 +115,7 @@ Priority: **M** = must (never cut), **S** = should, **C** = could (first to cut)
 | FR-REL-1 | The relayer submits signed payment, funding, acknowledgement and registration actions and returns the transaction hash | M | 1–2 |
 | FR-REL-2 | The relayer only calls an allowlist of contract functions | M | 2 |
 | FR-REL-3 | The relayer simulates every transaction and never sends one that would revert | M | 2 |
-| FR-REL-4 | Each relayed payment carries a relay fee (0.10 USDT, contract cap 0.25) and a minimum payment of 1 USDT | M | 2 |
+| FR-REL-4 | Each relayed payment carries a relay fee (0.10 USDT, contract cap 0.25) and a minimum payment of 1 USDT. On a sale the fee is inside the price; on an invoice it is added on top (the debtor pays face + 0.10), so financed holders are repaid in full | M | 2 |
 | FR-REL-5 | The relayer enforces gas price and gas limit caps, short signature windows, per-payer/merchant/IP rate limits, and a daily WBT budget | M | 2 |
 | FR-REL-6 | A health endpoint reports WBT balance, gas spent today, budget left, unswapped fees and pause state; the merchant dashboard shows it | M | 2 |
 | FR-REL-7 | Payment functions are permissionless, so anyone can submit a signed authorization if the relayer is down | M | 2 |
@@ -236,7 +236,7 @@ Priority: **M** = must (never cut), **S** = should, **C** = could (first to cut)
 | AT-4 | A 5 USDT sale after AT-3 | 1 USDT to the investor in the same tx; outstanding falls from 11 to 10 |
 | AT-5 | The advance reaches its cap | Lien removed; the next sale pays the merchant 100% minus the fee |
 | AT-6 | Two investors fund a 100 USDT invoice at 12% APR, 60 days (60 / 40 split) | Prices ≈58.84 and ≈39.23 (exact 6-decimal values from the contract); merchant receives their sum |
-| AT-7 | The debtor pays the invoice | Investors receive 60 and 40 in the same tx; claim settled |
+| AT-7 | The debtor pays the invoice (100.10: face + relay fee) | Investors receive 60 and 40 in the same tx; claim settled |
 | AT-8 | An investor tries to send a claim to a non-eligible wallet | Transaction reverts; the UI showed the reason first |
 | AT-9 | The investor offer book loads | Offers come from Arkiv; expired offers are gone; meter shows private reads |
 | AT-10 | The relayer is asked to submit an invalid or unprofitable call | Rejected before sending; no gas spent |
