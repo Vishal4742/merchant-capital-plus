@@ -22,4 +22,5 @@ ETHGlobal asks teams to say where AI was used, down to files, and to commit spec
 | `apps/web/` (Next.js skeleton, `lib/anon.ts` Nym transport with pinned worker hash, `lib/guest-wallet.ts`) | claude-frontend | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 3, after 2 rounds of fixes) + human gate | 001-P1-web-rail-proofs |
 | `apps/relayer/` (`POST /relay` stub, `GET /health`, dev server) | claude-relayer | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 3, after 2 rounds of fixes) + human gate | 001-P1-relay-stub |
 | `apps/web/` design foundation (tokens.css, fonts, DitherScene, Button, HoldButton) | claude-frontend | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 3) + human gate | 002-P2-web-design-foundation |
+| `apps/web/lib/arkiv.ts`, `apps/web/scripts/arkiv-probe.ts` | claude-frontend | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 2) + human gate | 003-P1-arkiv-probe |
 | ⟨path⟩ | ⟨lane / agent⟩ | ⟨reviewers + human⟩ | ⟨NNN⟩ |
