@@ -46,10 +46,10 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 - [x] `R` Run `bash ~/.claude/skills/three-techniques/scripts/setup.sh typescript` in the repo (ECC + Ponytail, commands, agents); merge the gate hook back if the merge touched it; restart sessions; **prove the gate fires** (an edit under `apps/` with no batch is denied) — PIPELINE.md §9
 - [x] From here on, every task in this file runs as a PIPELINE.md batch (`bash tools/batch-start.sh <phase> <slug>`)
 - [x] `C` Foundry project (`prague`); a stub contract pulls USDT with `receiveWithAuthorization`, submitted by a relayer key (DEP-1); measure the gas of a routed payment · batch 001-P1-rail-proof, verified 21:55: PullStub `0x51e2E2A530c9dabe6147D55F9bb7fcD47219325d` (explorer-verified), relayed pull tx `0xc4629df1…c847e` 94,034 gas, payer nonce 0 / 0 WBT
-- [ ] `F` Next.js skeleton passing tsc, lint and build; one Anon-RPC read inside our app (DEP-6); guest wallet for the customer (DEP-3 decided: Privy failed the tracker check); one Arkiv write + read (DEP-5)
+- [ ] `F` Next.js skeleton passing tsc, lint and build; one Anon-RPC read inside our app (DEP-6); guest wallet for the customer (DEP-3 decided: Privy failed the tracker check); one Arkiv write + read (DEP-5) · batch 001-P1-web-rail-proofs verified 22:05: all done **except Arkiv** (Rabdi unreachable, parked)
 - [ ] `H`+`F` Vercel projects (`apps/web`, `apps/relayer`, `apps/shop`) and Neon connected
 
-**Gate G1:** an explorer link of a relayed USDT pull where the payer holds 0 WBT, plus one private read in our app. *(Relayed-pull half verified 21:55; waiting for the private read from claude-frontend.)*
+✅ **Gate G1 (verified by claude-research 22:05):** an explorer link of a relayed USDT pull where the payer holds 0 WBT, plus one private read in our app.
 **If blocked:** same error three times → post on agentbus and ask Whitechain's dev Telegram (stuck rule).
 
 ---

@@ -177,7 +177,7 @@ Priority: **M** = must (never cut), **S** = should, **C** = could (first to cut)
 | FR-PRIV-1 | Every chain read the app makes in the browser goes through Anon-RPC by default (Nym, Tor fallback); the customer pay and checkout pages make no browser chain reads (amount and merchant come from our server) | M | 4 |
 | FR-PRIV-2 | Arkiv reads use the same private transport | S | 4 |
 | FR-PRIV-3 | A visible meter shows the share of reads that were private | S | 4 |
-| FR-PRIV-4 | Exclusions (relayer writes, the bootstrap read, explorer history, the server-side read behind the pay and checkout pages, the Nym worker's own plain traffic (directory lookups to validator.nymtech.net, one WSS to a Nym entry gateway, bundle fallbacks unpkg.com / raw.githubusercontent.com after jsDelivr)) are listed in the README | M | 6 |
+| FR-PRIV-4 | Exclusions (relayer writes, the two mainnet bootstrap reads, explorer history, the server-side read behind the pay and checkout pages, the Nym worker's own plain traffic (directory lookups to validator.nymtech.net, one WSS to a Nym entry gateway, bundle fallbacks unpkg.com / raw.githubusercontent.com after jsDelivr)) are listed in the README | M | 6 |
 
 ---
 
