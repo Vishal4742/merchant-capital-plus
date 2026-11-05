@@ -2,7 +2,7 @@
 
 How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the requirements it delivers, tasks by owner, and an **exit gate** made of acceptance tests (SRS §6). **Rule: a phase's gate must pass before the next phase's core work starts.** Tick boxes as you go and log each passed gate in HANDOFF_LOG.md. Design and ABI: ARCHITECTURE.md. Event deadlines: HANDOFF.md.
 
-**Owners:** `C` claude-contracts · `L` claude-relayer · `F` claude-frontend · `R` claude-research · `O` opencode (review only) · `H` human.
+**Owners:** `C` claude-contracts · `L` claude-relayer · `F` claude-frontend · `S` claude-sdk · `R` claude-research · `O` opencode (review only) · `H` human.
 **Order = unique part first.** Phase 2 qualifies Operate + Scale; **Phase 3 delivers the advance repaid from checkout (our differentiator, never cut)**; Phase 4 adds invoice financing, Arkiv and Anon-RPC. After any passed gate the product is complete enough to submit.
 
 | Phase | Name | Delivers (SRS IDs) | Exit gate | Tracks secured |
@@ -11,8 +11,8 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 | 1 | Rail proofs | FR-REL-1 (stub), DEP-1, DEP-3, DEP-5, DEP-6 checks | G1: relayed gasless USDT pull + one private read | none |
 | 2 | Payments core | FR-PAY-1–9, FR-PAY-11, FR-PAY-15, FR-REL-1–7, FR-REL-9 | G2: AT-1, AT-2, AT-10 | Operate, Scale |
 | 3 | **Advance** (+ invoice contracts, human 00:34) | FR-PAY-16, FR-ADV-1–6, FR-INV-1, FR-INV-3–5 (contract side), FR-TOK-1–4, FR-TOK-6–7, FR-KYC-1 | G3: AT-3, AT-4, AT-5 · **ABI frozen** | **Tokenize** |
-| 4 | Invoice financing, Arkiv, private reads | FR-INV-1–5, FR-TOK-8, FR-ARK-1–5, FR-PRIV-1–3, FR-PAY-10, FR-PAY-12 | G4: AT-6, AT-7, AT-8, AT-9 | Arkiv, EF |
-| 5 | Extras and integration | FR-PAY-13–14, FR-REL-8, FR-ADV-7, FR-INV-6–7, FR-TOK-5, FR-KYC-2–3, FR-ARK-6 | G5: two clean full demo runs | polish |
+| 4 | **Payment gateway** (v2.0) | FR-GW-1–12, FR-GW-14, FR-ARK-1–5 (vouchers), FR-PRIV-1–3, FR-PAY-11; Capital on chain | G4: AT-11–AT-15, AT-6–AT-8 | Operate, Arkiv, EF, Tokenize |
+| 5 | Capital tab, extras, integration | FR-ADV/FR-INV UI, FR-TOK-8, FR-GW-13 (C), FR-REL-8, FR-TOK-5 | G5: two clean full demo runs | polish |
 | 6 | Proof and documentation | FR-PRIV-4, SR-* evidence, NFR-9 | G6: README review finds every SR item | all |
 | 7 | Video and submission | SR-ETH-2, CON-6 | G7: submission confirmed | all |
 
@@ -61,7 +61,7 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 - [x] `C` `MerchantPay` (FR-PAY-1–3, 5, 6, 8; FR-REL-4, 7, 9); tests M1–M3; deploy and verify · batch 002-P2-merchantpay verified 23:58: `0x83b5…73b7` full match, 39/39 tests, MerchantPay 96.97% lines / 100% branches; Phase 3 redeploy planned
 - [ ] `L` Relayer: submit, health, drain guards (FR-REL-1–3, 5, 6); uses the MerchantPay ABI from `packages/shared`
 - [x] `C` Demo seed script (CON-8; batch 004-P2-seed verified 00:36: 54/54 tests; on-chain investor A 69, investor B 40, debtor 100, merchant 1 USDT, team keeps 25.93 for the AT-1 customer): funds the demo customer, investor and debtor wallets from the team wallet in `.env`; no faucet button in the app. `H` collects test USDT first (faucet WBT → YetiTrade swap)
-- [ ] `F` Customer pay and checkout pages, receipt (FR-PAY-3, 5, 7, 9); merchant invoices, payments table, refund (FR-PAY-1, 2, 8); checkout session API (FR-PAY-4)
+- [ ] `F` *(batch 004 verified 01:48: pages, wallet sign-in FR-PAY-15, checkout + receipt on the final MerchantPay, /checkout 184.5 KB JS and LCP 0.62 s; invoices + refunds come in batch 005)* Customer pay and checkout pages, receipt (FR-PAY-3, 5, 7, 9); merchant invoices, payments table, refund (FR-PAY-1, 2, 8); checkout session API (FR-PAY-4)
 - [ ] `F` `apps/shop` with the ≈20-line integration (FR-PAY-11)
 - [x] `O` Review the relayer guards: can anyone make us pay gas for nothing? · done 00:42 by claude-review: yes, 3 ways once public (R1, R2, R3); fixes with claude-relayer; human chose Postgres lock + 6 gwei cap
 
@@ -73,38 +73,47 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 ## Phase 3: Advance (our differentiator)
 **Goal:** a merchant raises cash today and every later sale repays investors automatically.
 
-- [ ] `C` `InvestorRegistry` owner list (FR-KYC-1)
-- [ ] `C` `ClaimToken` rules (FR-TOK-1–4, 6, 7) and `CapitalMarket` advance path (FR-ADV-1–5); tests C2, C5, T1 (basic); deploy and verify
+- [x] `C` `InvestorRegistry` owner list (FR-KYC-1) · batch 005 checked 02:40
+- [x] `C` `ClaimToken` rules (FR-TOK-1–4, 6, 7) and `CapitalMarket` advance path (FR-ADV-1–5); tests C2, C5, T1 (basic); deploy and verify · batch 005 checked 02:40: 150/150 tests, 81.6% line coverage, all four contracts fully verified; **G3 live evidence must be re-run on the final addresses**
 - [ ] `C` **Freeze the ABI** in `packages/shared` and ARCHITECTURE.md §2; later changes go through agentbus
 - [ ] `F` Merchant "Cash advance" with the total cost shown before signing (FR-ADV-1, 6); investor funding flow (FR-ADV-3); payments table shows the split; compliance desk with the owner list (FR-KYC-1)
 
-**Gate G3:** AT-3 (advance funded), AT-4 (a sale repays 20% in the same tx), AT-5 (cap reached, lien ends).
+✅ **Gate G3 (verified by claude-research 02:47 on the final contracts):** AT-3 (advance funded), AT-4 (a sale repays 20% in the same tx), AT-5 (cap reached, lien ends). The UI half of Phase 3 moves to the Phase 5 Capital tab.
 **If blocked here:** cut invoice financing (Phase 4) before touching the advance.
 
 ---
 
-## Phase 4: Invoice financing, Arkiv, private reads
-**Goal:** sell an invoice to several investors; offers live on Arkiv; every browser read is private.
+## Phase 4: Payment gateway (v2.0, human 2026-11-06 02:35)
+**Goal:** the features merchants expect from a payment gateway (like Razorpay or Stripe), in stablecoins, strictly on Whitechain testnet. Reference: the human's Razorpay test-mode screen recording (functional reference only, nothing copied).
 
-- [ ] `C` Invoice financing and settlement (FR-INV-1, 3–5); tests C1, C3, C4, T1 (full) · **moved into Phase 3** (one CapitalMarket + final MerchantPay deploy, human 00:34)
-- [ ] `F` "Get paid today" with the APR-based price (FR-INV-2); the offer book and "my live offers" from Arkiv, verified on-chain (FR-ARK-1–5); transfer preview with the reason (FR-TOK-8)
-- [ ] `F` Anon-RPC on by default for every browser read, with the meter (FR-PRIV-1–3); `/pay` and `/checkout` make no browser chain reads; CSV export (FR-PAY-12); webhooks (FR-PAY-10)
-- [ ] `F` Record every Arkiv problem in `arkiv/friction.md` as it happens
+- [ ] `F` Payment Links with QR codes (FR-GW-1, FR-GW-3); Payment Pages (FR-GW-2)
+- [ ] `F` Discount vouchers: codes as Arkiv entities that expire, redemptions counted on our server (FR-GW-12, FR-ARK-1–5 now apply to voucher entities)
+- [ ] `F` Multi-currency prices with a locked FX quote at checkout (FR-GW-11)
+- [ ] `F` Reports with a sales chart and CSV, and a Settlements page (FR-GW-9, FR-GW-10)
+- [ ] `F` API keys, webhooks, a `/docs` page and the test-mode badge (FR-GW-6, 7, 8, 14)
+- [ ] `S` SDK + payment-button script in `packages/sdk` (FR-GW-4, FR-GW-5), started now by claude-sdk
+- [ ] `C` Capital on chain: AT-6, AT-7, AT-8 live, the E1 event-ABI snapshot and the NFR-10 coverage report (batch 006); then **contracts freeze**
+- [ ] `S` Rebuild `apps/shop` on the SDK or button in ≤ 20 lines (FR-PAY-11, AT-14)
+- [ ] `C` After the freeze: the gateway backend API in `apps/web/app/api/v1/{links,pages,vouchers,quotes,reports,settlements,keys,webhooks}` + Neon `app_gw_*` tables (FR-GW-1, 2, 6, 7, 9, 10, 11, 12 server side); claude-frontend builds the screens against it
+- [ ] `F` Private reads by default on dashboard pages, with the meter (FR-PRIV-1–3)
+- [ ] `F` Record every Arkiv problem (post it to claude-research)
 
-**Gate G4:** AT-6 (two investors fund), AT-7 (debtor pays, both repaid in one tx), AT-8 (blocked transfer), AT-9 (offer book from Arkiv, private reads).
-**If Arkiv fails three times:** drop the Arkiv track and keep the offer book on-chain (DEP-5).
+**Gate G4:** AT-11 to AT-15 (gateway) and AT-6 to AT-8 (Capital on chain).
+**If Arkiv fails three times:** store voucher codes in Postgres only and drop the Arkiv track (DEP-5).
 
 ---
 
-## Phase 5: Extras and integration
-**Goal:** the full lifecycle and a demo that runs cleanly twice.
+## Phase 5: Capital tab, extras and integration
+**Goal:** "Get paid early" as one tab of the gateway, and a demo that runs twice cleanly.
 
-- [ ] `C` EAS eligibility (FR-KYC-2, 3; test I1); debtor acknowledgement and due-date payment (FR-PAY-13, 14); default and recourse (FR-ADV-7, FR-INV-6, 7; test C6); admin force/freeze (FR-TOK-5); tests F1, E1; coverage report (NFR-10)
-- [ ] `L` Fee swap keeper (FR-REL-8); `/schedule` + due-date keeper (FR-PAY-14 relayer side)
-- [ ] `F` Acknowledge and "pay on due date" screens; EAS attest/revoke on the compliance desk; merchant stats on Arkiv (FR-ARK-6); seed demo data
+- [ ] `F` Capital tab: advance with its total cost shown before signing (FR-ADV-1, 6), investor funding (FR-ADV-3), invoice financing price (FR-INV-2), offer book on Arkiv (FR-ARK-1–5), the transfer reason (FR-TOK-8); AT-3 to AT-9 through the UI
+- [ ] `F` Gift vouchers (FR-GW-13), only if time is left
+- [ ] `L` Fee-swap keeper (FR-REL-8)
+- [ ] `C` Admin freeze (FR-TOK-5) and test F1 if still missing
 - [ ] `O` Screenshot every screen state
+- *Cut (human 02:02): EAS KYC, debtor acknowledgement, pay-on-due-date, default and recourse.*
 
-**Gate G5:** the whole demo (AT-1 to AT-9) runs twice in a row with no manual fixes.
+**Gate G5:** the whole demo (AT-1 to AT-15) runs twice in a row with no manual fixes.
 
 ---
 
@@ -136,11 +145,11 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 1. FR-ARK-6 merchant stats entity
 2. FR-PAY-10 webhooks → shop polls the receipt
 3. FR-REL-8 fee swap → one manual swap linked in the README
-4. FR-PAY-14 due-date payment → debtor pays by hand
+~~4. FR-PAY-14 due-date payment → debtor pays by hand~~ **CUT (human 02:02)**
 5. ~~FR-ADV-7 / FR-INV-6 default and recourse~~ **CUT (human 00:34)**
-6. FR-PAY-13 debtor acknowledgement
+~~6. FR-PAY-13 debtor acknowledgement~~ **CUT (human 02:02)**
 7. FR-INV-3 several investors per invoice → one investor
-8. FR-KYC-2–3 EAS → owner list
+~~8. FR-KYC-2–3 EAS → owner list~~ **CUT (human 02:02)**
 9. ~~DEP-3 Privy → guest wallet~~ (done: guest wallet chosen at Phase 1)
 10. FR-INV-* invoice financing → advance only (Tokenize still qualifies)
 

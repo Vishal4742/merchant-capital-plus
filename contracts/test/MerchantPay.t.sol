@@ -9,6 +9,7 @@ import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/Messa
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {MerchantPay} from "../src/MerchantPay.sol";
+import {ICapitalMarket} from "../src/interfaces/ICapitalMarket.sol";
 
 /// @notice Fork tests M1–M3 on Whitechain Sepolia 1874 against the real prize USDT
 ///         (SRS FR-PAY-1/2/3/5/6/8, FR-REL-4/7/9, NFR-1/2, CON-2/4). Signatures are built from the documented
@@ -95,7 +96,7 @@ contract MerchantPayForkTest is Test {
     }
 
     function _payInvoice(uint256 id, uint256 amount, bytes32 salt) internal returns (uint256) {
-        return _submitInvoice(id, amount, salt, _sign(payerKey, amount, _invoiceNonce(id, amount, salt)));
+        return _submitInvoice(id, amount, salt, _sign(payerKey, amount + FEE, _invoiceNonce(id, amount, salt)));
     }
 
     function _newInvoice(uint128 amount) internal returns (uint256 id) {
@@ -201,18 +202,18 @@ contract MerchantPayForkTest is Test {
 
     function test_PayInvoice_SplitsFeeAndMerchant_PayerNeedsNoGas() public {
         uint256 id = _newInvoice(uint128(SALE));
-        Sig memory sig = _sign(payerKey, SALE, _invoiceNonce(id, SALE, "s1"));
+        Sig memory sig = _sign(payerKey, SALE + FEE, _invoiceNonce(id, SALE, "s1"));
         uint256 payerBefore = _bal(payer);
         assertEq(payer.balance, 0, "payer holds no WBT");
 
         vm.expectEmit(true, true, true, true, address(mp));
-        emit MerchantPay.Paid(1, merchant, payer, id, bytes32(0), SALE, FEE, 0, SALE - FEE);
+        emit MerchantPay.Paid(1, merchant, payer, id, bytes32(0), SALE + FEE, FEE, 0, SALE);
         uint256 paymentId = _submitInvoice(id, SALE, "s1", sig);
 
         assertEq(paymentId, 1);
-        assertEq(_bal(merchant), SALE - FEE, "merchant gets gross minus fee");
+        assertEq(_bal(merchant), SALE, "merchant gets the full invoice amount (fee on top)");
         assertEq(_bal(feeRecipient), FEE, "relay fee");
-        assertEq(_bal(payer), payerBefore - SALE, "payer paid gross");
+        assertEq(_bal(payer), payerBefore - SALE - FEE, "payer paid amount + fee");
         assertEq(_bal(address(mp)), 0, "MerchantPay keeps nothing");
         assertEq(payer.balance, 0, "payer still holds no WBT");
         (,, MerchantPay.InvoiceStatus st,,, uint128 paid) = mp.invoices(id);
@@ -220,7 +221,7 @@ contract MerchantPayForkTest is Test {
         assertEq(paid, SALE);
         (address m, uint96 gross, address p, uint96 refunded) = mp.payments(paymentId);
         assertEq(m, merchant);
-        assertEq(gross, SALE);
+        assertEq(gross, SALE + FEE);
         assertEq(p, payer);
         assertEq(refunded, 0);
     }
@@ -228,14 +229,14 @@ contract MerchantPayForkTest is Test {
     function test_RevertWhen_InvoiceSignatureUsedForAnotherInvoice() public {
         uint256 a = _newInvoice(5e6);
         uint256 b = _newInvoice(5e6);
-        Sig memory sig = _sign(payerKey, 5e6, _invoiceNonce(a, 5e6, "s1"));
+        Sig memory sig = _sign(payerKey, 5e6 + FEE, _invoiceNonce(a, 5e6, "s1"));
         vm.expectRevert(bytes("TetherToken: invalid signature"));
         _submitInvoice(b, 5e6, "s1", sig);
     }
 
     function test_RevertWhen_InvoicePaidTwice() public {
         uint256 id = _newInvoice(5e6);
-        Sig memory sig = _sign(payerKey, 5e6, _invoiceNonce(id, 5e6, "s1"));
+        Sig memory sig = _sign(payerKey, 5e6 + FEE, _invoiceNonce(id, 5e6, "s1"));
         _submitInvoice(id, 5e6, "s1", sig);
         vm.expectRevert(MerchantPay.InvoiceNotOpen.selector);
         _submitInvoice(id, 5e6, "s1", sig);
@@ -245,24 +246,36 @@ contract MerchantPayForkTest is Test {
         uint256 id = _newInvoice(5e6);
         vm.prank(merchant);
         mp.cancelInvoice(id);
-        Sig memory sig = _sign(payerKey, 5e6, _invoiceNonce(id, 5e6, "s1"));
+        Sig memory sig = _sign(payerKey, 5e6 + FEE, _invoiceNonce(id, 5e6, "s1"));
         vm.expectRevert(MerchantPay.InvoiceNotOpen.selector);
         _submitInvoice(id, 5e6, "s1", sig);
 
-        Sig memory unknown = _sign(payerKey, 5e6, _invoiceNonce(99, 5e6, "s1"));
+        Sig memory unknown = _sign(payerKey, 5e6 + FEE, _invoiceNonce(99, 5e6, "s1"));
         vm.expectRevert(MerchantPay.InvoiceNotOpen.selector);
         _submitInvoice(99, 5e6, "s1", unknown);
     }
 
-    function test_RevertWhen_InvoicePartlyOrOverPaid() public {
+    /// FR-INV-4: partial payments are allowed (at least 1 USDT, or exactly what is still owed); overpaying reverts.
+    function test_PayInvoice_PartialThenRest_OverpaymentReverts() public {
         uint256 id = _newInvoice(5e6);
-        Sig memory under = _sign(payerKey, 4e6, _invoiceNonce(id, 4e6, "s1"));
-        vm.expectRevert(MerchantPay.WrongAmount.selector);
-        _submitInvoice(id, 4e6, "s1", under);
-
-        Sig memory over = _sign(payerKey, 6e6, _invoiceNonce(id, 6e6, "s1"));
+        Sig memory over = _sign(payerKey, 6e6 + FEE, _invoiceNonce(id, 6e6, "s1"));
         vm.expectRevert(MerchantPay.WrongAmount.selector);
         _submitInvoice(id, 6e6, "s1", over);
+
+        Sig memory dust = _sign(payerKey, 500_000 + FEE, _invoiceNonce(id, 500_000, "s1"));
+        vm.expectRevert(MerchantPay.WrongAmount.selector);
+        _submitInvoice(id, 500_000, "s1", dust);
+
+        _payInvoice(id, 4e6, "s1");
+        (,, MerchantPay.InvoiceStatus st,,, uint128 paid) = mp.invoices(id);
+        assertEq(uint8(st), uint8(MerchantPay.InvoiceStatus.Open), "still open after a partial payment");
+        assertEq(paid, 4e6);
+
+        _payInvoice(id, 1e6, "s2"); // the exact remainder
+        (,, st,,, paid) = mp.invoices(id);
+        assertEq(uint8(st), uint8(MerchantPay.InvoiceStatus.Paid));
+        assertEq(paid, 5e6);
+        assertEq(_bal(merchant), 5e6, "merchant credited both parts in full");
     }
 
     /// A copied signature can't be redeemed on the token by anyone but MerchantPay (front-run safety, DEP-1).
@@ -371,7 +384,7 @@ contract MerchantPayForkTest is Test {
         _submitSale(merchant, orderRef, 5e6, "s1", sig);
 
         uint256 id = _newInvoice(5e6); // invoice admin still works while paused
-        Sig memory isig = _sign(payerKey, 5e6, _invoiceNonce(id, 5e6, "s1"));
+        Sig memory isig = _sign(payerKey, 5e6 + FEE, _invoiceNonce(id, 5e6, "s1"));
         vm.expectRevert(Pausable.EnforcedPause.selector);
         _submitInvoice(id, 5e6, "s1", isig);
 
@@ -438,7 +451,7 @@ contract MerchantPayForkTest is Test {
         mp.refund(paymentId, 4e6);
         vm.stopPrank();
         assertEq(_bal(payer), payerBefore + 4e6);
-        assertEq(_bal(merchant), 5e6 - FEE - 4e6);
+        assertEq(_bal(merchant), 5e6 - 4e6, "invoice credited in full, then 4 refunded");
     }
 
     // ---------- F1 (Phase 2 part): every unit of the gross is accounted for, nothing stays (NFR-2) ----------
@@ -461,5 +474,79 @@ contract MerchantPayForkTest is Test {
         vm.stopPrank();
         assertEq(_bal(payer), payerBefore + refundAmount);
         assertEq(_bal(address(mp)), 0);
+    }
+
+    // ---------- v2 guards and owner tools (human 23:40; batch 002 review findings) ----------
+
+    function test_RevertWhen_SaleMerchantIsMerchantPayItself() public {
+        Sig memory sig = _sign(payerKey, 5e6, _saleNonce(address(mp), keccak256("o"), 5e6, "s1"));
+        vm.expectRevert(MerchantPay.InvalidOrder.selector);
+        _submitSale(address(mp), keccak256("o"), 5e6, "s1", sig);
+    }
+
+    function test_RevertWhen_FeeRecipientIsMerchantPayItself() public {
+        vm.expectRevert(MerchantPay.ZeroAddress.selector);
+        mp.setRelayFee(FEE, address(mp));
+    }
+
+    function test_RevertWhen_InvoiceAmountAboveUint96() public {
+        vm.expectRevert(MerchantPay.WrongAmount.selector);
+        vm.prank(merchant);
+        mp.createInvoice(
+            address(0), uint128(type(uint96).max - 250_000) + 1, uint64(block.timestamp + 1 days), bytes32(0)
+        ); // amount + max fee must fit uint96
+    }
+
+    function test_RevertWhen_CancellingPartPaidInvoice() public {
+        uint256 id = _newInvoice(5e6);
+        _payInvoice(id, 2e6, "s1");
+        vm.expectRevert(MerchantPay.InvoiceNotOpen.selector);
+        vm.prank(merchant);
+        mp.cancelInvoice(id);
+    }
+
+    function test_SetMarket_OwnerOnlyAndOnce() public {
+        address stranger = makeAddr("stranger");
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger));
+        vm.prank(stranger);
+        mp.setMarket(ICapitalMarket(makeAddr("market")));
+
+        vm.expectRevert(MerchantPay.ZeroAddress.selector);
+        mp.setMarket(ICapitalMarket(address(0)));
+
+        vm.expectEmit(false, false, false, true, address(mp));
+        emit MerchantPay.MarketSet(makeAddr("market"));
+        mp.setMarket(ICapitalMarket(makeAddr("market")));
+
+        vm.expectRevert(MerchantPay.MarketAlreadySet.selector);
+        mp.setMarket(ICapitalMarket(makeAddr("market2")));
+    }
+
+    function test_Sweep_OwnerRecoversStrayUsdt() public {
+        vm.prank(HOLDER);
+        USDT.transfer(address(mp), 3e6); // a plain transfer, not a payment
+        address stranger = makeAddr("stranger");
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger));
+        vm.prank(stranger);
+        mp.sweep(stranger);
+
+        vm.expectRevert(MerchantPay.ZeroAddress.selector);
+        mp.sweep(address(0));
+
+        address treasury = makeAddr("treasury");
+        vm.expectEmit(true, false, false, true, address(mp));
+        emit MerchantPay.Swept(treasury, 3e6);
+        mp.sweep(treasury);
+        assertEq(_bal(treasury), 3e6);
+        assertEq(_bal(address(mp)), 0);
+    }
+
+    function test_Ownership_TransfersInTwoSteps() public {
+        address newOwner = makeAddr("newOwner");
+        mp.transferOwnership(newOwner);
+        assertEq(mp.owner(), address(this), "not yet");
+        vm.prank(newOwner);
+        mp.acceptOwnership();
+        assertEq(mp.owner(), newOwner);
     }
 }

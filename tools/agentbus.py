@@ -54,8 +54,9 @@ def unread(name):
     msgs = _lines()
     mine = [m for m in msgs[seen:] if m["to"] in (name, "all") and m["from"] != name]
     os.makedirs(BUS, exist_ok=True)
-    open(cur + ".tmp", "w").write(str(len(msgs)))
-    os.replace(cur + ".tmp", cur)  # atomic: concurrent watchers never read a half-written cursor
+    tmp = f"{cur}.{os.getpid()}.tmp"  # per-process temp name: two readers (hook + watcher) never collide
+    open(tmp, "w").write(str(len(msgs)))
+    os.replace(tmp, cur)  # atomic: concurrent watchers never read a half-written cursor
     return mine
 
 
@@ -81,7 +82,8 @@ def hook_output(event, name, msgs):
     howto = f'Reply with: agentbus send --as {name} --to <sender> "..."'
     if event == "stop":
         return {"decision": "block", "reason": f"New agentbus messages for {name}:\n{body}\nHandle them now. {howto}"}
-    return {"hookSpecificOutput": {"hookEventName": "SessionStart" if event == "session" else "UserPromptSubmit",
+    ev = {"session": "SessionStart", "prompt": "UserPromptSubmit", "tool": "PostToolUse"}[event]
+    return {"hookSpecificOutput": {"hookEventName": ev,
                                    "additionalContext": f"Unread agentbus messages for {name}:\n{body}\n{howto}"}}
 
 
@@ -93,7 +95,7 @@ def main(argv=None):
     w = sub.add_parser("watch"); w.add_argument("--as", dest="name", required=True); w.add_argument("--timeout", type=float, default=0)
     l = sub.add_parser("log"); l.add_argument("-n", type=int, default=50)
     sub.add_parser("who")
-    h = sub.add_parser("hook"); h.add_argument("event", choices=["session", "prompt", "stop"]); h.add_argument("--as", dest="name", required=True); h.add_argument("--wait", type=float, default=600)
+    h = sub.add_parser("hook"); h.add_argument("event", choices=["session", "prompt", "tool", "stop"]); h.add_argument("--as", dest="name", required=True); h.add_argument("--wait", type=float, default=600)
     a = p.parse_args(argv)
 
     if a.cmd == "send":

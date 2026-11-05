@@ -46,3 +46,55 @@ Branch `main` · design lock "Mercury + dither" (human 21:30) and the demo picks
   - D5: blur or a hidden tab cancels a hold
 - The touch hold still needs a check on a real iPhone and Android, with VoiceOver and TalkBack (the human).
 - LOW clean-ups, folded into the next batch that touches each file: duplicated button classes, unused exports, the dither seeding test, the resize debounce, shared brightness constants.
+
+## Batch 004-P2-web-pages-and-sign-in
+
+Branch `main` · FR-PAY-4/5/6/7/9/15, FR-REL-4/6, FR-PRIV-1, NFR-12/13, AT-1 (up to `/relay` plus the shop's poll). Plan-reviewed (1 BLOCKER), 2 rounds, all five checks PASS.
+
+### What was built
+- **Checkout API:**
+  - `POST /api/v1/sessions` (Bearer, constant time), `GET /api/v1/sessions/:id` (the shop's poll: open, pending, paid or expired), `POST /api/v1/sessions/:id/pay`.
+  - The server rebuilds the sale from its own session and verifies the signature before relaying.
+  - One payment in flight per checkout.
+  - **Consumer rule:** a payment is recorded only when the chain shows gross == amount, payer == the signer and merchant == the session's merchant, read at the receipt's block with 5 × 1 s retries.
+- **Unknown outcomes are pending:** timeouts, dropped connections, 5xx and unconfirmed 200s.
+  - The chain settles them on the next attempt, on page load and on the poll.
+  - If the order is paid, the receipt shows. If not, the checkout reopens once the approval is past `validBefore` + 60 s.
+- **Each attempt gets a fresh salt**, and a relayer `replay` is a refusal, because MerchantPay's `OrderPaid` blocks a second payment per order on-chain.
+- **KIND_SALE = 2**, pinned by a vector read from the deployed contract.
+- **Pages:**
+  - `/`: hero over the DitherScene; "Try a checkout" is a plain form POST that gets a 303.
+  - `/proofs`.
+  - `/checkout/[id]`: static scene; ready, confirming, expired, error and paid states.
+  - `/r/[id]`: the refund status streams in from the chain.
+  - Branded not-found sheets.
+  - `/merchant`: SIWE gate, today's sales before fees, relayer health, payments.
+- **Sign-in (FR-PAY-15):**
+  - an HMAC-signed, time-stamped, single-use nonce cookie from a CSPRNG
+  - the message must expire within 10 min
+  - an HMAC session cookie (HttpOnly, Lax, Secure on https, 8 h)
+- **Headers:** X-Frame-Options DENY everywhere. A strict CSP on /checkout and /r: `'self'` scripts and connects, `frame-ancestors 'none'`.
+
+### Verified
+- **Round 2:** tester, code, security, ux and ci PASS. ci: typecheck, lint, 82 tests (1 live skipped), build, bundle grep all clean.
+- **Mutations:** tester 16/16 round-2 mutants and 24/25 round-1 mutants killed; code reviewer 21/30 new mutants killed, plus 9/12 round-1 survivors.
+- **NFR-12** (Chrome, as downloaded): /checkout 184,554 B ≤ 204,800; LCP 0.62 s (lab, Lighthouse mobile settings; Lighthouse itself isn't installed).
+- **FR-PAY-7 / FR-PRIV-1 scan:** 0 crypto words, 0 other origins, 0 CSP violations in every reachable state.
+- **Live:** the consumer rule against the deployed MerchantPay (smoke sale); the hold → sign → server verify → real relayer round trip (refused: no `paySale` yet).
+- **Final MerchantPay** `0xab81…4251`: KIND_SALE 2, not paused, fee 0.10.
+
+### Decisions (human gate, 01:45)
+- Public home copy approved.
+- `'unsafe-inline'` stays on the pay pages.
+- Visitors' demo: say plainly that it's a demo (batch 005).
+- Money rules approved: pending settled by the chain, a fresh salt per attempt, replay = refusal.
+
+### Open (batch 005 unless noted)
+- The live AT-1 needs relayer `paySale` on `0xab81…` (claude-relayer RL2) and a funded customer (H1).
+- Carried items:
+  - security F1: in flight at expiry
+  - security F3: not-found copy after a restart
+  - ux L1/L2
+  - code F2/F5/F6
+  - the privacy link in tokens.css
+- Neon `app_sessions` before any deploy (sessions, claims, pending and used nonces are per process).

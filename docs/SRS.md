@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| Version | 1.1 (pre-event planning; no code before the hackathon starts) |
-| Changes | 1.1 (human approved 2026-11-05 19:50): FR-TOK-8 → M, Phase 4 (AT-8 needs it at G4); FR-PRIV-1 and FR-PRIV-4 reworded (pay and checkout pages make no browser chain reads); CON-8 added (demo funding by seed script); DEP-3 pass criteria (Privy then failed them, guest wallet); demo amounts divided by 10 in AT-3–AT-7 to fit the test USDT we can collect; FR-PRIV-4 lists the Nym worker's own traffic (human 21:18); NFR-12–14 speed budgets for web and relayer (human 22:28: "the system should be fast"); FR-PAY-15 merchant wallet sign-in (human asked in the frontend session, 22:5x); FR-PAY-16 owner sweep of stray USDT (human 23:40, contracts gate); demo amounts ÷100 in AT-3–AT-7 (human 23:58: ~110 test USDT available); FR-ADV-7 and FR-INV-6 cut (human 00:34) |
+| Version | 2.0 (2026-11-06 02:35: pivot to a stablecoin payment gateway for international merchants; financing kept as the Capital tab) |
+| Changes | 1.1 (human approved 2026-11-05 19:50): FR-TOK-8 → M, Phase 4 (AT-8 needs it at G4); FR-PRIV-1 and FR-PRIV-4 reworded (pay and checkout pages make no browser chain reads); CON-8 added (demo funding by seed script); DEP-3 pass criteria (Privy then failed them, guest wallet); demo amounts divided by 10 in AT-3–AT-7 to fit the test USDT we can collect; FR-PRIV-4 lists the Nym worker's own traffic (human 21:18); NFR-12–14 speed budgets for web and relayer (human 22:28: "the system should be fast"); FR-PAY-15 merchant wallet sign-in (human asked in the frontend session, 22:5x); FR-PAY-16 owner sweep of stray USDT (human 23:40, contracts gate); demo amounts ÷100 in AT-3–AT-7 (human 23:58: ~110 test USDT available); FR-ADV-7 and FR-INV-6 cut (human 00:34); FR-KYC-2/3, FR-PAY-13/14 and FR-INV-7 cut, contracts freeze after G4 (human 02:02) |
 | Status | Approved scope, locked by the human 2026-11-05 |
 | Related | ARCHITECTURE.md (design and ABI), PHASES.md (delivery plan), `research_notes/Mumbai hackathon idea validation/build_H1_merchant_capital.md` (design detail and sources), HANDOFF.md (decisions, event facts) |
 | Change control | Requirements change only through HANDOFF.md + an agentbus message; IDs are never reused |
@@ -16,8 +16,8 @@
 This document states what Merchant Capital+ must do, for whom, and how each requirement is accepted. It is the reference for the contracts lane, the frontend lane, the reviewer and the judges' checklist.
 
 ### 1.2 Scope
-Merchant Capital+ lets a shop on Whitechain:
-1. get paid in USDT through invoices, payment links and a drop-in checkout, where the payer never needs the gas token;
+**v2.0 (human, 2026-11-06):** Merchant Capital+ is a **stablecoin payment gateway for merchants who sell internationally**, like Razorpay or Stripe, settling in USDT on Whitechain with zero gas for the payer. It runs **strictly on Whitechain Sepolia (testnet)**; mainnet is a later step, out of scope. Merchants get payment links, payment pages, invoices, QR codes, a one-line payment button and an SDK, discount vouchers, multi-currency prices, sales reports and instant settlements. Financing stays as one extra tab (Capital). A shop on Whitechain can:
+1. get paid in USDT through payment links, payment pages, invoices, QR codes, a payment button, the SDK and a drop-in checkout, where the payer never needs the gas token;
 2. refund in one click and export its books;
 3. raise cash today, either by selling an invoice to investors at a discount, or with an **advance repaid automatically from a share of every future sale**.
 
@@ -115,7 +115,7 @@ Priority: **M** = must (never cut), **S** = should, **C** = could (first to cut)
 | FR-REL-1 | The relayer submits signed payment, funding, acknowledgement and registration actions and returns the transaction hash | M | 1–2 |
 | FR-REL-2 | The relayer only calls an allowlist of contract functions | M | 2 |
 | FR-REL-3 | The relayer simulates every transaction and never sends one that would revert | M | 2 |
-| FR-REL-4 | Each relayed payment carries a relay fee (0.10 USDT, contract cap 0.25) and a minimum payment of 1 USDT | M | 2 |
+| FR-REL-4 | Each relayed payment carries a relay fee (0.10 USDT, contract cap 0.25) and a minimum payment of 1 USDT. On a sale the fee is inside the price; on an invoice it is added on top (the debtor pays face + 0.10), so financed holders are repaid in full | M | 2 |
 | FR-REL-5 | The relayer enforces gas price and gas limit caps, short signature windows, per-payer/merchant/IP rate limits, and a daily WBT budget | M | 2 |
 | FR-REL-6 | A health endpoint reports WBT balance, gas spent today, budget left, unswapped fees and pause state; the merchant dashboard shows it | M | 2 |
 | FR-REL-7 | Payment functions are permissionless, so anyone can submit a signed authorization if the relayer is down | M | 2 |
@@ -183,6 +183,24 @@ Priority: **M** = must (never cut), **S** = should, **C** = could (first to cut)
 
 ---
 
+### 3.9 Payment gateway (Whitechain Operate, v2.0)
+| ID | Requirement | Pri | Phase |
+|---|---|---|---|
+| FR-GW-1 | **Payment Links:** the merchant creates a link (amount, currency, description, optional expiry, single or reusable); the customer pays it through the hosted checkout; the dashboard shows each link's status and payments | M | 4 |
+| FR-GW-2 | **Payment Pages:** a no-code page (title, description, merchant logo and colour, fixed items or an open amount) at a shareable URL | M | 4 |
+| FR-GW-3 | **QR codes:** every link, page and invoice has a QR code to download or show at a counter | M | 4 |
+| FR-GW-4 | **Payment Button:** one HTML line (`<script>` tag) or one React component renders a pay button that opens the hosted checkout | M | 4 |
+| FR-GW-5 | **SDK:** a small TypeScript SDK (`packages/sdk`) to create checkout sessions, list payments and verify webhook signatures; the demo shop integrates with it | M | 4 |
+| FR-GW-6 | **API keys:** the signed-in merchant creates and revokes test-mode API keys; only a hash is stored | M | 4 |
+| FR-GW-7 | **Webhooks:** the merchant registers an endpoint; `payment.succeeded` and `payment.refunded` are sent signed (HMAC-SHA256) with retries (supersedes FR-PAY-10's C priority) | M | 4 |
+| FR-GW-8 | **Developer docs:** a `/docs` page with a 3-step integration (button, SDK, webhooks) and copyable test keys | M | 4 |
+| FR-GW-9 | **Reports:** gross, net, fees, refunds and payment count by day for a chosen date range, a sales chart, and CSV export (supersedes FR-PAY-12) | M | 4 |
+| FR-GW-10 | **Settlements:** a page listing each payment's settlement to the merchant wallet, with its transaction link, showing that settlement is instant (T+0) | M | 4 |
+| FR-GW-11 | **Multi-currency prices:** the merchant prices in USD, EUR, GBP, INR, AED or SGD; checkout converts to USDT at a public FX rate (display and quote only), shows the rate and its time, and locks it for the session | M | 4 |
+| FR-GW-12 | **Discount vouchers:** the merchant creates codes (percent or fixed off, expiry, usage limit); the customer applies one at checkout; each code is an Arkiv entity that expires with the code, and redemptions are counted on our server | M | 4 |
+| FR-GW-13 | **Gift vouchers:** a customer buys a prepaid USDT voucher that someone else redeems at that merchant | C | 5 |
+| FR-GW-14 | **Test mode everywhere:** every page shows a "Test mode · Whitechain testnet" badge; no mainnet path exists | M | 4 |
+
 ## 4. Non-functional requirements
 | ID | Category | Requirement | How it's verified |
 |---|---|---|---|
@@ -236,12 +254,17 @@ Priority: **M** = must (never cut), **S** = should, **C** = could (first to cut)
 | AT-4 | A 5 USDT sale after AT-3 | 1 USDT to the investor in the same tx; outstanding falls from 11 to 10 |
 | AT-5 | The advance reaches its cap | Lien removed; the next sale pays the merchant 100% minus the fee |
 | AT-6 | Two investors fund a 100 USDT invoice at 12% APR, 60 days (60 / 40 split) | Prices ≈58.84 and ≈39.23 (exact 6-decimal values from the contract); merchant receives their sum |
-| AT-7 | The debtor pays the invoice | Investors receive 60 and 40 in the same tx; claim settled |
+| AT-7 | The debtor pays the invoice (100.10: face + relay fee) | Investors receive 60 and 40 in the same tx; claim settled |
 | AT-8 | An investor tries to send a claim to a non-eligible wallet | Transaction reverts; the UI showed the reason first |
 | AT-9 | The investor offer book loads | Offers come from Arkiv; expired offers are gone; meter shows private reads |
 | AT-10 | The relayer is asked to submit an invalid or unprofitable call | Rejected before sending; no gas spent |
+| AT-11 | A customer pays a 25 USD payment link with 0 WBT | One tx on the explorer; the link shows Paid; the merchant's report and settlement list include it |
+| AT-12 | A payment page with two items is bought with a discount code | Arkiv holds the code entity; the price is reduced; the code's use count rises by one |
+| AT-13 | A 20 EUR item is bought | Checkout showed the EUR→USDT rate and its time; the USDT paid matches the locked quote |
+| AT-14 | The demo shop adds the gateway with the payment button or the SDK | Integration code ≤ 20 lines; a sale completes; the webhook arrives and its signature verifies |
+| AT-15 | The merchant opens Reports for today after AT-11–AT-14 and one refund | Gross, fees, refunds and count match the chain; the CSV has the same rows |
 
 ---
 
 ## 7. Out of scope
-Real KYC (simulated by our compliance key, disclosed); late fees; credit scoring beyond public sales stats; mainnet deployment (official USDT isn't on Whitechain mainnet yet); pooled vaults (ERC-7540) for passive investors; legal recovery beyond the merchant's payment stream; preventing merchants from taking sales outside our checkout (mitigated by default rules and visible sales stats, not prevented).
+Mainnet deployment of any kind (strictly testnet, human 2026-11-06); subscriptions, smart collect, affordability/EMI and one-click saved checkout (Razorpay features we don't build); Real KYC (simulated by our compliance key, disclosed); late fees; credit scoring beyond public sales stats; mainnet deployment (official USDT isn't on Whitechain mainnet yet); pooled vaults (ERC-7540) for passive investors; legal recovery beyond the merchant's payment stream; preventing merchants from taking sales outside our checkout (mitigated by default rules and visible sales stats, not prevented).

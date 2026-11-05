@@ -152,7 +152,8 @@ contract MerchantPayEdgesForkTest is Test {
         vm.prank(merchant);
         uint256 id = mp.createInvoice(address(0), 1e6, uint64(block.timestamp + 1), bytes32(0));
         bytes32 nonce = mp.invoiceNonce(id, 1e6, "s1");
-        bytes32 structHash = keccak256(abi.encode(RECEIVE_TYPEHASH, payer, address(mp), 1e6, 0, validBefore, nonce));
+        bytes32 structHash =
+            keccak256(abi.encode(RECEIVE_TYPEHASH, payer, address(mp), 1e6 + FEE, 0, validBefore, nonce)); // invoices: fee on top
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(
             payerKey, MessageHashUtils.toTypedDataHash(IERC20Permit(address(USDT)).DOMAIN_SEPARATOR(), structHash)
         );
@@ -161,7 +162,7 @@ contract MerchantPayEdgesForkTest is Test {
 
         assertEq(saleId, 1);
         assertEq(invoicePaymentId, 2);
-        assertEq(USDT.balanceOf(merchant), 2 * (1e6 - FEE));
+        assertEq(USDT.balanceOf(merchant), (1e6 - FEE) + 1e6, "sale minus fee + invoice credited in full");
         assertEq(USDT.balanceOf(address(mp)), 0);
     }
 }

@@ -1,160 +1,72 @@
-"use client";
-
-// Phase 1 rail proofs (DEP-6, DEP-3), in the Merchant Capital+ design system. Internal page;
-// Phase 2 replaces it with the checkout and the merchant dashboard.
-import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { Button } from "@/components/Button";
+// Home: the approved "Mercury + dither" hero (design-refs/merchant-capital-demo.html), with the two ways in:
+// pay as a customer, or open the shop's dashboard.
+import Link from "next/link";
+import { Button, buttonClasses } from "@/components/Button";
 import { DitherScene } from "@/components/DitherScene";
-import { HoldButton } from "@/components/HoldButton";
-import { TRANSPORT_LABEL, getChainClient } from "@/lib/anon";
-import { proveTypedDataSigning } from "@/lib/guest-wallet";
 
-type Proof =
-  | { state: "running" }
-  | { state: "ok"; detail: string; ms: number }
-  | { state: "failed"; error: string };
+const steps = [
+  { title: "A customer pays", body: "One hold on the pay page. No app to install, no fees, nothing to set up." },
+  { title: "Part of each sale repays your advance", body: "20% of every sale goes to the investors who funded your cash, inside the same payment." },
+  { title: "The advance closes itself", body: "Once 110.00 is repaid the share stops, and every sale is yours again." },
+];
 
-const STILL_WORKING_AFTER_S = 60;
-
-/** One plain line: viem's shortMessage when present, never the request body or URL. */
-function errorMessage(error: unknown): string {
-  if (!(error instanceof Error)) return "Unexpected error";
-  const short = (error as { shortMessage?: unknown }).shortMessage;
-  return (typeof short === "string" ? short : error.message).split("\n")[0];
-}
-
-function useProof(run: () => Promise<string>) {
-  const [proof, setProof] = useState<Proof>({ state: "running" });
-  // Resolves on success and rejects on failure, so a HoldButton can show done or fall back to idle.
-  const execute = useCallback(() => {
-    const startedAt = performance.now();
-    return run().then(
-      (detail) => setProof({ state: "ok", detail, ms: performance.now() - startedAt }),
-      (error: unknown) => {
-        setProof({ state: "failed", error: errorMessage(error) });
-        throw error;
-      },
-    );
-  }, [run]);
-  useEffect(() => {
-    execute().catch(() => {}); // the failure is already on screen
-  }, [execute]);
-  const retry = () => {
-    setProof({ state: "running" });
-    return execute();
-  };
-  return [proof, retry] as const;
-}
-
-const readBlock = async () => {
-  const client = await getChainClient();
-  const block = await client.getBlockNumber();
-  return `Block ${block.toLocaleString("en-US")} on chain 1874, via ${TRANSPORT_LABEL}`;
-};
-
-const signProof = async () => {
-  const { address, valid } = await proveTypedDataSigning();
-  if (!valid) throw new Error("Signature did not verify");
-  return `Guest wallet ${address.slice(0, 6)}…${address.slice(-4)} signed and verified typed data for chain 1874`;
-};
-
-/** Mounted only while a proof runs, so it restarts from 0 on every run. */
-function Elapsed() {
-  const [seconds, setSeconds] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setSeconds((s) => s + 1), 1000);
-    return () => clearInterval(id);
-  }, []);
-  return (
-    <span className="data text-ink-muted" aria-hidden="true">
-      {" "}({seconds} s{seconds >= STILL_WORKING_AFTER_S && " · still working"})
-    </span>
-  );
-}
-
-function StatusPill({ proof }: { proof: Proof }) {
-  const [tone, word] =
-    proof.state === "ok" ? ["text-positive", "OK"] : proof.state === "failed" ? ["text-critical", "Failed"] : ["text-ink-muted", "Running"];
-  return <span className={`inline-flex rounded-pill border border-current px-3 py-0.5 text-xs font-medium tracking-wide ${tone}`}>{word}</span>;
-}
-
-interface ProofCardProps {
-  title: string;
-  requirement: string;
-  runningText: string;
-  proof: Proof;
-  action: ReactNode;
-}
-
-function ProofCard({ title, requirement, runningText, proof, action }: ProofCardProps) {
-  return (
-    <section className="grid content-start gap-4 rounded-md border border-hairline bg-surface p-6 shadow-card">
-      <div className="flex items-center justify-between gap-4">
-        <span className="label text-ink-muted">{requirement}</span>
-        <StatusPill proof={proof} />
-      </div>
-      <h2 className="title">{title}</h2>
-      <p className="min-h-10 text-sm break-words">
-        <span role="status" aria-live="polite">
-          {proof.state === "running" && runningText}
-          {proof.state === "ok" && <span className="tabular-nums">{proof.detail}</span>}
-          {proof.state === "failed" && <span className="text-critical">{proof.error}</span>}
-        </span>
-        {proof.state === "running" && <Elapsed />}
-        {proof.state === "ok" && proof.ms >= 1000 && <span className="data text-ink-muted"> ({(proof.ms / 1000).toFixed(1)} s)</span>}
-      </p>
-      <div>{action}</div>
-    </section>
-  );
-}
-
-export default function RailProofs() {
-  const [read, retryRead] = useProof(readBlock);
-  const [sign, retrySign] = useProof(signProof);
-  const reading = read.state === "running";
+export default function Home() {
   return (
     <main>
       <section className="relative overflow-hidden bg-scene-night text-glass-ink">
         <DitherScene />
-        {/* Night wash behind the text so it keeps AA contrast over lit dots; the moon side stays clear. */}
         <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-linear-to-r from-scene-night from-25% via-scene-night/70 via-50% to-transparent to-75%" />
-        <div className="relative mx-auto max-w-5xl px-4 pt-6 pb-24">
+        <div className="relative mx-auto max-w-6xl px-4 pt-6 pb-28">
           <header className="flex items-center justify-between gap-4">
             <span className="title whitespace-nowrap">Merchant Capital+</span>
-            <span className="data hidden sm:inline">Phase 1 · rail proofs</span>
+            <nav className="flex items-center gap-1 text-sm">
+              <Link href="/merchant" className={buttonClasses("glass", "h-10 px-4 text-sm")}>
+                Dashboard
+              </Link>
+            </nav>
           </header>
-          <h1 className="display-xl mt-20 max-w-xl text-balance">
-            Private reads.
+          <p className="label mt-24 opacity-75">For cafés and shops in Mumbai</p>
+          <h1 className="display-xl mt-3 max-w-2xl text-balance">
+            Get paid today.
             <br />
-            Signed on your <span className="emphasis">device</span>.
+            Repay from your <span className="emphasis">sales</span>.
           </h1>
-          <p className="mt-4 max-w-md opacity-80">
-            Two checks before any money moves: the app reads Whitechain through the Nym mixnet, and a guest wallet signs a payment message without
-            leaving the browser.
+          <p className="mt-4 max-w-md opacity-85">
+            Customers pay in USDT with one hold and no fees to them. Shops raise cash now, and 20% of each sale repays it automatically until
+            it&apos;s done.
           </p>
+          <div className="mt-8 flex flex-wrap gap-3">
+            <form method="post" action="/api/demo-checkout">
+              <Button type="submit">Try a checkout</Button>
+            </form>
+            <Link href="/merchant" className={buttonClasses("glass")}>
+              Open the dashboard
+            </Link>
+          </div>
         </div>
       </section>
-      <div className="relative mx-auto -mt-12 grid max-w-5xl gap-6 px-4 pb-16 md:grid-cols-2">
-        <ProofCard
-          title="Private chain read"
-          requirement="DEP-6"
-          runningText="Connecting privately… the first private read can take one to two minutes."
-          proof={read}
-          action={
-            // aria-disabled, not disabled: a disabled button drops keyboard focus to the body in Chromium.
-            <Button variant="quiet" aria-disabled={reading} onClick={reading ? undefined : () => void retryRead().catch(() => {})}>
-              Read block again
-            </Button>
-          }
-        />
-        <ProofCard
-          title="Guest wallet signature"
-          requirement="DEP-3"
-          runningText="Signing…"
-          proof={sign}
-          action={<HoldButton label="Hold to sign again" busyLabel="Signing" doneLabel="Signed" onConfirm={retrySign} />}
-        />
-      </div>
+
+      <section className="mx-auto max-w-6xl px-4 py-16" aria-labelledby="how">
+        <h2 id="how" className="display">
+          How it works
+        </h2>
+        <ol className="mt-8 grid gap-6 md:grid-cols-3">
+          {steps.map((step, i) => (
+            <li key={step.title} className="grid content-start gap-3 rounded-md border border-hairline bg-surface p-6 shadow-card">
+              <span className="data text-accent">0{i + 1}</span>
+              <h3 className="title">{step.title}</h3>
+              <p className="text-ink-muted">{step.body}</p>
+            </li>
+          ))}
+        </ol>
+      </section>
+
+      <footer className="mx-auto flex max-w-6xl flex-wrap justify-between gap-4 border-t border-hairline px-4 py-8 text-sm text-ink-muted">
+        <span>Testnet demo on Whitechain Sepolia. Test USDT only.</span>
+        <Link href="/proofs" className="inline-flex min-h-11 items-center underline underline-offset-4 hover:text-ink">
+          Private reads and wallet proofs
+        </Link>
+      </footer>
     </main>
   );
 }
