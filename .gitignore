@@ -27,3 +27,8 @@ lcov.info
 
 .claude/worktrees/
 .env
+
+# Private strategy notes and the internal agent log (human 01:07): local only
+research/
+research_notes/
+HANDOFF_LOG.md

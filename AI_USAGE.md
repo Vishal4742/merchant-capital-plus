@@ -12,7 +12,7 @@ ETHGlobal asks teams to say where AI was used, down to files, and to commit spec
 |---|---|---|
 | `docs/SRS.md` | Requirements, acceptance tests | Before the event (planning), approved by the human |
 | `ARCHITECTURE.md`, `PHASES.md`, `PIPELINE.md`, `AGENTS.md` | Design, delivery plan, process, rules | Before the event (planning) |
-| `research_notes/`, `research/` | Prize research, Whitechain inventory, build-plan research | Before the event |
+| `research_notes/`, `research/`, `HANDOFF_LOG.md` | Prize research, Whitechain inventory, build-plan research, the agents' running log | Before and during the event; kept local, not in the public repo (competitive strategy) |
 | `.batches/NNN-*/` | Every change: spec, build reports, test and review verdicts | During the event |
 
 ## Per-file record (filled at each batch close)
