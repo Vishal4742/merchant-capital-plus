@@ -121,7 +121,7 @@ Razorpay/Stripe-style gateway, **strictly Whitechain testnet**. Functional refer
 | Links | `/api/v1/links` CRUD | contracts (batch 007) | single-use or reusable, `reference_id` unique per merchant, `expire_by`, status active/paid/expired/cancelled |
 | Pages | `/api/v1/pages` CRUD | contracts | slug, title, items or open amount; vanity `/@{merchant-slug}` |
 | Vouchers | `/api/v1/vouchers` CRUD + atomic redeem | contracts | percent or amount off, max redemptions, expiry, min amount, first-time-only; mirrored to Arkiv as `mcplus.voucher.v1` with `code_hash = HMAC-SHA256(VOUCHER_HASH_SECRET, merchant ‖ code)` |
-| FX quotes | `POST /api/v1/quotes` → `{quote_id, usdt_amount, rate, source, fetched_at, expires_at}` | contracts | public ECB-based rate, cached ≤ 15 min, quote locked 10 min |
+| FX quotes | `POST /api/v1/quotes` → `{quote_id, usdt_amount, rate, source, fetched_at, expires_at}` | contracts | **USD = USDT 1:1** (stated at checkout); EUR, GBP, INR, AED, SGD at a public ECB-based rate, cached ≤ 15 min, quote locked 10 min |
 | Reports | `/api/v1/reports/*` | contracts | computed from on-chain `Paid` / `Refunded` logs (no tables); KPIs gross, net, refunds, fees, count, success rate, new vs returning payers; 7d/30d with delta; CSV |
 | Settlements | `/api/v1/settlements` | contracts | per payment: gross, fee, investor share, merchant net, tx hash, settled_at; balance card = merchant wallet USDT |
 | Keys | `/api/v1/keys` | contracts | `pk_test_…` / `sk_test_…`, only a hash stored, secret shown once |

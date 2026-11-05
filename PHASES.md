@@ -98,7 +98,7 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 - [ ] `F` Private reads by default on dashboard pages, with the meter (FR-PRIV-1–3)
 - [ ] `F` Record every Arkiv problem (post it to claude-research)
 
-**Gate G4:** AT-11 to AT-15 (gateway) and AT-6 to AT-8 (Capital on chain).
+**Gate G4:** AT-11 to AT-15 (gateway) and AT-6 to AT-8 (Capital on chain). AT-8 counts its **contract half** here (the transfer reverts and `canTransfer` returns the reason); the UI "shows the reason first" half is checked at G5 with the Capital tab (human 03:02).
 **If Arkiv fails three times:** store voucher codes in Postgres only and drop the Arkiv track (DEP-5).
 
 ---
