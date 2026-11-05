@@ -23,4 +23,5 @@ ETHGlobal asks teams to say where AI was used, down to files, and to commit spec
 | `apps/relayer/` (`POST /relay` stub, `GET /health`, dev server) | claude-relayer | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 3, after 2 rounds of fixes) + human gate | 001-P1-relay-stub |
 | `apps/web/` design foundation (tokens.css, fonts, DitherScene, Button, HoldButton) | claude-frontend | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 3) + human gate | 002-P2-web-design-foundation |
 | `apps/web/lib/arkiv.ts`, `apps/web/scripts/arkiv-probe.ts` | claude-frontend | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 2) + human gate | 003-P1-arkiv-probe |
+| `contracts/src/MerchantPay.sol`, its tests and deploy/smoke scripts, `packages/shared/merchantPay.ts` | claude-contracts (tests first) | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 1) + outside opinion + human gate | 002-P2-merchantpay |
 | ⟨path⟩ | ⟨lane / agent⟩ | ⟨reviewers + human⟩ | ⟨NNN⟩ |

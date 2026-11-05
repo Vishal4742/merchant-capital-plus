@@ -15,9 +15,9 @@ Repayment is enforced where the money arrives. One customer payment is split, in
 ### Whitechain (Operate · Scale · Tokenize; one prize)
 | Requirement | Evidence |
 |---|---|
-| Contracts deployed + verified on 1874 | MerchantPay ⟨link⟩ · CapitalMarket ⟨link⟩ · ClaimToken ⟨link⟩ · InvestorRegistry ⟨link⟩ |
-| USDT payment in the main flow | Shop sale ⟨tx⟩ · invoice payment ⟨tx⟩ · advance repayment split ⟨tx⟩ |
-| **Operate:** drop-in in ≈20 lines | `apps/shop` integration: ⟨N⟩ lines (⟨file links⟩); merchant view ⟨screenshot⟩, customer view ⟨screenshot⟩; refund ⟨tx⟩; CSV export ⟨link⟩ |
+| Contracts deployed + verified on 1874 | MerchantPay [0x83b5…73b7](https://explorer.testnet.whitechain.io/address/0x83b53Cc0a5A67fAd41bCc56e2ac40465Cf1573b7) (full match; redeployed once in Phase 3) · CapitalMarket ⟨link⟩ · ClaimToken ⟨link⟩ · InvestorRegistry ⟨link⟩ |
+| USDT payment in the main flow | Sale split in one tx [0xae155c49…](https://explorer.testnet.whitechain.io/tx/0xae155c49b9e10c098ff3f6146dd29256c75a52acaac85a3367e0c8e30e3cfb1a) (2 USDT → 0.10 fee + 1.90 merchant; payer 0 WBT) · invoice payment ⟨tx⟩ · advance repayment split ⟨tx⟩ |
+| **Operate:** drop-in in ≈20 lines | `apps/shop` integration: ⟨N⟩ lines (⟨file links⟩); merchant view ⟨screenshot⟩, customer view ⟨screenshot⟩; refund [0xbd91e67e…](https://explorer.testnet.whitechain.io/tx/0xbd91e67e672cf3a1c94e0fbf82335be719e2c77a4e0499328a9b767d3347f939); CSV export ⟨link⟩ |
 | **Scale:** zero crypto steps for the payer | Customer pays with one "Confirm payment" from a wallet the page creates for them (no WBT, no seed phrase, no chain name) ⟨screenshot⟩ |
 | **Scale:** who pays gas / how the relayer gets WBT / what stops draining | The merchant pays a 0.10 USDT fee inside each payment; the relayer swaps fees to WBT on YetiTrade ⟨tx⟩; drain guard: allowlisted calls, simulate first, fee in the tx, gas caps, rate limits, daily WBT budget ⟨code⟩ ⟨tests⟩ |
 | **Tokenize:** real transfer rules + lifecycle | ERC-1155 claim token with ERC-7943 rules (KYC allowlist via EAS, ≤8 holders, maturity lock, freeze on default) ⟨code⟩; blocked transfer ⟨revert tx⟩; advance funded → repaid → settled ⟨txs⟩ |
