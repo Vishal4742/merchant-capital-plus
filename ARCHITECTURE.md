@@ -44,7 +44,7 @@
  Offers: Arkiv Rabdi entities `mcplus.offer.v1`, expiry = offer deadline.
 ```
 
-**Design rules:** the chain is the source of truth; no log scans (Ankr caps `eth_getLogs` at 1,000 blocks, the official RPC at 10,000), so state comes from Multicall and history from Blockscout `/api/v2/addresses/{a}/logs`. Every payment function is permissionless, so anyone can submit a signed authorization if our relayer is down.
+**Design rules:** the chain is the source of truth; no log scans (Ankr caps `eth_getLogs` at 1,000 blocks, the official RPC at 10,000), so state comes from Multicall and history from Blockscout's `/api?module=logs&action=getLogs` endpoint (used in `apps/web/lib/onchain.ts`, verified live; Ankr caps `eth_getLogs` below 2,000 blocks). Every payment function is permissionless, so anyone can submit a signed authorization if our relayer is down.
 
 ## 2. Contracts: the interface between lanes (change only via agentbus + this file; **ABI frozen at gate G3**)
 
@@ -66,7 +66,7 @@ Deploy order: `InvestorRegistry` → `ClaimToken(registry, admin, LOCK_WINDOW)` 
 | `refund(uint256 paymentId, uint256 amount)` | merchant | `transferFrom(merchant → payer)`, `refunded ≤ gross`; **never touches investors** |
 | `setRelayFee(uint256 fee, address recipient)` (≤ `MAX_FEE` 0.25 USDT), `pause/unpause`, `setMarket` | owner | |
 
-Rules: minimum payment 1 USDT; relay fee 0.10 USDT taken inside the payment. Nonce = `keccak256(abi.encode(block.chainid, address(this), kind, invoiceIdOrMerchant, orderRef, amount, salt))`.
+Rules: minimum payment 1 USDT; relay fee 0.10 USDT (owner-settable, max 0.25): **inside** the payment for sales; **on top** for invoices since Phase 3 (the customer signs `amount + relayFee()`, the nonce covers the credited amount, partial payments are allowed, and an invoice is Paid only when fully paid). Nonce = `keccak256(abi.encode(block.chainid, address(this), kind, invoiceIdOrMerchant, orderRef, amount, salt))`.
 Events: `InvoiceCreated(uint256 indexed id, address indexed merchant, address indexed customer, uint256 amount, uint64 dueDate, bytes32 refHash)` · `InvoiceAcknowledged(uint256 indexed id)` · `InvoiceCancelled(uint256 indexed id)` · `Paid(uint256 indexed paymentId, address indexed merchant, address indexed payer, uint256 invoiceId, bytes32 orderRef, uint256 gross, uint256 fee, uint256 toInvestors, uint256 toMerchant)` · `Refunded(uint256 indexed paymentId, uint256 amount, uint256 totalRefunded)` · `RelayFeeSet(uint256 fee, address recipient)`
 
 ### `CapitalMarket.sol` (Tokenize)
