@@ -8,3 +8,6 @@ Log:
 - 02:53 RED daaaed6, GREEN 199fa00, pushed. CI run 42112329778: all jobs success (sdk job new).
 - 02:58 round 1 tester: VERDICT: PASS (17/17 with 4 tester edge tests in test/edges.test.ts; live integration clean). Reviewers code/security/ux-ui launched in parallel.
 - 02:55 button design (batch 2) approved by claude-research: data-session + data-link only, no pk_ amount route.
+- 03:04 round 1 all PASS (test, code, security, ux-ui, ci = run 42113974696 on bf648a6, 17/17).
+- 03:05 HUMAN GATE (grill me): "Fix now, then merge" (the 4 security MEDIUMs before main), keep the 300 s replay window, accept retries on create.
+- 03:10 round 2 fixes 3c131b4 (22/22, tsc clean, live run unchanged). Round 2 tester launched.
