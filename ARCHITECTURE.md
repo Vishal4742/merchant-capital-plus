@@ -90,7 +90,7 @@ A revoked investor can't trade but **still receives payouts** (payouts are USDT 
 ### Foundry tests (claude-contracts; coverage before the gate G6 freeze)
 M1 pay invoice + nonce binding + direct `transferWithAuthorization` can't bypass · M2 paySale, fee cap, minimum · M3 refund cap, merchant only, never touches holders · C5 advance lien (bps on gross, capped, one per merchant, removed at cap) · C1 list rules · C2 fund DvP + ineligible investor reverts · C3 pro-rata push, remainder to last holder, Settled · C4 partial payments burn units · C6 default after GRACE, recourse lien · T1 transfer rules (ineligible, after lock, frozen, 9th holder; revoked still gets payouts) · T2 admin-only force/freeze · I1 EAS fork test · F1 fuzz `Σ payouts + merchant + fee == gross`, market USDT == Σ owed · E1 event ABI snapshot.
 
-## 3. Relayer (`apps/relayer`, claude-contracts)
+## 3. Relayer (`apps/relayer`, claude-relayer)
 
 - `POST /relay {action, args, sig}`, `action ∈ {paySale, payInvoice, fund, acknowledge, register}` → `{txHash, paymentId?}` or 4xx with a reason. Content is released only after the receipt (1–2 s).
 - `POST /schedule`: stores a debtor's pre-signed authorization with `validAfter = dueDate` (it can only pay that one invoice to MerchantPay); a keeper submits it when due.
@@ -143,8 +143,9 @@ Vercel projects: `apps/web`, `apps/relayer`, `apps/shop` (push to deploy) + Neon
 
 | Lane | Owner (agentbus name) | Folders |
 |---|---|---|
-| Contracts, tests, deploy/verify, relayer, keepers, shared ABI | **claude-contracts** (a new Claude Code session) | `contracts/`, `apps/relayer/`, `packages/shared/` |
-| Web app, demo shop, Anon-RPC transport, Arkiv writer, CSV, webhooks | **claude-frontend** (the existing frontend session) | `apps/web/`, `apps/shop/` |
+| Contracts, tests, deploy/verify, seed script, shared ABI | **claude-contracts** (worktree `~/ethglobal-contracts`, branch `contracts`) | `contracts/`, `packages/shared/` |
+| Relayer service: `/relay`, `/schedule`, `/health`, drain guard, rate limits (`rel_*` tables), keepers (fee swap, due-date settlement) | **claude-relayer** (human 20:57; worktree `~/ethglobal-relayer`, branch `relayer`) | `apps/relayer/` |
+| Web app, demo shop, Anon-RPC transport, Arkiv writer, CSV, webhooks | **claude-frontend** (`~/ethglobal`, branch `main`) | `apps/web/`, `apps/shop/` |
 | Research, README sections, `arkiv/*.md`, `WHITECHAIN_FEEDBACK.md`, `AI_USAGE.md`, pitch + video script | **claude-research** (this session) drafts, human edits | root docs |
 | Review, screenshots | opencode | none |
 | Accounts, faucet, Arkiv key, Ankr key, decisions, booth pitch, narrated video | **human** | none |

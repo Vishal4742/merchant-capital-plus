@@ -26,7 +26,7 @@ Names: `claude-contracts`, `claude-frontend`, `claude-research`, `opencode`, `hu
 - **Tracks:** Whitechain (one prize; judged in Operate + Scale + Tokenize) · Arkiv Build · EF Anon-RPC (+ CROPS).
 - **Why:** best odds of the shortlist (53–88%, research/odds.py), fits all three Whitechain tracks, and matches the Whitechain workshop's asks (B2B2C, "Tokenize… borrowing and lending", "build what business actually needs"). Anon-RPC tested on Whitechain.
 - **Build order (human approved): unique part first.** P2 Operate + Scale core → **P3 the advance repaid from checkout** → P4 invoice financing + Arkiv + Anon-RPC → P5 extras. The advance is on the never-cut list.
-- **Lanes:** claude-contracts (contracts, relayer, shared ABI) · claude-frontend (apps/web, apps/shop) · claude-research (docs, README, pitch) · opencode review · human. zcode is out.
+- **Lanes:** claude-contracts (contracts, seed script, shared ABI) · claude-relayer (apps/relayer, keepers; added by the human 20:57) · claude-frontend (apps/web, apps/shop) · claude-research (docs, README, pitch) · opencode review · human. zcode is out.
 - **Rival:** an invoice-financing stack (InvoiceRegistry / ReceivableMarket) is already on testnet. Never claim "first"; lead with advances repaid from checkout.
 - **Superseded and deleted:** PayKit and agent pocket money (old docs moved to the Trash 2026-11-05 19:13). Don't revive them.
 - **Commit rule (human approved):** small commits per lane, pushed every 1–2 hours from 21:00 (AGENTS.md).

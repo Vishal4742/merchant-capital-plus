@@ -72,7 +72,7 @@ Missing file or a first line that isn't one of these → stop and tell the human
 | Role | Who | Does |
 |---|---|---|
 | Final gate | **human** | Approves specs that are product decisions, sees every batch work, answers "grill me", says ship |
-| Lane orchestrator + builder | **claude-contracts** (`contracts/`, `apps/relayer/`, `packages/shared/`) · **claude-frontend** (`apps/web/`, `apps/shop/`) | Starts batches, writes specs, builds (or spawns a developer subagent on disjoint files), runs rounds, commits its lane |
+| Lane orchestrator + builder | **claude-contracts** (`contracts/`, `packages/shared/`) · **claude-relayer** (`apps/relayer/`) · **claude-frontend** (`apps/web/`, `apps/shop/`) | Starts batches, writes specs, builds (or spawns a developer subagent on disjoint files), runs rounds, commits its lane |
 | Docs + SRS owner | **claude-research** | SRS changes (§6), README, `arkiv/*.md`, `WHITECHAIN_FEEDBACK.md`, `AI_USAGE.md`, pitch. No product code |
 | Role agents (`.claude/agents/`) | subagents | tester · reviewer-code · reviewer-security · reviewer-ux-ui · ci · plan-reviewer · verify-app · code-simplifier |
 | Outside opinions | Codex (read-only), Command Code models (Kimi K3, DeepSeek V4 Pro) | Independent review of contract diffs; never write access |
