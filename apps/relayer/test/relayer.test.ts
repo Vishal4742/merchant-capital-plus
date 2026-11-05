@@ -8,7 +8,9 @@ import {
   parseSignature, parseTransaction, serializeSignature, toHex, type Address, type Hex,
 } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
-import { health, makeClient, PULL_STUB_ABI, relay, relayerClient, USDT_ABI, USDT_DOMAIN } from '../src/relayer.ts';
+import {
+  health, makeClient, PULL_STUB_ABI, relay, relayerClient, startBalanceRefresh, USDT_ABI, USDT_DOMAIN,
+} from '../src/relayer.ts';
 
 const STUB: Address = '0x1111111111111111111111111111111111111111';
 const USDT: Address = '0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7';
@@ -565,6 +567,77 @@ test('RPC pre-checks are judged in spec order: replay, payer_has_code, insuffici
     assert.deepEqual([res.status, res.out.code], [status, code], JSON.stringify(res.out));
     assert.equal(node.sent.length, 0);
   }
+});
+
+// ---- tester round 2 (batch 002): the /health balance cache (human 23:27) ----
+
+const balanceNode = (wei: bigint, opts: NodeOptions = {}) => {
+  const node = fakeNode({ ...opts, on: { ...opts.on, eth_getBalance: () => toHex(wei) } });
+  return { ...node, reads: () => node.calls.filter((c) => c === 'eth_getBalance').length };
+};
+const wbtOf = async (node: ReturnType<typeof fakeNode>) => (await (await health(node.client)).json()).wbt;
+
+test("the health cache is per relayer: one relayer never sees another relayer's cached balance", async () => {
+  const a = balanceNode(500_000_000_000_000_000n);
+  const b = balanceNode(10n ** 18n);
+  assert.equal(await wbtOf(a), '0.5');
+  assert.equal(await wbtOf(b), '1', 'b got a cached balance');
+  assert.equal(await wbtOf(a), '0.5');
+  assert.deepEqual([a.reads(), b.reads()], [1, 1]);
+});
+
+test('a failed send (sync timeout, receipt for another hash) also clears the health cache; a reject before the lock does not', async () => {
+  const failing: [string, NodeOptions['on']][] = [
+    ['sync timeout', { eth_sendRawTransactionSync: () => { throw rpcError(4, 'transaction not included in time'); } }],
+    ['receipt_mismatch', { eth_sendRawTransactionSync: () => receipt(`0x${'cd'.repeat(32)}`) }],
+  ];
+  for (const [name, on] of failing) {
+    const node = balanceNode(10n ** 18n, { on });
+    await wbtOf(node);
+    assert.equal((await post((await signedPull({ value: 999_999n })).body, node)).status, 422);
+    await wbtOf(node);
+    assert.equal(node.reads(), 1, `${name}: a local reject must not clear the cache`);
+    assert.equal((await post((await signedPull()).body, node)).status, 502);
+    await wbtOf(node);
+    assert.equal(node.reads(), 2, `${name}: the next health read after a failed send must be fresh`);
+  }
+});
+
+// Tester round 2 (F6): a /health read that starts before a send and answers after it must not re-cache the
+// pre-send balance ("refreshed after each send" must hold for every interleaving).
+test('a health read in flight across a send does not re-cache the pre-send balance', async () => {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let reads = 0;
+  const node = fakeNode({
+    on: { eth_getBalance: async () => (++reads === 1 ? (await held, toHex(5n * 10n ** 17n)) : toHex(4995n * 10n ** 14n)) },
+  });
+  const before = health(node.client); // reads the pre-send balance, slowly
+  await sleep(5);
+  assert.equal(reads, 1, 'the first health read reached the node');
+  assert.equal((await post((await signedPull()).body, node)).status, 200);
+  release();
+  assert.equal((await (await before).json()).wbt, '0.5');
+  assert.equal(await wbtOf(node), '0.4995', 'served the pre-send balance after the send');
+});
+
+// Tester round 2 (F5) + human 01:14: Node drops idle sockets after ~4 s, so a cache miss after idle paid a new TLS
+// handshake. A 3 s background refresh keeps the balance ≤ ~3 s old and the connection warm; /health never waits.
+test('the background refresh keeps re-reading the balance, so health is served from the cache', async () => {
+  const node = balanceNode(10n ** 18n);
+  const stop = startBalanceRefresh(node.client, 20);
+  try {
+    await sleep(75);
+    const refreshed = node.reads();
+    assert.ok(refreshed >= 3, `only ${refreshed} background reads in 75 ms at a 20 ms interval`);
+    assert.equal(await wbtOf(node), '1');
+    assert.equal(node.reads(), refreshed, 'health waited on the node instead of the refreshed cache');
+  } finally {
+    stop();
+  }
+  const stopped = node.reads();
+  await sleep(50);
+  assert.equal(node.reads(), stopped, 'the refresh kept running after stop()');
 });
 
 test('an unparsable relayer key fails with a fixed message that never contains the key', () => {

@@ -12,6 +12,8 @@ const ANKR_RPC = 'https://rpc.ankr.com/whitechain_testnet';
 const RPC_TIMEOUT_MS = 8_000;
 const SYNC_SEND_TIMEOUT_MS = 4_000; // eth_sendRawTransactionSync inclusion wait (NFR-4: payment ≤ 5 s)
 const BALANCE_TTL_MS = 5_000; // /health WBT balance may be 5 s old (human 23:27, NFR-14 ≤ 300 ms p95); a send clears it
+// Refresh it every 3 s (human 01:14): stays inside the 5 s rule and keeps the Ankr socket warm (Node drops idle ones at ~4 s).
+const BALANCE_REFRESH_MS = 3_000;
 export const MAX_BODY_BYTES = 4096;
 
 // Drain guard (ARCHITECTURE §3 points 4–6; limits approved by the human 2026-11-05 22:53).
@@ -70,6 +72,8 @@ export function relayerClient(): RelayerClient {
     throw new Error('RELAYER_PRIVATE_KEY is not a valid private key'); // noble's own message prints the number
   }
   liveClient = makeClient(account, http(process.env.RPC_URL ?? ANKR_RPC, { timeout: RPC_TIMEOUT_MS, retryCount: 0 }));
+  // ponytail: only a long-running process keeps refreshing; on Vercel the first /health of an invocation may read live.
+  startBalanceRefresh(liveClient, BALANCE_REFRESH_MS);
   return liveClient;
 }
 
@@ -82,13 +86,22 @@ const EXPIRED = reject(422, 'expired', 'validBefore must leave at least 30 s');
 const tooLate = (p: Pull) => p.validBefore < nowSeconds() + MIN_REMAINING_S;
 
 const balances = new Map<Address, { wei: bigint; at: number }>();
-async function wbtBalance(client: RelayerClient): Promise<bigint> {
+let sendCount = 0; // a balance read that overlaps a send is returned but not cached
+async function wbtBalance(client: RelayerClient, fresh = false): Promise<bigint> {
   const address = client.account.address;
   const hit = balances.get(address);
-  if (hit && Date.now() - hit.at < BALANCE_TTL_MS) return hit.wei;
+  if (!fresh && hit && Date.now() - hit.at < BALANCE_TTL_MS) return hit.wei;
+  const sendsBefore = sendCount;
   const wei = await client.getBalance({ address });
-  balances.set(address, { wei, at: Date.now() });
+  if (sendCount === sendsBefore) balances.set(address, { wei, at: Date.now() });
   return wei;
+}
+
+/** Re-reads the WBT balance every `everyMs` until stopped; never keeps the process alive on its own. */
+export function startBalanceRefresh(client: RelayerClient, everyMs: number): () => void {
+  const timer = setInterval(() => wbtBalance(client, true).catch(() => undefined), everyMs);
+  timer.unref();
+  return () => clearInterval(timer);
 }
 
 // ponytail: in-process, one relayer process. Upgrade: a rel_sent table + Postgres advisory lock (batch 003, multi-instance Vercel).
@@ -218,7 +231,8 @@ async function send(client: RelayerClient, p: Pull, target: Address): Promise<Re
   } catch (e) {
     return reject(502, 'rpc_error', reason(e), txHash);
   } finally {
-    balances.delete(client.account.address); // gas was (probably) spent: the next /health reads fresh
+    sendCount += 1; // gas was (probably) spent: drop the cached balance and any read in flight
+    balances.delete(client.account.address);
   }
 }
 
