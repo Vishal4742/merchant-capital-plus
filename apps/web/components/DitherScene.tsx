@@ -4,7 +4,8 @@
 // Dots gather from scattered positions, sit on depth layers that drift with the cursor, part around
 // the cursor, and lamps twinkle. Without WebGL it draws the same dots once on a 2D canvas.
 import { useEffect, useRef } from "react";
-import { CELL, buildDots, type Dots } from "@/lib/dither";
+import { drawStatic } from "@/components/StaticScene";
+import { CELL, buildDots } from "@/lib/dither";
 
 const GATHER_MS = 1800;
 const PUSH_RADIUS = 120;
@@ -41,21 +42,6 @@ const fragmentShader = /* glsl */ `
 
 function cssColor(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-}
-
-function drawStatic(canvas: HTMLCanvasElement, dots: Dots, w: number, h: number) {
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
-  canvas.width = Math.round(w * dpr);
-  canvas.height = Math.round(h * dpr);
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.fillStyle = cssColor("--scene-night");
-  ctx.fillRect(0, 0, w, h);
-  ctx.fillStyle = cssColor("--scene-dot");
-  for (let i = 0; i < dots.count; i++) {
-    ctx.fillRect(dots.positions[3 * i] - CELL / 2, dots.positions[3 * i + 1] - CELL / 2, CELL - 1, CELL - 1);
-  }
 }
 
 interface DitherSceneProps {
@@ -181,8 +167,9 @@ export function DitherScene({ className }: DitherSceneProps) {
           renderer.setAnimationLoop(null);
           points?.geometry.dispose();
           material.dispose();
+          // no forceContextLoss(): with cacheComponents, Next hides routes in <Activity> and re-runs this effect on the
+          // same canvas, whose context must still work (review-code R3 D1). dispose() frees the GPU resources.
           renderer.dispose();
-          renderer.forceContextLoss(); // free the GPU context; browsers cap live contexts at about 16
         };
       })
       .catch(() => {
