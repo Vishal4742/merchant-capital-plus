@@ -73,7 +73,8 @@ Test funds: claim WBT at faucet.testnet.whitechain.io, then swap some to the pri
 - Demo wallets were funded by a one-off seed script from a team wallet (test USDT swapped from faucet WBT on YetiTrade). The app has no faucet button.
 - The customer's wallet is a guest key kept in the browser (no email recovery). We tested Privy's email login and dropped it: it always sends analytics with the wallet address to its servers, and we don't ship trackers.
 - A merchant could take sales outside our checkout; default rules, recourse and public sales stats mitigate this, they don't prevent it.
-- ⟨anything cut from the cut list⟩
+- Cut for time: default and recourse handling (a claim that is never repaid stays outstanding; no freeze-and-recourse lien).
+- ⟨anything else cut from the cut list⟩
 
 ## Team and AI usage
 ⟨team⟩ · AI usage per file and the full build trail: `AI_USAGE.md`, `.batches/`
