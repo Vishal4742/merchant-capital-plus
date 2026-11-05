@@ -9,12 +9,13 @@
 | 2:10–2:40 | "Repayment is enforced where the money arrives. A card rail can't route one payment to three parties under rules nobody can change." | Split diagram |
 | 2:40–3:00 | "Ready for mainnet when official USD₮ lands. We'd like to keep building in the Builders Program." | Close |
 
-## Video (target 2:45: ETHGlobal needs 2–4 min, CROPS caps at 3; your own voice, no AI voice, no s| 0:00–0:15 | The problem: a café waits to be paid, and no bank lends against small daily sales |
+## Video (target 2:45: ETHGlobal needs 2–4 min, CROPS caps at 3; your own voice, no AI voice, no speed-up, ≤20 s backstory, desktop recording ≥720p)
+| Time | Scene |
+|---|---|
+| 0:00–0:15 | The problem: a café waits to be paid, and no bank lends against small daily sales |
 | 0:15–0:40 | Merchant signs in with their wallet and takes a 100 USDT advance; an investor funds it (AT-3) |
 | 0:40–1:10 | Customer buys in the separate demo shop with one tap: no gas, no wallet app. The explorer shows one tx: fee, 20% to the investor, the rest to the merchant (AT-1, AT-4) |
 | 1:10–1:40 | The shop sells a 1,000 USDT invoice: the offer appears on Arkiv, two investors buy (AT-6, AT-9); a transfer to a non-allowed wallet is blocked with its reason (AT-8) |
 | 1:40–2:10 | The client pays the invoice; both investors are repaid in the same tx (AT-7); one refund (AT-2) and the CSV export |
 | 2:10–2:30 | "Private reads" chip: dashboards read through Nym; who pays gas, the relayer health and the drain guard (AT-10) |
 | 2:30–2:45 | Close: repayment is enforced where the money arrives; Builders Program ask |
-or; refund; CSV export |
-| 2:30–2:45 | Who pays gas, the drain guard, close |
