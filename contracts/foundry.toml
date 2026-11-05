@@ -18,5 +18,9 @@ remappings = [
     "forge-std/=lib/forge-std/src/",
 ]
 
+[lint]
+# Deadlines and due dates here are minutes to days away; seconds of sequencer drift don't matter.
+exclude_lints = ["block-timestamp"]
+
 [rpc_endpoints]
 whitechain = "https://rpc.ankr.com/whitechain_testnet"
