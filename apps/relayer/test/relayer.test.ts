@@ -1,69 +1,107 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { connect, createServer as createTcpServer, type AddressInfo } from 'node:net';
+import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 import {
-  custom, decodeFunctionData, encodeErrorResult, http, keccak256, parseAbi, parseSignature, parseTransaction, type Hex,
+  custom, decodeFunctionData, domainSeparator, encodeErrorResult, encodeFunctionResult, http, keccak256, parseAbi,
+  parseSignature, parseTransaction, serializeSignature, toHex, type Address, type Hex,
 } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
-import { health, makeClient, PULL_STUB_ABI, relay } from '../src/relayer.ts';
+import {
+  health, makeClient, PULL_STUB_ABI, relay, relayerClient, startBalanceRefresh, USDT_ABI, USDT_DOMAIN,
+} from '../src/relayer.ts';
 
-const STUB = '0x1111111111111111111111111111111111111111';
-const USDT = '0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7';
+const STUB: Address = '0x1111111111111111111111111111111111111111';
+const USDT: Address = '0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7';
 const HALF_WBT = '0x6f05b59d3b20000'; // 0.5e18 wei
+const ABI = [...USDT_ABI, ...PULL_STUB_ABI];
+const REVERT_DATA = encodeErrorResult({ abi: parseAbi(['error Error(string)']), errorName: 'Error', args: ['TetherToken: auth invalid'] });
+const now = () => BigInt(Math.floor(Date.now() / 1000));
+const cut = (s: string) => s.slice(0, 70);
+const rpcError = (code: number, message: string, data?: unknown) => Object.assign(new Error(message), { code, data });
 
-// A fake JSON-RPC node: records every method called and answers just enough for viem's write path.
-// `on` overrides single methods (tester round 1: failure paths).
-function fakeNode({ revert = false, on = {} as Record<string, (params: unknown[]) => unknown> } = {}) {
+interface NodeOptions {
+  code?: Hex;
+  balance?: bigint;
+  gasPrice?: bigint;
+  used?: Hex[];
+  sendDelayMs?: number;
+  on?: Record<string, (params: unknown[]) => unknown>; // override one method; the simulation is 'eth_call:pull'
+}
+
+// A stateful fake JSON-RPC node: USDT reads, the stub's pull (reverts once its authorization is used), a relayer
+// nonce that advances on every send, and eth_sendRawTransactionSync. `calls` records every method in order.
+function fakeNode(opts: NodeOptions = {}) {
   const calls: string[] = [];
-  let sentRaw: Hex | undefined;
+  const sent: Hex[] = [];
+  const simulations: Record<string, unknown>[] = []; // the eth_call request objects of every pull simulation
+  const used = new Set<Hex>(opts.used ?? []);
+  let nonce = 7;
+
+  async function answer(method: string, params: unknown[]): Promise<unknown> {
+    switch (method) {
+      case 'eth_getCode': return opts.code ?? '0x';
+      case 'eth_gasPrice': return toHex(opts.gasPrice ?? 5_001_000_000n);
+      case 'eth_getTransactionCount': return toHex(nonce);
+      case 'eth_getBalance': return HALF_WBT;
+      case 'eth_call': {
+        const call = decodeFunctionData({ abi: ABI, data: (params[0] as { data: Hex }).data });
+        if (call.functionName === 'authorizationState') {
+          return encodeFunctionResult({ abi: USDT_ABI, functionName: 'authorizationState', result: used.has(call.args[1]) });
+        }
+        if (call.functionName === 'balanceOf') {
+          return encodeFunctionResult({ abi: USDT_ABI, functionName: 'balanceOf', result: opts.balance ?? 10_000_000n });
+        }
+        if (call.functionName === 'pull' && used.has(call.args[4])) throw rpcError(3, 'execution reverted: TetherToken: auth invalid', REVERT_DATA);
+        return '0x';
+      }
+      case 'eth_sendRawTransactionSync': {
+        const raw = params[0] as Hex;
+        sent.push(raw);
+        await sleep(opts.sendDelayMs ?? 0);
+        const { args } = decodeFunctionData({ abi: PULL_STUB_ABI, data: parseTransaction(raw).data! });
+        used.add(args[4]);
+        nonce += 1;
+        calls.push('eth_sendRawTransactionSync:done');
+        return receipt(keccak256(raw));
+      }
+    }
+    throw new Error(`fake node: unexpected ${method}`);
+  }
+
+  const name = (method: string, params: unknown[]) => method === 'eth_call'
+    ? `eth_call:${decodeFunctionData({ abi: ABI, data: (params[0] as { data: Hex }).data }).functionName}`
+    : method;
   const transport = custom({
     async request({ method, params }: { method: string; params: unknown[] }) {
-      calls.push(method);
-      if (method === 'eth_sendRawTransaction') sentRaw = params[0] as Hex;
-      if (on[method]) return on[method](params);
-      switch (method) {
-        case 'eth_chainId': return '0x752';
-        case 'eth_call':
-          if (revert) throw Object.assign(new Error('execution reverted: FiatTokenV2: invalid signature'), { code: 3 });
-          return '0x';
-        case 'eth_fillTransaction': // Ankr's reth supports it (probed 21:12), so viem's live send path starts here
-          return {
-            raw: '0x',
-            tx: { ...(params[0] as object), type: '0x2', chainId: '0x752', nonce: '0x7', gas: '0x186a0', maxFeePerGas: '0x12a153440', maxPriorityFeePerGas: '0xf4240' },
-          };
-        case 'eth_estimateGas': return '0x186a0';
-        case 'eth_getTransactionCount': return '0x7';
-        case 'eth_maxPriorityFeePerGas': return '0xf4240';
-        case 'eth_gasPrice': return '0x12a05f200';
-        case 'eth_blockNumber': return '0x10';
-        case 'eth_getBlockByNumber':
-          return { number: '0x10', hash: `0x${'ab'.repeat(32)}`, timestamp: '0x1', baseFeePerGas: '0x12a05f200', transactions: [] };
-        case 'eth_sendRawTransaction':
-          sentRaw = params[0] as Hex;
-          return keccak256(sentRaw);
-        case 'eth_getTransactionReceipt':
-          return {
-            transactionHash: params[0], status: '0x1', blockNumber: '0x10', blockHash: `0x${'ab'.repeat(32)}`,
-            transactionIndex: '0x0', from: '0x0', to: STUB, gasUsed: '0x1', cumulativeGasUsed: '0x1',
-            effectiveGasPrice: '0x1', logs: [], logsBloom: `0x${'00'.repeat(256)}`, type: '0x2', contractAddress: null,
-          };
-        case 'eth_getBalance': return HALF_WBT;
-      }
-      throw new Error(`fake node: unexpected ${method}`);
+      const label = name(method, params);
+      calls.push(label);
+      if (label === 'eth_call:pull') simulations.push(params[0] as Record<string, unknown>);
+      return opts.on?.[label] ? opts.on[label](params) : answer(method, params);
     },
   }, { retryCount: 0 }); // a real code-3 revert over HTTP isn't retried; a thrown plain Error would be
   const relayer = privateKeyToAccount(generatePrivateKey());
-  return { client: makeClient(relayer, transport), calls, sentRaw: () => sentRaw, relayer };
+  return { client: makeClient(relayer, transport), calls, sent, simulations, relayer, answer, name };
 }
 
-// The payer side, as the guest wallet / cast will do it: EIP-3009 typed data to the stub.
-async function signedPull() {
+function receipt(hash: Hex, status = '0x1') {
+  return {
+    transactionHash: hash, status, blockNumber: '0x10', blockHash: `0x${'ab'.repeat(32)}`, transactionIndex: '0x0',
+    from: '0x0', to: STUB, gasUsed: '0x1', cumulativeGasUsed: '0x1', effectiveGasPrice: '0x1', logs: [],
+    logsBloom: `0x${'00'.repeat(256)}`, type: '0x2', contractAddress: null,
+  };
+}
+
+// The payer side, as the guest wallet will do it: EIP-3009 typed data to the target. `signerKey` signs for someone else.
+async function signedPull(o: { value?: bigint; validAfter?: bigint; validBefore?: bigint; to?: Address; signerKey?: Hex } = {}) {
   const payer = privateKeyToAccount(generatePrivateKey());
-  const message = { from: payer.address, to: STUB, value: 1_000_000n, validAfter: 0n, validBefore: 1_900_000_000n, nonce: keccak256('0x01') } as const;
-  const sig = await payer.signTypedData({
+  const signer = o.signerKey ? privateKeyToAccount(o.signerKey) : payer;
+  const message = {
+    from: payer.address, to: o.to ?? STUB, value: o.value ?? 1_000_000n, validAfter: o.validAfter ?? 0n,
+    validBefore: o.validBefore ?? now() + 600n, nonce: toHex(crypto.getRandomValues(new Uint8Array(32))),
+  } as const;
+  const sig = await signer.signTypedData({
     domain: { name: 'Tether USD', version: '1', chainId: 1874, verifyingContract: USDT },
     types: {
       ReceiveWithAuthorization: [
@@ -74,127 +112,179 @@ async function signedPull() {
     primaryType: 'ReceiveWithAuthorization',
     message,
   });
-  const args = { from: payer.address, value: '1000000', validAfter: '0', validBefore: '1900000000', nonce: message.nonce };
+  const args = {
+    from: payer.address, value: String(message.value), validAfter: String(message.validAfter),
+    validBefore: String(message.validBefore), nonce: message.nonce,
+  };
   return { body: { action: 'pull', args, sig }, message, sig };
 }
+
+const post = async (body: unknown, node: ReturnType<typeof fakeNode>) => {
+  const res = await relay(typeof body === 'string' ? body : JSON.stringify(body), node.client, STUB);
+  return { status: res.status, out: await res.json() };
+};
+const expectedArgs = (m: Awaited<ReturnType<typeof signedPull>>['message'], sig: Hex) => {
+  const { r, s, yParity } = parseSignature(sig);
+  return [m.from, m.value, m.validAfter, m.validBefore, m.nonce, yParity + 27, r, s];
+};
+// One parallel round before the lock: four reads + the gas-capped simulation.
+const PRECHECKS = ['eth_call:authorizationState', 'eth_call:balanceOf', 'eth_call:pull', 'eth_gasPrice', 'eth_getCode'];
+
+test('the USDT EIP-712 domain hashes to the on-chain DOMAIN_SEPARATOR', () => {
+  assert.equal(domainSeparator({ domain: USDT_DOMAIN }), '0xcdcfacb6b15c8238b4e5fbb47bdb83b7f83f50a531d264bf9763d2bd1d3d2a25');
+});
+
+// ---- 1. body parsing: 400, no RPC ----
 
 test('rejects malformed bodies with 400 and makes no RPC call', async () => {
   const { body } = await signedPull();
   const withArgs = (patch: object) => JSON.stringify({ ...body, args: { ...body.args, ...patch } });
   const bad = [
-    'not json',
-    'x'.repeat(5000),
-    JSON.stringify({ ...body, action: 'paySale' }),
-    JSON.stringify({ action: 'pull' }),
-    withArgs({ from: '0x123' }),
+    'not json', 'null', '[]', '"pull"', '', 'x'.repeat(5000), JSON.stringify(body).padEnd(4097, ' '),
+    JSON.stringify({ ...body, action: 'paySale' }), JSON.stringify({ action: 'pull' }),
+    JSON.stringify({ ...body, args: [body.args.from] }), JSON.stringify({ ...body, args: null }),
+    JSON.stringify({ action: 'pull', args: body.args }), JSON.stringify({ ...body, args: { ...body.args, nonce: undefined } }),
+    withArgs({ from: '0x123' }), withArgs({ from: 123 }),
     withArgs({ from: body.args.from.toLowerCase().replace(/^0x/, '0X') }),
-    withArgs({ value: '-1' }),
-    withArgs({ value: '1.5' }),
-    withArgs({ value: 1000000 }),
-    withArgs({ value: '0' }),
-    withArgs({ validBefore: '9'.repeat(78) }),
-    withArgs({ nonce: '0x1234' }),
-    JSON.stringify({ ...body, sig: body.sig.slice(0, 100) }),
-    JSON.stringify({ ...body, sig: `0x${'00'.repeat(65)}` }),
+    withArgs({ from: body.args.from.toUpperCase().replace(/^0X/, '0x') }), // bad checksum
+    withArgs({ value: '-1' }), withArgs({ value: '1.5' }), withArgs({ value: 1000000 }), withArgs({ value: '0' }),
+    withArgs({ value: '' }), withArgs({ value: ' 1' }), withArgs({ value: '+1' }), withArgs({ value: '0x10' }),
+    withArgs({ value: '1e6' }), withArgs({ validAfter: '-0' }), withArgs({ validBefore: '9'.repeat(78) }),
+    withArgs({ nonce: '0x1234' }), withArgs({ nonce: `0X${body.args.nonce.slice(2)}` }), withArgs({ nonce: `${body.args.nonce}00` }),
+    JSON.stringify({ ...body, sig: body.sig.slice(0, 100) }), JSON.stringify({ ...body, sig: `0x${'00'.repeat(65)}` }),
+    JSON.stringify({ ...body, sig: `${body.sig.slice(0, 130)}1d` }), JSON.stringify({ ...body, sig: `${body.sig}00` }),
   ];
   for (const input of bad) {
     const node = fakeNode();
-    const res = await relay(input, node.client, STUB);
-    assert.equal(res.status, 400, `expected 400 for ${input.slice(0, 60)}`);
-    assert.ok((await res.json()).error);
-    assert.deepEqual(node.calls, [], `no RPC for ${input.slice(0, 60)}`);
-  }
-});
-
-test('returns 422 and sends nothing when the simulation reverts', async () => {
-  const node = fakeNode({ revert: true });
-  const res = await relay(JSON.stringify((await signedPull()).body), node.client, STUB);
-  assert.equal(res.status, 422);
-  assert.match((await res.json()).error, /revert/i);
-  assert.ok(node.calls.includes('eth_call'));
-  assert.ok(!node.calls.includes('eth_sendRawTransaction'));
-});
-
-test('submits pull to the stub with the exact args and returns the tx hash', async () => {
-  const node = fakeNode();
-  const { body, message, sig } = await signedPull();
-  const res = await relay(JSON.stringify(body), node.client, STUB);
-  const out = await res.json();
-  assert.equal(res.status, 200, JSON.stringify(out));
-
-  const raw = node.sentRaw();
-  assert.ok(raw, 'a raw tx was broadcast');
-  assert.equal(out.txHash, keccak256(raw));
-  assert.equal(out.blockNumber, '16');
-
-  assert.deepEqual(node.calls, ['eth_call', 'eth_fillTransaction', 'eth_sendRawTransaction', 'eth_getTransactionReceipt']);
-  const tx = parseTransaction(raw);
-  assert.equal(tx.to?.toLowerCase(), STUB);
-  assert.equal(tx.chainId, 1874);
-  const { r, s, yParity } = parseSignature(sig);
-  const call = decodeFunctionData({ abi: PULL_STUB_ABI, data: tx.data! });
-  assert.equal(call.functionName, 'pull');
-  assert.deepEqual(call.args, [message.from, 1_000_000n, 0n, 1_900_000_000n, message.nonce, yParity + 27, r, s]);
-});
-
-test('health reports the relayer WBT balance and Phase 2 fields as null', async () => {
-  const node = fakeNode();
-  const res = await health(node.client);
-  assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), {
-    relayer: node.relayer.address, wbt: '0.5', gasSpentToday: null, budgetLeft: null, usdtFeesUnswapped: null, paused: false,
-  });
-});
-
-// ---- Tester round 1: trust-boundary edges (parsePull) and the 502 paths of the spec's interface ----
-
-const rpcDown = () => { throw Object.assign(new Error('fake node: internal error'), { code: -32000 }); };
-const cut = (s: string) => s.slice(0, 70);
-
-test('rejects more malformed shapes with 400 and makes no RPC call', async () => {
-  const { body } = await signedPull();
-  const withArgs = (patch: object) => JSON.stringify({ ...body, args: { ...body.args, ...patch } });
-  const exact = (n: number) => JSON.stringify(body).padEnd(n, ' ');
-  const bad = [
-    'null', '[]', '"pull"', '',
-    JSON.stringify({ ...body, args: [body.args.from] }),
-    JSON.stringify({ ...body, args: null }),
-    JSON.stringify({ action: 'pull', args: body.args }),            // no sig
-    JSON.stringify({ ...body, args: { ...body.args, nonce: undefined } }),
-    withArgs({ from: 123 }),
-    withArgs({ from: body.args.from.toUpperCase().replace(/^0X/, '0x') }), // bad checksum (all upper)
-    withArgs({ value: '' }), withArgs({ value: ' 1' }), withArgs({ value: '+1' }),
-    withArgs({ value: '0x10' }), withArgs({ value: '1e6' }), withArgs({ validAfter: '-0' }),
-    withArgs({ nonce: `0X${body.args.nonce.slice(2)}` }), withArgs({ nonce: `${body.args.nonce}00` }),
-    JSON.stringify({ ...body, sig: `${body.sig.slice(0, 130)}1d` }),   // v = 29
-    JSON.stringify({ ...body, sig: `${body.sig}00` }),                // 66 bytes
-    exact(4097),                                                      // one char over the cap
-  ];
-  for (const input of bad) {
-    const node = fakeNode();
-    const res = await relay(input, node.client, STUB);
-    assert.equal(res.status, 400, `expected 400 for ${cut(input)}`);
-    assert.ok((await res.json()).error);
+    const { status, out } = await post(input, node);
+    assert.equal(status, 400, `expected 400 for ${cut(input)}`);
+    assert.equal(out.code, 'bad_request');
+    assert.ok(out.error);
     assert.deepEqual(node.calls, [], `no RPC for ${cut(input)}`);
   }
 });
 
-test('accepts boundary values: a 4096-char body, uint256 max, lowercase from, compact v', async () => {
-  const { body, message, sig } = await signedPull();
-  const { r, s, yParity } = parseSignature(sig);
-  const max = '115792089237316195423570985008687907853269984665640564039457584007913129639935';
-  const cases: [string, readonly unknown[]][] = [
-    [JSON.stringify(body).padEnd(4096, ' '), [message.from, 1_000_000n, 0n, 1_900_000_000n, message.nonce, yParity + 27, r, s]],
-    [JSON.stringify({ ...body, args: { ...body.args, validBefore: max } }), [message.from, 1_000_000n, 0n, BigInt(max), message.nonce, yParity + 27, r, s]],
-    [JSON.stringify({ ...body, args: { ...body.args, from: body.args.from.toLowerCase() } }), [message.from, 1_000_000n, 0n, 1_900_000_000n, message.nonce, yParity + 27, r, s]],
-    [JSON.stringify({ ...body, sig: `${sig.slice(0, 130)}0${yParity}` }), [message.from, 1_000_000n, 0n, 1_900_000_000n, message.nonce, yParity + 27, r, s]],
+test('the 4 KB cap counts bytes: 4096 multibyte bytes pass, 4097 bytes (under 4096 chars) is 400 with no RPC', async () => {
+  const { body } = await signedPull();
+  const ofBytes = (n: number) => {
+    const euros = JSON.stringify({ ...body, memo: '€'.repeat(Math.floor((n - JSON.stringify({ ...body, memo: '' }).length) / 3)) });
+    return euros.padEnd(euros.length + n - Buffer.byteLength(euros), ' ');
+  };
+  const [fits, over] = [ofBytes(4096), ofBytes(4097)];
+  assert.deepEqual([Buffer.byteLength(fits), Buffer.byteLength(over)], [4096, 4097]);
+  assert.ok(over.length < 4096);
+  assert.equal((await post(fits, fakeNode())).status, 200);
+  const no = fakeNode();
+  assert.equal((await post(over, no)).status, 400);
+  assert.deepEqual(no.calls, []);
+});
+
+// ---- 2. local pre-checks: 422 with a code, no RPC ----
+
+test('local pre-checks reject with 422 + code before any RPC call', async () => {
+  const t = now();
+  const cases: [string, Parameters<typeof signedPull>[0]][] = [
+    ['not_yet_valid', { validAfter: t + 60n }],
+    ['expired', { validBefore: t + 10n }],
+    ['expired', { validBefore: t - 1n }],
+    ['window_too_long', { validBefore: t + 901n }],
+    ['window_too_long', { validBefore: 2n ** 256n - 1n }],
+    ['below_minimum', { value: 999_999n }],
+    ['below_minimum', { value: 1n }],
+    ['bad_signature', { signerKey: generatePrivateKey() }],
+    ['bad_signature', { to: '0x2222222222222222222222222222222222222222' }], // signed for another target
   ];
-  for (const [input, expected] of cases) {
+  for (const [code, o] of cases) {
     const node = fakeNode();
-    const res = await relay(input, node.client, STUB);
-    assert.equal(res.status, 200, `expected 200 for ${cut(input)}: ${await res.clone().text()}`);
-    const call = decodeFunctionData({ abi: PULL_STUB_ABI, data: parseTransaction(node.sentRaw()!).data! });
-    assert.deepEqual(call.args, expected, `calldata for ${cut(input)}`);
+    const { status, out } = await post((await signedPull(o)).body, node);
+    assert.equal(status, 422, `${code}: ${JSON.stringify(out)}`);
+    assert.equal(out.code, code);
+    assert.deepEqual(node.calls, [], `${code} made an RPC call`);
+  }
+});
+
+test('a contract as `from` fails locally as bad_signature (ECDSA never recovers to a contract), with no RPC', async () => {
+  const { body } = await signedPull();
+  const node = fakeNode({ code: '0x6080' });
+  const { status, out } = await post({ ...body, args: { ...body.args, from: USDT } }, node);
+  assert.deepEqual([status, out.code], [422, 'bad_signature']);
+  assert.deepEqual(node.calls, []);
+});
+
+test('accepts boundary values: exactly 1 USDT, 30 s left, 15 min window, lowercase from, compact v', async () => {
+  const t = now();
+  for (const o of [{ value: 1_000_000n }, { validBefore: t + 35n }, { validBefore: t + 899n }]) {
+    const { status, out } = await post((await signedPull(o)).body, fakeNode());
+    assert.equal(status, 200, `${JSON.stringify(o, (_, v) => typeof v === 'bigint' ? String(v) : v)}: ${JSON.stringify(out)}`);
+  }
+  const { body, message, sig } = await signedPull();
+  const lower = fakeNode();
+  assert.equal((await post({ ...body, args: { ...body.args, from: body.args.from.toLowerCase() } }, lower)).status, 200);
+  assert.deepEqual(decodeFunctionData({ abi: PULL_STUB_ABI, data: parseTransaction(lower.sent[0]).data! }).args, expectedArgs(message, sig));
+  const compact = await signedPull();
+  const { yParity } = parseSignature(compact.sig);
+  assert.equal((await post({ ...compact.body, sig: `${compact.sig.slice(0, 130)}0${yParity}` }, fakeNode())).status, 200);
+});
+
+// ---- 3. RPC pre-checks: one round, no simulation, no send ----
+
+test('RPC pre-checks reject in one round with their code and never simulate or send', async () => {
+  const delegated = `0xef0100${'ab'.repeat(20)}` as Hex; // EIP-7702 delegation designator
+  const cases: [string, number, (body: Awaited<ReturnType<typeof signedPull>>) => NodeOptions][] = [
+    ['payer_has_code', 422, () => ({ code: delegated })],
+    ['replay', 422, (p) => ({ used: [p.message.nonce] })],
+    ['insufficient_funds', 422, () => ({ balance: 999_999n })],
+    ['gas_price_cap', 503, () => ({ gasPrice: 6_000_000_001n })],
+    ['would_revert', 422, () => ({ on: { 'eth_call:pull': () => { throw rpcError(3, 'execution reverted: TetherToken: auth expired', REVERT_DATA); } } })],
+  ];
+  for (const [code, status, setup] of cases) {
+    const pull = await signedPull();
+    const node = fakeNode(setup(pull));
+    const res = await post(pull.body, node);
+    assert.deepEqual([res.status, res.out.code], [status, code], JSON.stringify(res.out));
+    assert.deepEqual([...node.calls].sort(), PRECHECKS, `${code}: only the pre-check round, no nonce, no send`);
+  }
+});
+
+test('every simulation carries the same gas limit and fees the relayer signs with', async () => {
+  const node = fakeNode();
+  assert.equal((await post((await signedPull()).body, node)).status, 200);
+  assert.equal(node.simulations.length, 2, 'pre-check round + inside the lock');
+  for (const call of node.simulations) {
+    assert.equal(call.gas, '0x61a80');
+    assert.equal(call.maxFeePerGas, '0x165a0bc00');
+  }
+});
+
+// ---- 4. the send path ----
+
+test('a valid pull is signed with capped gas and fees, sent once with eth_sendRawTransactionSync, and returns the hash', async () => {
+  const node = fakeNode();
+  const { body, message, sig } = await signedPull();
+  const { status, out } = await post(body, node);
+  assert.equal(status, 200, JSON.stringify(out));
+  assert.equal(node.sent.length, 1);
+  assert.equal(out.txHash, keccak256(node.sent[0]));
+  assert.equal(out.blockNumber, '16');
+
+  const tx = parseTransaction(node.sent[0]);
+  assert.equal(tx.to?.toLowerCase(), STUB);
+  assert.equal(tx.chainId, 1874);
+  assert.equal(tx.type, 'eip1559');
+  assert.equal(tx.nonce, 7);
+  assert.equal(tx.gas, 400_000n);
+  assert.equal(tx.maxFeePerGas, 6_000_000_000n);
+  assert.equal(tx.maxPriorityFeePerGas, 1_000_000n);
+  assert.equal(tx.value ?? 0n, 0n);
+  const call = decodeFunctionData({ abi: PULL_STUB_ABI, data: tx.data! });
+  assert.equal(call.functionName, 'pull');
+  assert.deepEqual(call.args, expectedArgs(message, sig));
+
+  assert.deepEqual(node.calls.slice(0, 5).sort(), PRECHECKS);
+  assert.deepEqual(node.calls.slice(5, 7).sort(), ['eth_call:pull', 'eth_getTransactionCount']);
+  assert.deepEqual(node.calls.slice(7), ['eth_sendRawTransactionSync', 'eth_sendRawTransactionSync:done']);
+  for (const never of ['eth_fillTransaction', 'eth_estimateGas', 'eth_sendRawTransaction', 'eth_getTransactionReceipt']) {
+    assert.ok(!node.calls.includes(never), `called ${never}`);
   }
 });
 
@@ -202,181 +292,365 @@ test('ignores a client-supplied target or calldata: the tx always goes to the st
   const node = fakeNode();
   const { body, message } = await signedPull();
   const evil = '0x2222222222222222222222222222222222222222';
-  const input = JSON.stringify({
+  const { status } = await post({
     ...body, to: evil, target: evil, address: evil, data: '0xdeadbeef', functionName: 'transfer',
     args: { ...body.args, to: evil, data: '0xdeadbeef' },
-  });
-  const res = await relay(input, node.client, STUB);
-  assert.equal(res.status, 200);
-  const tx = parseTransaction(node.sentRaw()!);
+  }, node);
+  assert.equal(status, 200);
+  const tx = parseTransaction(node.sent[0]);
   assert.equal(tx.to?.toLowerCase(), STUB);
-  assert.equal(tx.value ?? 0n, 0n);
-  const call = decodeFunctionData({ abi: PULL_STUB_ABI, data: tx.data! });
-  assert.equal(call.functionName, 'pull');
-  assert.equal(call.args[0], message.from);
+  assert.equal(decodeFunctionData({ abi: PULL_STUB_ABI, data: tx.data! }).args[0], message.from);
 });
 
-test('returns 502 with the txHash when the tx is mined but reverts', async () => {
+test('the same authorization sent twice at once is broadcast once; the copy is rejected after re-simulating', async () => {
+  const node = fakeNode({ sendDelayMs: 40 });
+  const { body } = await signedPull();
+  const [a, b] = await Promise.all([post(body, node), post(body, node)]);
+  assert.deepEqual([a.status, b.status].sort(), [200, 422]);
+  assert.ok(['replay', 'would_revert'].includes([a, b].find((r) => r.status === 422)!.out.code));
+  assert.equal(node.sent.length, 1);
+});
+
+test('after a sync-send timeout, re-POSTing the same authorization is a replay and is not sent again', async () => {
   const node = fakeNode({
-    on: {
-      eth_getTransactionReceipt: ([hash]) => ({
-        transactionHash: hash, status: '0x0', blockNumber: '0x10', blockHash: `0x${'ab'.repeat(32)}`,
-        transactionIndex: '0x0', from: '0x0', to: STUB, gasUsed: '0x1', cumulativeGasUsed: '0x1',
-        effectiveGasPrice: '0x1', logs: [], logsBloom: `0x${'00'.repeat(256)}`, type: '0x2', contractAddress: null,
-      }),
-    },
+    on: { eth_sendRawTransactionSync: (params) => { node.sent.push(params[0] as Hex); throw rpcError(4, 'transaction not included in time'); } },
   });
-  const res = await relay(JSON.stringify((await signedPull()).body), node.client, STUB);
-  const out = await res.json();
-  assert.equal(res.status, 502);
-  assert.equal(out.txHash, keccak256(node.sentRaw()!));
-  assert.match(out.error, /reverted/);
+  const { body } = await signedPull();
+  const first = await post(body, node);
+  assert.deepEqual([first.status, first.out.code], [502, 'rpc_error']);
+  assert.equal(first.out.txHash, keccak256(node.sent[0]));
+  const again = await post(body, node); // still pending on-chain, so authorizationState is false and simulation passes
+  assert.deepEqual([again.status, again.out.code], [422, 'replay'], JSON.stringify(again.out));
+  assert.equal(node.sent.length, 1);
 });
 
-test('returns 502 without a txHash when the broadcast fails', async () => {
-  const node = fakeNode({ on: { eth_sendRawTransaction: rpcDown } });
-  const res = await relay(JSON.stringify((await signedPull()).body), node.client, STUB);
-  const out = await res.json();
-  assert.equal(res.status, 502);
-  assert.ok(out.error);
-  assert.equal(out.txHash, undefined);
+test('two different payments at once are sent one after the other with nonces n and n+1', async () => {
+  const node = fakeNode({ sendDelayMs: 40 });
+  const [p, q] = await Promise.all([signedPull(), signedPull()]);
+  const results = await Promise.all([post(p.body, node), post(q.body, node)]);
+  assert.deepEqual(results.map((r) => r.status), [200, 200]);
+  assert.deepEqual(node.sent.map((raw) => parseTransaction(raw).nonce).sort(), [7, 8]);
+  const firstDone = node.calls.indexOf('eth_sendRawTransactionSync:done');
+  const secondSim = node.calls.lastIndexOf('eth_call:pull');
+  assert.ok(secondSim > firstDone, `the second simulation ran before the first send finished: ${node.calls.join(' > ')}`);
 });
 
-test('returns 502 with the txHash when the receipt lookup fails after the broadcast', async () => {
-  const node = fakeNode({ on: { eth_getTransactionReceipt: rpcDown } });
-  const res = await relay(JSON.stringify((await signedPull()).body), node.client, STUB);
-  const out = await res.json();
-  assert.equal(res.status, 502);
-  assert.equal(out.txHash, keccak256(node.sentRaw()!));
+test('failures inside the lock release it: the next payment still goes through', async () => {
+  const failures: NodeOptions['on'][] = [
+    { eth_sendRawTransactionSync: () => { throw rpcError(-32000, 'nonce too low'); } },
+    { eth_getTransactionCount: () => { throw rpcError(-32000, 'header not found'); } },
+  ];
+  for (const on of failures) {
+    assert.equal((await post((await signedPull()).body, fakeNode({ on }))).status, 502);
+    assert.equal((await post((await signedPull()).body, fakeNode())).status, 200);
+  }
 });
 
-test('health returns 502 when the balance lookup fails', async () => {
-  const node = fakeNode({ on: { eth_getBalance: rpcDown } });
-  const res = await health(node.client);
-  assert.equal(res.status, 502);
-  assert.ok((await res.json()).error);
+test('send outcomes: mined-but-reverted, a receipt for another hash, and a sync timeout all return 502 with our txHash', async () => {
+  const cases: [string, (params: unknown[]) => unknown][] = [
+    ['reverted', (params) => receipt(keccak256(params[0] as Hex), '0x0')],
+    ['receipt_mismatch', () => receipt(`0x${'cd'.repeat(32)}`)],
+    ['rpc_error', (params) => { throw rpcError(4, 'transaction not included in time', keccak256(params[0] as Hex)); }],
+    ['rpc_error', () => { throw rpcError(-32000, 'nonce too low'); }],
+  ];
+  for (const [code, reply] of cases) {
+    const node = fakeNode({ on: { eth_sendRawTransactionSync: (params) => { node.sent.push(params[0] as Hex); return reply(params); } } });
+    const { status, out } = await post((await signedPull()).body, node);
+    assert.deepEqual([status, out.code], [502, code], JSON.stringify(out));
+    assert.equal(out.txHash, keccak256(node.sent[0]), `${code}: our hash is returned so the client can poll it`);
+  }
 });
 
-// Spec interface: "422 simulation reverted … 502 RPC failure". An unreachable node during simulation is an RPC failure.
-// The RPC URL may carry a provider API key (RPC_URL), so no error body may echo it (NFR-3).
-test('an unreachable RPC gives 502 (not 422) and the error never echoes the RPC URL', async () => {
+// ---- 5. revert vs node failure ----
+
+test('a simulation revert is 422 would_revert with the reason; a -32603 with non-hex data is a node failure (502)', async () => {
+  const revert = fakeNode({ on: { 'eth_call:pull': () => { throw rpcError(3, 'execution reverted: TetherToken: auth invalid', REVERT_DATA); } } });
+  const r = await post((await signedPull()).body, revert);
+  assert.deepEqual([r.status, r.out.code], [422, 'would_revert']);
+  assert.match(r.out.error, /TetherToken: auth invalid/);
+  assert.equal(revert.sent.length, 0);
+
+  const internal = fakeNode({ on: { 'eth_call:pull': () => { throw rpcError(-32603, 'Internal error', 'not hex'); } } });
+  const i = await post((await signedPull()).body, internal);
+  assert.deepEqual([i.status, i.out.code], [502, 'rpc_error'], JSON.stringify(i.out));
+  assert.doesNotMatch(i.out.error, /revert/i, 'a node failure must not say "reverted"');
+});
+
+// A JSON-RPC node over real HTTP (the production transport): answers like fakeNode, except the pull simulation,
+// which gets one canned HTTP reply (Ankr's reth answers a reverting eth_call with code 3 + Error(string) data).
+async function relayOverHttp(pullReply: { status?: number; body: string | object }) {
+  const node = fakeNode();
+  const server = createServer((req, res) => {
+    let text = '';
+    req.on('data', (c) => { text += c; }).on('end', async () => {
+      const { id, method, params } = JSON.parse(text);
+      const reply = (status: number, body: string | object) => {
+        res.writeHead(status, { 'content-type': 'application/json' });
+        res.end(typeof body === 'string' ? body : JSON.stringify({ jsonrpc: '2.0', id, ...body }));
+      };
+      if (node.name(method, params) === 'eth_call:pull') return reply(pullReply.status ?? 200, pullReply.body);
+      reply(200, { result: await node.answer(method, params) });
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+  const client = makeClient(privateKeyToAccount(generatePrivateKey()), http(`http://127.0.0.1:${port}`, { retryCount: 0 }));
+  try {
+    const res = await relay(JSON.stringify((await signedPull()).body), client, STUB);
+    return { status: res.status, text: await res.text() };
+  } finally {
+    server.close();
+  }
+}
+
+test('over HTTP, a real revert (code 3, with or without data) is 422; transport and node failures are 502', async () => {
+  const withData = await relayOverHttp({ body: { error: { code: 3, message: 'execution reverted: TetherToken: auth invalid', data: REVERT_DATA } } });
+  assert.equal(withData.status, 422, withData.text);
+  assert.match(withData.text, /TetherToken: auth invalid/);
+  const bare = await relayOverHttp({ body: { error: { code: 3, message: 'execution reverted' } } });
+  assert.equal(bare.status, 422, bare.text);
+  const failures: [string, { status?: number; body: string | object }][] = [
+    ['HTTP 503', { status: 503, body: '<html>bad gateway</html>' }],
+    ['HTTP 429', { status: 429, body: { error: { code: 429, message: 'Too Many Requests' } } }],
+    ['HTTP 200, not JSON', { body: 'not json' }],
+    ['-32000', { body: { error: { code: -32000, message: 'header not found' } } }],
+    ['-32005', { body: { error: { code: -32005, message: 'request rate exceeded' } } }],
+    ['-32603', { body: { error: { code: -32603, message: 'Internal error' } } }],
+  ];
+  for (const [name, reply] of failures) {
+    const out = await relayOverHttp(reply);
+    assert.equal(out.status, 502, `${name} answered ${out.status} ${out.text}`);
+  }
+});
+
+test('an unreachable RPC gives 502 and no response echoes the RPC URL', async () => {
   const token = 'fake-provider-token-not-a-secret';
   const client = makeClient(privateKeyToAccount(generatePrivateKey()), http(`http://127.0.0.1:1/${token}`, { retryCount: 0 }));
   const relayed = await relay(JSON.stringify((await signedPull()).body), client, STUB);
   const relayedText = await relayed.text();
   const healthText = await (await health(client)).text();
-  assert.ok(!relayedText.includes(token) && !healthText.includes(token), 'RPC URL leaked into a response');
-  assert.ok(!relayedText.includes('127.0.0.1') && !healthText.includes('127.0.0.1'), 'RPC host leaked into a response');
-  assert.equal(relayed.status, 502, `RPC down during simulation answered ${relayed.status} ${relayedText}`);
+  for (const leak of [token, '127.0.0.1']) {
+    assert.ok(!relayedText.includes(leak) && !healthText.includes(leak), `${leak} leaked into a response`);
+  }
+  assert.equal(relayed.status, 502, relayedText);
 });
 
-// Spec interface: "400 … body over 4 KB … the chain isn't touched". 4 KB is bytes; the check counts UTF-16 chars.
-test('a body over 4 KB in bytes (multibyte padding, under 4096 chars) is rejected with 400 before any RPC', async () => {
+// ---- 6. health and the key ----
+
+test('health reports the relayer WBT balance and Phase 2 fields as null; a failed lookup is 502', async () => {
   const node = fakeNode();
-  const { body } = await signedPull();
-  const input = JSON.stringify({ ...body, memo: '€'.repeat(2000) }); // ~2.3k chars, ~6.3 KB of UTF-8
-  assert.ok(input.length <= 4096 && Buffer.byteLength(input) > 4096);
-  const res = await relay(input, node.client, STUB);
-  assert.equal(res.status, 400, `a ${Buffer.byteLength(input)}-byte body answered ${res.status}`);
-  assert.deepEqual(node.calls, []);
-});
-
-// ---- Tester round 2: simulation errors over the production transport (viem http), byte-cap boundary, dev.ts ----
-
-// A JSON-RPC node over real HTTP that answers every request with one canned reply.
-async function httpNode(reply: { status?: number; body: string | object }) {
-  const server = createServer((req, res) => req.resume().on('end', () => {
-    res.writeHead(reply.status ?? 200, { 'content-type': 'application/json' });
-    res.end(typeof reply.body === 'string' ? reply.body : JSON.stringify({ jsonrpc: '2.0', id: 0, ...reply.body }));
-  }));
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const { port } = server.address() as AddressInfo;
-  const client = makeClient(privateKeyToAccount(generatePrivateKey()), http(`http://127.0.0.1:${port}`, { retryCount: 0 }));
-  return { client, close: () => server.close() };
-}
-
-async function relayVia(reply: { status?: number; body: string | object }) {
-  const node = await httpNode(reply);
-  try {
-    const res = await relay(JSON.stringify((await signedPull()).body), node.client, STUB);
-    return { status: res.status, text: await res.text() };
-  } finally {
-    node.close();
-  }
-}
-
-// Ankr's reth answers a reverting eth_call with code 3 + Error(string) data (raw curl, round 2: "TetherToken: auth expired").
-test('over HTTP, a real revert (code 3 + Error(string) data, as Ankr answers) is still 422 with the reason', async () => {
-  const data = encodeErrorResult({ abi: parseAbi(['error Error(string)']), errorName: 'Error', args: ['TetherToken: auth invalid'] });
-  const out = await relayVia({ body: { error: { code: 3, message: 'execution reverted: TetherToken: auth invalid', data } } });
-  assert.equal(out.status, 422, out.text);
-  assert.match(out.text, /TetherToken: auth invalid/);
-  const bare = await relayVia({ body: { error: { code: 3, message: 'execution reverted' } } });
-  assert.equal(bare.status, 422, bare.text);
-});
-
-test('over HTTP, transport and node failures during simulation are 502', async () => {
-  const failures: [string, { status?: number; body: string | object }][] = [
-    ['HTTP 503', { status: 503, body: '<html>bad gateway</html>' }],
-    ['HTTP 429', { status: 429, body: { error: { code: 429, message: 'Too Many Requests' } } }],
-    ['HTTP 200, not JSON', { body: 'not json' }],
-    ['-32000 header not found', { body: { error: { code: -32000, message: 'header not found' } } }],
-    ['-32005 limit exceeded', { body: { error: { code: -32005, message: 'request rate exceeded' } } }],
-  ];
-  for (const [name, reply] of failures) {
-    const out = await relayVia(reply);
-    assert.equal(out.status, 502, `${name} answered ${out.status} ${out.text}`);
-  }
-});
-
-// Spec interface: 502 = RPC failure. JSON-RPC -32603 is "Internal error" (a node failure, not a revert; Ankr's reverts are code 3),
-// but viem's getContractError wraps -32603 in ContractFunctionRevertedError, so isRevert() calls it a revert.
-test('over HTTP, a JSON-RPC -32603 internal error during simulation is 502, not 422', async () => {
-  const out = await relayVia({ body: { error: { code: -32603, message: 'Internal error' } } });
-  assert.equal(out.status, 502, `-32603 answered ${out.status} ${out.text}`);
-});
-
-test('the 4 KB cap counts bytes: a 4096-byte multibyte body is accepted, 4097 bytes is 400 with no RPC', async () => {
-  const { body, message } = await signedPull();
-  const ofBytes = (n: number) => {
-    const euros = JSON.stringify({ ...body, memo: '€'.repeat(Math.floor((n - JSON.stringify({ ...body, memo: '' }).length) / 3)) });
-    return euros.padEnd(euros.length + n - Buffer.byteLength(euros), ' ');
-  };
-  const [fits, over] = [ofBytes(4096), ofBytes(4097)];
-  assert.deepEqual([Buffer.byteLength(fits), Buffer.byteLength(over)], [4096, 4097]);
-  assert.ok(over.length < 4096, 'the over-cap body is under 4096 chars');
-
-  const ok = fakeNode();
-  const accepted = await relay(fits, ok.client, STUB);
-  assert.equal(accepted.status, 200, await accepted.clone().text());
-  assert.equal(decodeFunctionData({ abi: PULL_STUB_ABI, data: parseTransaction(ok.sentRaw()!).data! }).args[0], message.from);
-
-  const no = fakeNode();
-  assert.equal((await relay(over, no.client, STUB)).status, 400);
-  assert.deepEqual(no.calls, []);
-});
-
-// dev.ts parses req.url with new URL() before its try block; an absolute-form target with a bad host throws there.
-// Spawned with only PORT in its environment: no relayer key, and the handlers are never reached.
-test('the dev server survives a malformed request target and keeps answering', { timeout: 15_000 }, async () => {
-  const probe = createTcpServer();
-  await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
-  const { port } = probe.address() as AddressInfo;
-  await new Promise((resolve) => probe.close(resolve));
-
-  const dev = spawn(process.execPath, ['dev.ts'], {
-    cwd: new URL('..', import.meta.url), env: { PORT: String(port) }, timeout: 10_000, // never outlives the test
+  const res = await health(node.client);
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), {
+    relayer: node.relayer.address, wbt: '0.5', gasSpentToday: null, budgetLeft: null, usdtFeesUnswapped: null, paused: false,
   });
+  const down = fakeNode({ on: { eth_getBalance: () => { throw rpcError(-32000, 'down'); } } });
+  assert.equal((await health(down.client)).status, 502);
+});
+
+// Human 23:27: NFR-14 /health ≤ 300 ms p95 via a balance at most 5 s old, re-read after every send.
+test('health caches the WBT balance for 5 s and re-reads it after a send or once 5 s pass', async () => {
+  const node = fakeNode();
+  const reads = () => node.calls.filter((c) => c === 'eth_getBalance').length;
+  await health(node.client);
+  await health(node.client);
+  assert.equal(reads(), 1, 'the second read within 5 s is served from the cache');
+  assert.equal((await post((await signedPull()).body, node)).status, 200);
+  await health(node.client);
+  assert.equal(reads(), 2, 'a send makes the next health read fresh');
+  const realNow = Date.now;
+  Date.now = () => realNow() + 5_001;
   try {
-    await once(dev.stdout, 'data'); // the "listening" line
-    const socket = connect(port, '127.0.0.1');
-    socket.on('error', () => {}).resume(); // read the reply, so 'close' fires once the server hangs up
-    socket.end('GET http://[/health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n');
-    await once(socket, 'close');
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    const after = await fetch(`http://127.0.0.1:${port}/nope`).then((r) => r.status, () => 'connection refused');
-    assert.equal(after, 404, `after one malformed request the dev server answered: ${after} (exit code ${dev.exitCode})`);
+    await health(node.client);
+    assert.equal(reads(), 3, 'stale after 5 s');
   } finally {
-    dev.kill();
+    Date.now = realNow;
+  }
+});
+
+// ---- tester round 1 (batch 002): sent set, in-lock re-checks, judging order ----
+
+const SECP256K1_N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
+const timeoutNode = () => {
+  const node = fakeNode({
+    on: { eth_sendRawTransactionSync: async (params) => { node.sent.push(params[0] as Hex); await sleep(40); throw rpcError(4, 'transaction not included in time'); } },
+  });
+  return node;
+};
+
+test('the sent set keys on (from, nonce): after a timeout, a re-cased nonce or from, or a malleated sig, is not sent again', async () => {
+  const node = timeoutNode();
+  const { body, sig } = await signedPull();
+  assert.equal((await post(body, node)).status, 502);
+  const { r, s, yParity } = parseSignature(sig);
+  const malleated = serializeSignature({ r, s: toHex(SECP256K1_N - BigInt(s), { size: 32 }), yParity: 1 - yParity! });
+  const variants: [string, unknown][] = [
+    ['uppercase nonce hex', { ...body, args: { ...body.args, nonce: `0x${body.args.nonce.slice(2).toUpperCase()}` } }],
+    ['lowercase from', { ...body, args: { ...body.args, from: body.args.from.toLowerCase() } }],
+    ['malleated (high-s) signature', { ...body, sig: malleated }],
+  ];
+  for (const [name, variant] of variants) {
+    const { status, out } = await post(variant, node);
+    assert.deepEqual([status, out.code], [422, 'replay'], `${name}: ${JSON.stringify(out)}`);
+    assert.equal(node.sent.length, 1, `${name} was broadcast again`);
+  }
+});
+
+test('a copy queued behind a send that times out is a replay inside the lock, not a second broadcast', async () => {
+  const node = timeoutNode(); // the first tx stays "pending": authorizationState is false and simulation passes
+  const { body } = await signedPull();
+  const results = await Promise.all([post(body, node), post(body, node)]);
+  assert.deepEqual(results.map((x) => `${x.status} ${x.out.code}`).sort(), ['422 replay', '502 rpc_error']);
+  assert.equal(node.sent.length, 1);
+  assert.equal(node.calls.filter((c) => c === 'eth_call:authorizationState').length, 2, 'both copies passed the pre-check round');
+});
+
+test('queue time counts: an authorization that drops under 30 s while waiting for the lock is expired, not sent', async () => {
+  const realNow = Date.now;
+  let skewMs = 0;
+  Date.now = () => realNow() + skewMs;
+  try {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const node = fakeNode({
+      on: { eth_sendRawTransactionSync: async (params) => { node.sent.push(params[0] as Hex); await held; return receipt(keccak256(params[0] as Hex)); } },
+    });
+    const first = post((await signedPull()).body, node);
+    while (node.sent.length === 0) await sleep(1); // the first request now holds the lock
+    const late = await signedPull({ validBefore: now() + 45n });
+    const seen = node.calls.length;
+    const second = post(late.body, node);
+    while (node.calls.length < seen + PRECHECKS.length) await sleep(1); // passed its pre-check round
+    await sleep(5); // and is queued on the lock
+    skewMs = 20_000; // 20 s in the queue: 25 s left
+    release();
+    const [a, b] = await Promise.all([first, second]);
+    assert.equal(a.status, 200);
+    assert.deepEqual([b.status, b.out.code], [422, 'expired'], JSON.stringify(b.out));
+    assert.equal(node.sent.length, 1);
+    assert.equal(node.calls.filter((c) => c === 'eth_getTransactionCount').length, 1, 'the late request never reached nonce/sign');
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+// Tester round 1 (F2): a slow simulate ‖ nonce step inside the lock (viem retries used to stretch it to ~33 s)
+// must not lead to signing an authorization with < 30 s left. Simulated here as a 25 s nonce read.
+test('an authorization that drops under 30 s during the in-lock simulate/nonce step is not signed or sent', async () => {
+  const realNow = Date.now;
+  let skewMs = 0;
+  Date.now = () => realNow() + skewMs;
+  try {
+    const node = fakeNode({ on: { eth_getTransactionCount: async (params) => { skewMs = 25_000; return node.answer('eth_getTransactionCount', params); } } });
+    const { status, out } = await post((await signedPull({ validBefore: now() + 45n })).body, node);
+    assert.deepEqual([status, out.code], [422, 'expired'], JSON.stringify(out));
+    assert.equal(node.sent.length, 0);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test('RPC pre-checks are judged in spec order: replay, payer_has_code, insufficient_funds, gas_price_cap, would_revert', async () => {
+  const revert = { 'eth_call:pull': () => { throw rpcError(3, 'execution reverted: TetherToken: auth invalid', REVERT_DATA); } };
+  const allBad = (nonce: Hex): NodeOptions => ({ used: [nonce], code: `0xef0100${'ab'.repeat(20)}`, balance: 0n, gasPrice: 6_000_000_001n, on: revert });
+  const steps: [string, number, (nonce: Hex) => NodeOptions][] = [
+    ['replay', 422, allBad],
+    ['payer_has_code', 422, (n) => ({ ...allBad(n), used: [] })],
+    ['insufficient_funds', 422, (n) => ({ ...allBad(n), used: [], code: '0x' })],
+    ['gas_price_cap', 503, (n) => ({ ...allBad(n), used: [], code: '0x', balance: 10_000_000n })],
+    ['would_revert', 422, () => ({ on: revert })],
+  ];
+  for (const [code, status, setup] of steps) {
+    const pull = await signedPull();
+    const node = fakeNode(setup(pull.message.nonce));
+    const res = await post(pull.body, node);
+    assert.deepEqual([res.status, res.out.code], [status, code], JSON.stringify(res.out));
+    assert.equal(node.sent.length, 0);
+  }
+});
+
+// ---- tester round 2 (batch 002): the /health balance cache (human 23:27) ----
+
+const balanceNode = (wei: bigint, opts: NodeOptions = {}) => {
+  const node = fakeNode({ ...opts, on: { ...opts.on, eth_getBalance: () => toHex(wei) } });
+  return { ...node, reads: () => node.calls.filter((c) => c === 'eth_getBalance').length };
+};
+const wbtOf = async (node: ReturnType<typeof fakeNode>) => (await (await health(node.client)).json()).wbt;
+
+test("the health cache is per relayer: one relayer never sees another relayer's cached balance", async () => {
+  const a = balanceNode(500_000_000_000_000_000n);
+  const b = balanceNode(10n ** 18n);
+  assert.equal(await wbtOf(a), '0.5');
+  assert.equal(await wbtOf(b), '1', 'b got a cached balance');
+  assert.equal(await wbtOf(a), '0.5');
+  assert.deepEqual([a.reads(), b.reads()], [1, 1]);
+});
+
+test('a failed send (sync timeout, receipt for another hash) also clears the health cache; a reject before the lock does not', async () => {
+  const failing: [string, NodeOptions['on']][] = [
+    ['sync timeout', { eth_sendRawTransactionSync: () => { throw rpcError(4, 'transaction not included in time'); } }],
+    ['receipt_mismatch', { eth_sendRawTransactionSync: () => receipt(`0x${'cd'.repeat(32)}`) }],
+  ];
+  for (const [name, on] of failing) {
+    const node = balanceNode(10n ** 18n, { on });
+    await wbtOf(node);
+    assert.equal((await post((await signedPull({ value: 999_999n })).body, node)).status, 422);
+    await wbtOf(node);
+    assert.equal(node.reads(), 1, `${name}: a local reject must not clear the cache`);
+    assert.equal((await post((await signedPull()).body, node)).status, 502);
+    await wbtOf(node);
+    assert.equal(node.reads(), 2, `${name}: the next health read after a failed send must be fresh`);
+  }
+});
+
+// Tester round 2 (F6): a /health read that starts before a send and answers after it must not re-cache the
+// pre-send balance ("refreshed after each send" must hold for every interleaving).
+test('a health read in flight across a send does not re-cache the pre-send balance', async () => {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let reads = 0;
+  const node = fakeNode({
+    on: { eth_getBalance: async () => (++reads === 1 ? (await held, toHex(5n * 10n ** 17n)) : toHex(4995n * 10n ** 14n)) },
+  });
+  const before = health(node.client); // reads the pre-send balance, slowly
+  await sleep(5);
+  assert.equal(reads, 1, 'the first health read reached the node');
+  assert.equal((await post((await signedPull()).body, node)).status, 200);
+  release();
+  assert.equal((await (await before).json()).wbt, '0.5');
+  assert.equal(await wbtOf(node), '0.4995', 'served the pre-send balance after the send');
+});
+
+// Tester round 2 (F5) + human 01:14: Node drops idle sockets after ~4 s, so a cache miss after idle paid a new TLS
+// handshake. A 3 s background refresh keeps the balance ≤ ~3 s old and the connection warm; /health never waits.
+test('the background refresh keeps re-reading the balance, so health is served from the cache', async () => {
+  const node = balanceNode(10n ** 18n);
+  const stop = startBalanceRefresh(node.client, 20);
+  try {
+    await sleep(75);
+    const refreshed = node.reads();
+    assert.ok(refreshed >= 3, `only ${refreshed} background reads in 75 ms at a 20 ms interval`);
+    assert.equal(await wbtOf(node), '1');
+    assert.equal(node.reads(), refreshed, 'health waited on the node instead of the refreshed cache');
+  } finally {
+    stop();
+  }
+  const stopped = node.reads();
+  await sleep(50);
+  assert.equal(node.reads(), stopped, 'the refresh kept running after stop()');
+});
+
+test('an unparsable relayer key fails with a fixed message that never contains the key', () => {
+  const bad = `0x${'f'.repeat(64)}`; // above the secp256k1 order
+  const saved = process.env.RELAYER_PRIVATE_KEY;
+  process.env.RELAYER_PRIVATE_KEY = bad;
+  try {
+    assert.throws(relayerClient, (e: Error) => {
+      assert.ok(!e.message.includes('f'.repeat(16)) && !e.message.includes(BigInt(bad).toString().slice(0, 16)), e.message);
+      return /RELAYER_PRIVATE_KEY/.test(e.message);
+    });
+  } finally {
+    if (saved === undefined) delete process.env.RELAYER_PRIVATE_KEY;
+    else process.env.RELAYER_PRIVATE_KEY = saved;
   }
 });

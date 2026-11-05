@@ -8,6 +8,7 @@ Honest notes from building Merchant Capital+ on Whitechain Sepolia (chain 1874).
 | Contracts deployed and verified on Whitechain Sepolia | SR-WC-1 | Explorer pages of the four contracts | not started |
 | ≥1 USDT payment in the main flow, explorer link in the README | SR-WC-2 | AT-1 shop sale tx | not started |
 | Operate: drop-in piece a separate demo app adds in about 20 lines; merchant + customer views | SR-OP-1 | `apps/shop` integration, lines counted | not started |
+| Operate (v2.0): payment links, pages, invoices, QR, a one-line button + SDK, vouchers, multi-currency, reports, settlements | SR-OP-1/2, FR-GW-1–12 | AT-11–AT-15 | in progress (Phase 4) |
 | Operate extra credit: past the first payment (refund, export) | SR-OP-2 | AT-2 refund, CSV export | not started |
 | Scale: payer with zero crypto steps; who pays gas, how the relayer gets WBT, what stops draining | SR-SC-1/2 | Checkout with no WBT; relayer `/health` + drain guard | not started |
 | Tokenize: real transfer rules in the contract; issuer + investor roles; one full lifecycle step | SR-TK-1/2 | AT-3/4/5 advance; AT-8 blocked transfer | not started |

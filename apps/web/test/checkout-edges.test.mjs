@@ -13,7 +13,7 @@ process.env.AUTH_SECRET = "test-auth-secret-0123456789abcdef0123";
 const MERCHANT_PAY = "0x2222222222222222222222222222222222222222";
 
 let settled = async () => null;
-mock.module("../lib/onchain.ts", { namedExports: { saleSettled: (...args) => settled(...args) } });
+mock.module("../lib/onchain.ts", { namedExports: { saleSettled: (...args) => settled(...args), readUsdtBalance: async () => 1_000_000_000n } });
 
 const { POST: createSession } = await import("../app/api/v1/sessions/route.ts");
 const { POST: pay } = await import("../app/api/v1/sessions/[id]/pay/route.ts");
@@ -21,6 +21,7 @@ const { GET: status } = await import("../app/api/v1/sessions/[id]/route.ts");
 const { POST: logoutRoute } = await import("../app/api/auth/logout/route.ts");
 const { GET: nonceRoute } = await import("../app/api/auth/nonce/route.ts");
 const { POST: verifyRoute } = await import("../app/api/auth/verify/route.ts");
+const { POST: demoCheckout } = await import("../app/api/demo-checkout/route.ts");
 const { getSession, listPayments, recordPayment, SESSION_TTL_MS } = await import("../lib/sessions.ts");
 const { saleAuthorization, SIGNATURE_WINDOW_S } = await import("../lib/pay.ts");
 
@@ -262,4 +263,30 @@ test("pay: a relayer 200 with a malformed txHash is an unknown outcome, never a 
   const res = await callPay(data.id, await signed(data.id));
   assert.equal(res.status, 504);
   assert.equal(getSession(data.id).payment, undefined);
+});
+
+// Batch 005: security review 004 R2 F1, and code review 004 R2 F5 (guards no test pinned yet).
+test("pay: a payment still in flight when the checkout expires answers 409 (confirming), never 410 'ask for a new one'", async () => {
+  const { data } = await create({ amount: "25.00" });
+  let release;
+  relayReply = () => new Promise((resolve) => (release = () => resolve(ok())));
+  const paying = callPay(data.id, await signed(data.id));
+  await new Promise((r) => setTimeout(r, 20));
+  getSession(data.id).expiresAt = Date.now() - 1;
+  const second = await callPay(data.id, await signed(data.id));
+  assert.equal(second.status, 409);
+  assert.doesNotMatch((await second.json()).error, /new one/);
+  settled = async () => "1";
+  release();
+  assert.equal((await paying).status, 200);
+});
+
+test("create: qty 1000 is refused even when the items add up (M26)", async () => {
+  assert.equal((await create({ amount: "1000.00", items: [{ name: "Tea", qty: 1000, price: "1.00" }] })).res.status, 400);
+});
+
+test("demo checkout: a plain POST answers 303 to a new /checkout/<uuid> (N26)", async () => {
+  const res = await demoCheckout(new Request("http://shop.test/api/demo-checkout", { method: "POST" }));
+  assert.equal(res.status, 303);
+  assert.match(res.headers.get("location"), /^http:\/\/shop\.test\/checkout\/[0-9a-f-]{36}$/);
 });

@@ -98,3 +98,42 @@ Branch `main` · FR-PAY-4/5/6/7/9/15, FR-REL-4/6, FR-PRIV-1, NFR-12/13, AT-1 (up
   - code F2/F5/F6
   - the privacy link in tokens.css
 - Neon `app_sessions` before any deploy (sessions, claims, pending and used nonces are per process).
+
+## Batch 005-P2-web-invoices-refunds
+
+Branch `main` · FR-PAY-1/2/3/7/8/9, FR-PRIV-1, NFR-12, G2 plan F2/F3/F4. Built by a developer subagent in scratch, replayed onto 004 under this batch. 2 rounds, all five checks PASS.
+
+### What was built
+- **Invoices on the final Phase 3 MerchantPay `0xab81…4251`:**
+  - The customer signs `amount + relayFee()`, with a nonce over the credited amount.
+  - Partial payments are allowed; Paid only when fully paid.
+  - Consumer rule: gross, payer and merchant, and `paid` rose by exactly the amount.
+- **The server checks the payer's USDT before taking the lock.** An unfunded guest gets the demo message and nothing is relayed (the human's "say it's a demo").
+- **`/pay/[invoiceId]`:** only our merchant's invoices (anti-phishing; human), the fee shown on top, part-paid/paid/cancelled states.
+- **Merchant invoices:**
+  - a random refHash
+  - the customer name and label kept only in the browser (human; NFR-8)
+  - copy link, a two-step cancel
+- **Refunds:** an exact approval, then refund; stops before approving when the refund would fail.
+- **Receipts** by payment id from the chain. Stacked cards at 375. The strict CSP on `/merchant` and `/pay`.
+
+### Verified
+- **Round 2:** tester, code, security, ux and ci PASS; 133 tests.
+- **Fork E2E** on the real bytecode: a 7.50 invoice cost the customer 7.60 and the merchant got 7.50; a part payment then the rest → Paid; exact-approval refunds with the allowance back to 0; another merchant's invoice → 404; a low-balance refund stopped before any approval.
+- **On real :3100:** the demo message with 0 relayer calls.
+- **Speed:** /pay JS 190,936 B ≤ 204,800; LCP 668 ms (lab).
+
+### Decisions (human)
+- Invoice customer = a private browser-only name.
+- /pay serves only MERCHANT_ADDRESS.
+- Exact refund approvals.
+- "Payment fee" wording.
+- The pending wait (worst case about 9 min) is OK.
+
+### Open (batch 006)
+- the balance check is skipped while a session is pending (code R2-F1 / security F-N1)
+- `readUsdtBalance` retry
+- plain `<a>` to /merchant on home
+- refund `balanceOf` before approving
+- test gaps G1/P1/P2
+- ux N1–N3

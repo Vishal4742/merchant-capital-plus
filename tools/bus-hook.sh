@@ -7,4 +7,6 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
   p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' '); [ -z "$p" ] || [ "$p" = 1 ] && break
 done
 [ -n "$lane" ] || { cat >/dev/null 2>&1; exit 0; }
+# The coordinator wakes through its filtered watcher (tools/watch-research.sh), so plain acks don't re-wake it at stop.
+[ "$lane" = claude-research ] && [ "$ev" = stop ] && { cat >/dev/null 2>&1; exit 0; }
 exec python3 -I "$(dirname "$0")/agentbus.py" hook "$ev" --as "$lane" ${2:+--wait "$2"}

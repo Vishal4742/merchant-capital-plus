@@ -16,7 +16,18 @@ let chainPaid = false;
 const onChainIfRelayed = async () => (chainPaid ? "1" : null);
 let settled = onChainIfRelayed;
 const settledCalls = [];
-mock.module("../lib/onchain.ts", { namedExports: { saleSettled: (...args) => (settledCalls.push(args), settled(...args)) } });
+// the guest's test USDT, read on the server before a payment is locked or relayed (default: plenty)
+let balance = 1_000_000_000n;
+let balanceReadFails = false;
+mock.module("../lib/onchain.ts", {
+  namedExports: {
+    saleSettled: (...args) => (settledCalls.push(args), settled(...args)),
+    readUsdtBalance: async () => {
+      if (balanceReadFails) throw new Error("rpc down");
+      return balance;
+    },
+  },
+});
 
 const { POST: createSession } = await import("../app/api/v1/sessions/route.ts");
 const { POST: pay } = await import("../app/api/v1/sessions/[id]/pay/route.ts");
@@ -35,6 +46,8 @@ globalThis.fetch = async (url, init) => {
 };
 
 beforeEach(() => {
+  balance = 1_000_000_000n;
+  balanceReadFails = false;
   relayCalls.length = 0;
   settledCalls.length = 0;
   chainPaid = false;
@@ -192,12 +205,13 @@ test("a 422 replay never locks the checkout (a stranger can burn a nonce on purp
   assert.deepEqual([res.status, (await res.json()).receiptId], [200, second.id]);
 });
 
-test("a 422 insufficient_funds unlocks and says the balance is too low", async () => {
+test("a 422 insufficient_funds unlocks and says plainly it's a demo that needs test USDT (human gate 004)", async () => {
   const { data } = await newSession();
   relayReply = async () => Response.json({ error: "balance", code: "insufficient_funds" }, { status: 422 });
   const res = await callPay(data.id, await signedBody(data.id));
   assert.equal(res.status, 400);
-  assert.match((await res.json()).error, /isn't enough/);
+  const { error } = await res.json();
+  assert.match(error, /^This is a demo: paying needs test USDT/);
   relayReply = async () => Response.json({ txHash: `0x${"ef".repeat(32)}`, blockNumber: "2" });
   assert.equal((await callPay(data.id, await signedBody(data.id))).status, 200);
 });
@@ -233,6 +247,12 @@ test("our sale nonce equals the deployed MerchantPay's saleNonce view (KIND_SALE
   // saleNonce(0x11…11, 0x22…22, 25000000, 0x33…33). A wrong kind here makes every customer signature fail.
   const sale = { merchantPay: "0x83b53Cc0a5A67fAd41bCc56e2ac40465Cf1573b7", merchant: "0x1111111111111111111111111111111111111111", orderRef: `0x${"22".repeat(32)}`, amount: 25_000_000n };
   assert.equal(saleNonce(sale, `0x${"33".repeat(32)}`), "0x6746adfa0053a73d5e487d1bf8dbf83c8b7f84cff6e1993269c45278a8616cc8");
+});
+
+test("our sale nonce equals the final MerchantPay 0xab81…4251's saleNonce view (paySale unchanged in Phase 3)", () => {
+  // vector read on 2026-11-06 from MerchantPay 0xab81…4251 on chain 1874: saleNonce(0x11…11, 0x22…22, 25000000, 0x33…33)
+  const sale = { merchantPay: "0xab817593253a0a37de723072827d88fe0ca54251", merchant: "0x1111111111111111111111111111111111111111", orderRef: `0x${"22".repeat(32)}`, amount: 25_000_000n };
+  assert.equal(saleNonce(sale, `0x${"33".repeat(32)}`), "0xae742da47f306ed9030d17b08d5c8647361b6babfd5a200cb584d4678b02da8c");
 });
 
 // Unknown outcomes are pending, not locked forever (plan review, batch 004): the chain settles them either way.
@@ -303,7 +323,7 @@ test("polling a pending checkout asks the chain, so the shop sees a payment that
   await callPay(data.id, await signedBody(data.id));
   assert.equal((await (await poll(data.id)).json()).status, "pending");
   settled = async () => "3";
-  assert.deepEqual(Object.values(await (await poll(data.id)).json()).slice(1, 2), ["paid"]);
+  assert.equal((await (await poll(data.id)).json()).status, "paid");
 });
 
 // Round 2 (security S1 / code M1): an expired checkout with a pending attempt asks the chain before "expired".
@@ -338,4 +358,25 @@ test("the shop's poll says 'pending' while a payment is in flight", async () => 
   assert.equal((await (await poll(data.id)).json()).status, "pending");
   release();
   assert.equal((await paying).status, 200);
+});
+
+// Batch 005 round 2 (UX F1, security F1): the relayer never answers insufficient_funds today, so our server checks the
+// guest's balance itself, before taking the lock or calling the relayer.
+test("a guest holding less than the total gets the demo message from our server: 400, nothing locked, relayed or pending", async () => {
+  const { data } = await newSession();
+  balance = 24_999_999n;
+  const res = await callPay(data.id, await signedBody(data.id));
+  assert.equal(res.status, 400);
+  assert.equal((await res.json()).error, "This is a demo: paying needs test USDT, and this browser doesn't have enough yet. Nothing was charged.");
+  assert.equal(relayCalls.length, 0);
+  assert.equal(getSession(data.id).pending, undefined);
+  balance = 25_000_000n; // exactly the total: no lock was left behind
+  assert.equal((await callPay(data.id, await signedBody(data.id))).status, 200);
+});
+
+test("a failed balance read still relays the checkout (the relayer checks the balance too)", async () => {
+  const { data } = await newSession();
+  balanceReadFails = true;
+  assert.equal((await callPay(data.id, await signedBody(data.id))).status, 200);
+  assert.equal(relayCalls.length, 1);
 });

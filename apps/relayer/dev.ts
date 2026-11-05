@@ -3,21 +3,30 @@
 import { createServer } from 'node:http';
 import { GET as health } from './api/health.ts';
 import { POST as relay } from './api/relay.ts';
+import { MAX_BODY_BYTES } from './src/relayer.ts';
 
 const PORT = Number(process.env.PORT ?? 8787);
+const HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]); // anything else is DNS rebinding
 const routes: Record<string, (request: Request) => Promise<Response>> = {
   'POST /relay': relay,
   'GET /health': health,
 };
 
 createServer(async (req, res) => {
+  if (!HOSTS.has(req.headers.host ?? '')) return void res.writeHead(403).end('forbidden host');
   const handler = routes[`${req.method} ${(req.url ?? '/').split('?')[0]}`];
   if (!handler) return void res.writeHead(404).end();
   try {
     const chunks: Buffer[] = [];
-    for await (const chunk of req) chunks.push(chunk);
+    let size = 0;
+    for await (const chunk of req as AsyncIterable<Buffer>) {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) return void res.writeHead(413, { connection: 'close' }).end('body too large');
+      chunks.push(chunk);
+    }
     const response = await handler(new Request(`http://127.0.0.1${req.url}`, {
       method: req.method,
+      headers: { 'content-type': req.headers['content-type'] ?? '' },
       body: req.method === 'POST' ? Buffer.concat(chunks) : undefined,
     }));
     res.writeHead(response.status, { 'content-type': response.headers.get('content-type') ?? 'text/plain' });

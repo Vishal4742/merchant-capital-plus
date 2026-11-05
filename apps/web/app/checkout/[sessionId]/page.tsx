@@ -6,7 +6,7 @@ import { Checkout } from "@/components/Checkout";
 import { StaticScene } from "@/components/StaticScene";
 import { payConfig } from "@/lib/config";
 import { getSession } from "@/lib/sessions";
-import { settlePending } from "@/lib/settle";
+import { pageState, settlePending } from "@/lib/settle";
 import { formatUsdt } from "@/lib/usdt";
 
 // The night and the frame prerender; the session streams in (Cache Components needs params inside Suspense).
@@ -40,7 +40,8 @@ async function CheckoutLoader({ params }: Pick<PageProps<"/checkout/[sessionId]"
       sale={pay ? { merchantPay: pay.merchantPay, merchant: session.merchant, orderRef: session.orderRef, amount: session.amount.toString() } : null}
       expiresAt={session.expiresAt}
       paid={Boolean(session.payment)}
-      pending={state === "pending"}
+      // a payment being relayed right now may land: show "confirming", never "expired" (security review 004 R2 F1)
+      pending={pageState(state ?? "open", session.id) === "pending"}
     />
   );
 }

@@ -7,9 +7,9 @@ import { useState } from "react";
 import { createWalletClient, custom, type EIP1193Provider } from "viem";
 import { whitechainSepolia } from "viem/chains";
 import { createSiweMessage } from "viem/siwe";
+import { Button } from "@/components/Button";
 
 const SIGN_IN_WINDOW_MS = 5 * 60_000;
-import { Button } from "@/components/Button";
 
 declare global {
   interface Window {

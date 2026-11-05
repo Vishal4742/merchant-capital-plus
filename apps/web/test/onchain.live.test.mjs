@@ -21,3 +21,16 @@ test("the smoke sale settles at its exact amount and payer; a wrong amount, orde
   assert.equal(await saleSettled({ ...sale, orderRef: `0x${"ab".repeat(32)}` }), null);
   assert.equal(await saleSettled({ ...sale, payer: "0x5555555555555555555555555555555555555555" }), null);
 });
+
+test("the final MerchantPay 0xab81…4251: relayFee is 0.10 USDT, and each Paid log in the index matches payments(id) on chain", { skip: !process.env.LIVE }, async () => {
+  const { paidLogs, readPayment, readRelayFee, readInvoice } = await import("../lib/onchain.ts");
+  const FINAL = "0xab817593253a0a37de723072827d88fe0ca54251";
+  assert.equal(await readRelayFee(FINAL), 100_000n);
+  assert.equal((await readInvoice(FINAL, 999_999n)).status, "missing");
+  const [first] = await paidLogs(FINAL, { paymentId: 1n });
+  assert.ok(first?.txHash, "payment 1 is in the log index");
+  const record = await readPayment(FINAL, 1n);
+  assert.equal(record.gross, first.gross, "the index and the chain agree on the gross");
+  const byMerchant = await paidLogs(FINAL, { merchant: record.merchant });
+  assert.ok(byMerchant.some((log) => log.paymentId === 1n), "the merchant filter (topic2) finds it too");
+});
