@@ -148,9 +148,9 @@ Vercel projects: `apps/web`, `apps/relayer`, `apps/shop` (push to deploy) + Neon
 
 | Lane | Owner (agentbus name) | Folders |
 |---|---|---|
-| Contracts, tests, deploy/verify, seed script, shared ABI | **claude-contracts** (worktree `~/ethglobal-contracts`, branch `contracts`) | `contracts/`, `packages/shared/` |
-| Relayer service: `/relay`, `/schedule`, `/health`, drain guard, rate limits (`rel_*` tables), keepers (fee swap, due-date settlement) | **claude-relayer** (human 20:57; worktree `~/ethglobal-relayer`, branch `relayer`) | `apps/relayer/` |
-| Web app, demo shop, Anon-RPC transport, Arkiv writer, CSV, webhooks | **claude-frontend** (`~/ethglobal`, branch `main`) | `apps/web/`, `apps/shop/` |
+| Contracts, tests, deploy/verify, seed script, shared ABI; after the G4 contract freeze also the demo shop on the SDK (v2.0) | **claude-contracts** (worktree `~/ethglobal-contracts`, branch `contracts`) | `contracts/`, `packages/shared/`, `apps/shop/` (after the freeze) |
+| Relayer service: `/relay`, `/schedule`, `/health`, drain guard, rate limits (`rel_*` tables), keepers (fee swap, due-date settlement) | **claude-relayer** (human 20:57; worktree `~/ethglobal-relayer`, branch `relayer`); after the drain guard also the SDK and payment-button script (v2.0) | `apps/relayer/`, `packages/sdk/` |
+| Web app: gateway dashboard (links, pages, QR, vouchers on Arkiv, multi-currency, reports, settlements, API keys, webhooks, /docs), checkout, Capital tab, Anon-RPC transport | **claude-frontend** (`~/ethglobal`, branch `main`) | `apps/web/` |
 | Research, README sections, `arkiv/*.md`, `WHITECHAIN_FEEDBACK.md`, `AI_USAGE.md`, pitch + video script | **claude-research** (this session) drafts, human edits | root docs |
 | Review, screenshots | opencode | none |
 | Accounts, faucet, Arkiv key, Ankr key, decisions, booth pitch, narrated video | **human** | none |

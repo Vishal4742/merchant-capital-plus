@@ -11,8 +11,8 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 | 1 | Rail proofs | FR-REL-1 (stub), DEP-1, DEP-3, DEP-5, DEP-6 checks | G1: relayed gasless USDT pull + one private read | none |
 | 2 | Payments core | FR-PAY-1–9, FR-PAY-11, FR-PAY-15, FR-REL-1–7, FR-REL-9 | G2: AT-1, AT-2, AT-10 | Operate, Scale |
 | 3 | **Advance** (+ invoice contracts, human 00:34) | FR-PAY-16, FR-ADV-1–6, FR-INV-1, FR-INV-3–5 (contract side), FR-TOK-1–4, FR-TOK-6–7, FR-KYC-1 | G3: AT-3, AT-4, AT-5 · **ABI frozen** | **Tokenize** |
-| 4 | Invoice financing, Arkiv, private reads | FR-INV-1–5, FR-TOK-8, FR-ARK-1–5, FR-PRIV-1–3, FR-PAY-10, FR-PAY-12 | G4: AT-6, AT-7, AT-8, AT-9 | Arkiv, EF |
-| 5 | Extras and integration | FR-PAY-13–14, FR-REL-8, FR-ADV-7, FR-INV-6–7, FR-TOK-5, FR-KYC-2–3, FR-ARK-6 | G5: two clean full demo runs | polish |
+| 4 | **Payment gateway** (v2.0) | FR-GW-1–12, FR-GW-14, FR-ARK-1–5 (vouchers), FR-PRIV-1–3, FR-PAY-11; Capital on chain | G4: AT-11–AT-15, AT-6–AT-8 | Operate, Arkiv, EF, Tokenize |
+| 5 | Capital tab, extras, integration | FR-ADV/FR-INV UI, FR-TOK-8, FR-GW-13 (C), FR-REL-8, FR-TOK-5 | G5: two clean full demo runs | polish |
 | 6 | Proof and documentation | FR-PRIV-4, SR-* evidence, NFR-9 | G6: README review finds every SR item | all |
 | 7 | Video and submission | SR-ETH-2, CON-6 | G7: submission confirmed | all |
 
@@ -83,28 +83,36 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 
 ---
 
-## Phase 4: Invoice financing, Arkiv, private reads
-**Goal:** sell an invoice to several investors; offers live on Arkiv; every browser read is private.
+## Phase 4: Payment gateway (v2.0, human 2026-11-06 02:35)
+**Goal:** the features merchants expect from a payment gateway (like Razorpay or Stripe), in stablecoins, strictly on Whitechain testnet. Reference: the human's Razorpay test-mode screen recording (functional reference only, nothing copied).
 
-- [ ] `C` Invoice financing and settlement (FR-INV-1, 3–5); tests C1, C3, C4, T1 (full) · **moved into Phase 3** (one CapitalMarket + final MerchantPay deploy, human 00:34)
-- [ ] `F` "Get paid today" with the APR-based price (FR-INV-2); the offer book and "my live offers" from Arkiv, verified on-chain (FR-ARK-1–5); transfer preview with the reason (FR-TOK-8)
-- [ ] `F` Anon-RPC on by default for every browser read, with the meter (FR-PRIV-1–3); `/pay` and `/checkout` make no browser chain reads; CSV export (FR-PAY-12); webhooks (FR-PAY-10)
-- [ ] `F` Record every Arkiv problem in `arkiv/friction.md` as it happens
+- [ ] `F` Payment Links with QR codes (FR-GW-1, FR-GW-3); Payment Pages (FR-GW-2)
+- [ ] `F` Discount vouchers: codes as Arkiv entities that expire, redemptions counted on our server (FR-GW-12, FR-ARK-1–5 now apply to voucher entities)
+- [ ] `F` Multi-currency prices with a locked FX quote at checkout (FR-GW-11)
+- [ ] `F` Reports with a sales chart and CSV, and a Settlements page (FR-GW-9, FR-GW-10)
+- [ ] `F` API keys, webhooks, a `/docs` page and the test-mode badge (FR-GW-6, 7, 8, 14)
+- [ ] `L` SDK + payment-button script in `packages/sdk` (FR-GW-4, FR-GW-5), after the drain guard and Postgres lock
+- [ ] `C` Capital on chain: AT-6, AT-7, AT-8 live, the E1 event-ABI snapshot and the NFR-10 coverage report (batch 006); then **contracts freeze**
+- [ ] `C` After the freeze: rebuild `apps/shop` on the SDK or button in ≤ 20 lines (FR-PAY-11, AT-14)
+- [ ] `F` Private reads by default on dashboard pages, with the meter (FR-PRIV-1–3)
+- [ ] `F` Record every Arkiv problem (post it to claude-research)
 
-**Gate G4:** AT-6 (two investors fund), AT-7 (debtor pays, both repaid in one tx), AT-8 (blocked transfer), AT-9 (offer book from Arkiv, private reads).
-**If Arkiv fails three times:** drop the Arkiv track and keep the offer book on-chain (DEP-5).
+**Gate G4:** AT-11 to AT-15 (gateway) and AT-6 to AT-8 (Capital on chain).
+**If Arkiv fails three times:** store voucher codes in Postgres only and drop the Arkiv track (DEP-5).
 
 ---
 
-## Phase 5: Extras and integration
-**Goal:** the full lifecycle and a demo that runs cleanly twice.
+## Phase 5: Capital tab, extras and integration
+**Goal:** "Get paid early" as one tab of the gateway, and a demo that runs twice cleanly.
 
-- [ ] `C` ~~EAS eligibility (FR-KYC-2, 3; test I1); debtor acknowledgement and due-date payment (FR-PAY-13, 14); default and recourse (FR-ADV-7, FR-INV-6, 7; test C6)~~ **CUT (human 02:02: would force a redeploy of all three contracts; contracts freeze after G4)**; still in: admin force/freeze (FR-TOK-5), tests F1, E1 and the coverage report (NFR-10) in contracts batch 006
-- [ ] `L` Fee swap keeper (FR-REL-8); ~~`/schedule` + due-date keeper (FR-PAY-14 relayer side)~~ cut with FR-PAY-14
-- [ ] `F` ~~Acknowledge and "pay on due date" screens; EAS attest/revoke on the compliance desk~~ cut (human 02:02); merchant stats on Arkiv (FR-ARK-6); seed demo data
+- [ ] `F` Capital tab: advance with its total cost shown before signing (FR-ADV-1, 6), investor funding (FR-ADV-3), invoice financing price (FR-INV-2), offer book on Arkiv (FR-ARK-1–5), the transfer reason (FR-TOK-8); AT-3 to AT-9 through the UI
+- [ ] `F` Gift vouchers (FR-GW-13), only if time is left
+- [ ] `L` Fee-swap keeper (FR-REL-8)
+- [ ] `C` Admin freeze (FR-TOK-5) and test F1 if still missing
 - [ ] `O` Screenshot every screen state
+- *Cut (human 02:02): EAS KYC, debtor acknowledgement, pay-on-due-date, default and recourse.*
 
-**Gate G5:** the whole demo (AT-1 to AT-9) runs twice in a row with no manual fixes.
+**Gate G5:** the whole demo (AT-1 to AT-15) runs twice in a row with no manual fixes.
 
 ---
 
