@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import {
   custom, decodeFunctionData, domainSeparator, encodeErrorResult, encodeFunctionResult, http, keccak256, parseAbi,
-  parseSignature, parseTransaction, toHex, type Address, type Hex,
+  parseSignature, parseTransaction, serializeSignature, toHex, type Address, type Hex,
 } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { health, makeClient, PULL_STUB_ABI, relay, relayerClient, USDT_ABI, USDT_DOMAIN } from '../src/relayer.ts';
@@ -444,6 +444,127 @@ test('health reports the relayer WBT balance and Phase 2 fields as null; a faile
   });
   const down = fakeNode({ on: { eth_getBalance: () => { throw rpcError(-32000, 'down'); } } });
   assert.equal((await health(down.client)).status, 502);
+});
+
+// Human 23:27: NFR-14 /health ≤ 300 ms p95 via a balance at most 5 s old, re-read after every send.
+test('health caches the WBT balance for 5 s and re-reads it after a send or once 5 s pass', async () => {
+  const node = fakeNode();
+  const reads = () => node.calls.filter((c) => c === 'eth_getBalance').length;
+  await health(node.client);
+  await health(node.client);
+  assert.equal(reads(), 1, 'the second read within 5 s is served from the cache');
+  assert.equal((await post((await signedPull()).body, node)).status, 200);
+  await health(node.client);
+  assert.equal(reads(), 2, 'a send makes the next health read fresh');
+  const realNow = Date.now;
+  Date.now = () => realNow() + 5_001;
+  try {
+    await health(node.client);
+    assert.equal(reads(), 3, 'stale after 5 s');
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+// ---- tester round 1 (batch 002): sent set, in-lock re-checks, judging order ----
+
+const SECP256K1_N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
+const timeoutNode = () => {
+  const node = fakeNode({
+    on: { eth_sendRawTransactionSync: async (params) => { node.sent.push(params[0] as Hex); await sleep(40); throw rpcError(4, 'transaction not included in time'); } },
+  });
+  return node;
+};
+
+test('the sent set keys on (from, nonce): after a timeout, a re-cased nonce or from, or a malleated sig, is not sent again', async () => {
+  const node = timeoutNode();
+  const { body, sig } = await signedPull();
+  assert.equal((await post(body, node)).status, 502);
+  const { r, s, yParity } = parseSignature(sig);
+  const malleated = serializeSignature({ r, s: toHex(SECP256K1_N - BigInt(s), { size: 32 }), yParity: 1 - yParity! });
+  const variants: [string, unknown][] = [
+    ['uppercase nonce hex', { ...body, args: { ...body.args, nonce: `0x${body.args.nonce.slice(2).toUpperCase()}` } }],
+    ['lowercase from', { ...body, args: { ...body.args, from: body.args.from.toLowerCase() } }],
+    ['malleated (high-s) signature', { ...body, sig: malleated }],
+  ];
+  for (const [name, variant] of variants) {
+    const { status, out } = await post(variant, node);
+    assert.deepEqual([status, out.code], [422, 'replay'], `${name}: ${JSON.stringify(out)}`);
+    assert.equal(node.sent.length, 1, `${name} was broadcast again`);
+  }
+});
+
+test('a copy queued behind a send that times out is a replay inside the lock, not a second broadcast', async () => {
+  const node = timeoutNode(); // the first tx stays "pending": authorizationState is false and simulation passes
+  const { body } = await signedPull();
+  const results = await Promise.all([post(body, node), post(body, node)]);
+  assert.deepEqual(results.map((x) => `${x.status} ${x.out.code}`).sort(), ['422 replay', '502 rpc_error']);
+  assert.equal(node.sent.length, 1);
+  assert.equal(node.calls.filter((c) => c === 'eth_call:authorizationState').length, 2, 'both copies passed the pre-check round');
+});
+
+test('queue time counts: an authorization that drops under 30 s while waiting for the lock is expired, not sent', async () => {
+  const realNow = Date.now;
+  let skewMs = 0;
+  Date.now = () => realNow() + skewMs;
+  try {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const node = fakeNode({
+      on: { eth_sendRawTransactionSync: async (params) => { node.sent.push(params[0] as Hex); await held; return receipt(keccak256(params[0] as Hex)); } },
+    });
+    const first = post((await signedPull()).body, node);
+    while (node.sent.length === 0) await sleep(1); // the first request now holds the lock
+    const late = await signedPull({ validBefore: now() + 45n });
+    const seen = node.calls.length;
+    const second = post(late.body, node);
+    while (node.calls.length < seen + PRECHECKS.length) await sleep(1); // passed its pre-check round
+    await sleep(5); // and is queued on the lock
+    skewMs = 20_000; // 20 s in the queue: 25 s left
+    release();
+    const [a, b] = await Promise.all([first, second]);
+    assert.equal(a.status, 200);
+    assert.deepEqual([b.status, b.out.code], [422, 'expired'], JSON.stringify(b.out));
+    assert.equal(node.sent.length, 1);
+    assert.equal(node.calls.filter((c) => c === 'eth_getTransactionCount').length, 1, 'the late request never reached nonce/sign');
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+// Tester round 1 (F2): a slow simulate ‖ nonce step inside the lock (viem retries used to stretch it to ~33 s)
+// must not lead to signing an authorization with < 30 s left. Simulated here as a 25 s nonce read.
+test('an authorization that drops under 30 s during the in-lock simulate/nonce step is not signed or sent', async () => {
+  const realNow = Date.now;
+  let skewMs = 0;
+  Date.now = () => realNow() + skewMs;
+  try {
+    const node = fakeNode({ on: { eth_getTransactionCount: async (params) => { skewMs = 25_000; return node.answer('eth_getTransactionCount', params); } } });
+    const { status, out } = await post((await signedPull({ validBefore: now() + 45n })).body, node);
+    assert.deepEqual([status, out.code], [422, 'expired'], JSON.stringify(out));
+    assert.equal(node.sent.length, 0);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test('RPC pre-checks are judged in spec order: replay, payer_has_code, insufficient_funds, gas_price_cap, would_revert', async () => {
+  const revert = { 'eth_call:pull': () => { throw rpcError(3, 'execution reverted: TetherToken: auth invalid', REVERT_DATA); } };
+  const allBad = (nonce: Hex): NodeOptions => ({ used: [nonce], code: `0xef0100${'ab'.repeat(20)}`, balance: 0n, gasPrice: 10_000_000_001n, on: revert });
+  const steps: [string, number, (nonce: Hex) => NodeOptions][] = [
+    ['replay', 422, allBad],
+    ['payer_has_code', 422, (n) => ({ ...allBad(n), used: [] })],
+    ['insufficient_funds', 422, (n) => ({ ...allBad(n), used: [], code: '0x' })],
+    ['gas_price_cap', 503, (n) => ({ ...allBad(n), used: [], code: '0x', balance: 10_000_000n })],
+    ['would_revert', 422, () => ({ on: revert })],
+  ];
+  for (const [code, status, setup] of steps) {
+    const pull = await signedPull();
+    const node = fakeNode(setup(pull.message.nonce));
+    const res = await post(pull.body, node);
+    assert.deepEqual([res.status, res.out.code], [status, code], JSON.stringify(res.out));
+    assert.equal(node.sent.length, 0);
+  }
 });
 
 test('an unparsable relayer key fails with a fixed message that never contains the key', () => {

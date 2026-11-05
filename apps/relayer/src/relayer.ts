@@ -7,8 +7,11 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { whitechainSepolia } from 'viem/chains';
 
 const ANKR_RPC = 'https://rpc.ankr.com/whitechain_testnet';
-const RPC_TIMEOUT_MS = 8_000; // also bounds how long one request can hold the send lock
+// No retries: with viem's default 3, one slow call could hold the send lock for ~33 s. The lock is then held for at most
+// two RPC timeouts (simulate ‖ nonce, then the sync send); a client re-POSTs a 502 that carries no txHash.
+const RPC_TIMEOUT_MS = 8_000;
 const SYNC_SEND_TIMEOUT_MS = 4_000; // eth_sendRawTransactionSync inclusion wait (NFR-4: payment ≤ 5 s)
+const BALANCE_TTL_MS = 5_000; // /health WBT balance may be 5 s old (human 23:27, NFR-14 ≤ 300 ms p95); a send clears it
 export const MAX_BODY_BYTES = 4096;
 
 // Drain guard (ARCHITECTURE §3 points 4–6; limits approved by the human 2026-11-05 22:53).
@@ -66,7 +69,7 @@ export function relayerClient(): RelayerClient {
   } catch {
     throw new Error('RELAYER_PRIVATE_KEY is not a valid private key'); // noble's own message prints the number
   }
-  liveClient = makeClient(account, http(process.env.RPC_URL ?? ANKR_RPC, { timeout: RPC_TIMEOUT_MS }));
+  liveClient = makeClient(account, http(process.env.RPC_URL ?? ANKR_RPC, { timeout: RPC_TIMEOUT_MS, retryCount: 0 }));
   return liveClient;
 }
 
@@ -75,6 +78,18 @@ const respond = (r: Reject) => Response.json({ error: r.error, code: r.code, txH
 const nowSeconds = () => BigInt(Math.floor(Date.now() / 1000));
 const reason = (e: unknown) => (e instanceof BaseError ? e.shortMessage : 'unexpected error');
 const REPLAY = reject(422, 'replay', 'this authorization was already used');
+const EXPIRED = reject(422, 'expired', 'validBefore must leave at least 30 s');
+const tooLate = (p: Pull) => p.validBefore < nowSeconds() + MIN_REMAINING_S;
+
+const balances = new Map<Address, { wei: bigint; at: number }>();
+async function wbtBalance(client: RelayerClient): Promise<bigint> {
+  const address = client.account.address;
+  const hit = balances.get(address);
+  if (hit && Date.now() - hit.at < BALANCE_TTL_MS) return hit.wei;
+  const wei = await client.getBalance({ address });
+  balances.set(address, { wei, at: Date.now() });
+  return wei;
+}
 
 // ponytail: in-process, one relayer process. Upgrade: a rel_sent table + Postgres advisory lock (batch 003, multi-instance Vercel).
 const sentAuthorizations = new Set<string>();
@@ -143,7 +158,7 @@ export function parsePull(body: string): { pull: Pull } | { error: string } {
 async function localChecks(p: Pull, target: Address): Promise<Reject | undefined> {
   const now = nowSeconds();
   if (p.validAfter > now) return reject(422, 'not_yet_valid', 'validAfter is in the future');
-  if (p.validBefore < now + MIN_REMAINING_S) return reject(422, 'expired', 'validBefore must leave at least 30 s');
+  if (tooLate(p)) return EXPIRED;
   if (p.validBefore > now + MAX_WINDOW_S) return reject(422, 'window_too_long', 'validBefore must be within 15 min');
   if (p.value < MIN_VALUE) return reject(422, 'below_minimum', 'value must be at least 1 USDT');
   const message = { from: p.from, to: target, value: p.value, validAfter: p.validAfter, validBefore: p.validBefore, nonce: p.nonce };
@@ -177,7 +192,7 @@ async function rpcChecks(client: RelayerClient, p: Pull, target: Address): Promi
 
 /** Runs inside the send lock: re-simulate on fresh state, sign with capped fees, send once, check the receipt. */
 async function send(client: RelayerClient, p: Pull, target: Address): Promise<Reject | Sent> {
-  if (p.validBefore < nowSeconds() + MIN_REMAINING_S) return reject(422, 'expired', 'validBefore must leave at least 30 s');
+  if (tooLate(p)) return EXPIRED; // queue time counts
   if (sentAuthorizations.has(sentKey(p))) return REPLAY;
   let nonce: number;
   try {
@@ -190,6 +205,7 @@ async function send(client: RelayerClient, p: Pull, target: Address): Promise<Re
   } catch (e) {
     return reject(502, 'rpc_error', reason(e));
   }
+  if (tooLate(p)) return EXPIRED; // and so does a slow simulate/nonce step: never sign what could expire unmined
   const data = encodeFunctionData({ abi: PULL_STUB_ABI, functionName: 'pull', args: p.args });
   const signed = await client.account.signTransaction({ chainId: whitechainSepolia.id, type: 'eip1559', to: target, data, nonce, ...FEES });
   const txHash = keccak256(signed);
@@ -201,6 +217,8 @@ async function send(client: RelayerClient, p: Pull, target: Address): Promise<Re
     return { txHash, blockNumber: receipt.blockNumber };
   } catch (e) {
     return reject(502, 'rpc_error', reason(e), txHash);
+  } finally {
+    balances.delete(client.account.address); // gas was (probably) spent: the next /health reads fresh
   }
 }
 
@@ -227,7 +245,7 @@ export async function relay(body: string, client: RelayerClient, target: Address
 /** GET /health (skeleton): the real WBT balance; spend, budget and fee fields arrive with batch 003's storage. */
 export async function health(client: RelayerClient): Promise<Response> {
   try {
-    const wei = await client.getBalance({ address: client.account.address });
+    const wei = await wbtBalance(client);
     return Response.json({
       relayer: client.account.address, wbt: formatEther(wei),
       gasSpentToday: null, budgetLeft: null, usdtFeesUnswapped: null, paused: false,
