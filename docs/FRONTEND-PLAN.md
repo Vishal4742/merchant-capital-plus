@@ -4,25 +4,25 @@ This is planning only; Start Fresh means no product code before Thu 21:00 IST. A
 
 ## Stack
 
-Pinned on 2026-11-05 to releases that are about a week old or more. Install with `--save-exact` and commit the lockfile.
+Pinned on 2026-11-05 to releases that are about a week old or more. Install with `--save-exact` (devDependencies too) and commit the lockfile.
 
 | Package | Pin | Released | Why |
 |---|---|---|---|
 | next | 16.4.3 | Oct 23 | App Router, API routes for sessions, webhooks, CSV and the Arkiv writer |
-| react, react-dom | 19.2.9 | Oct 14 | |
+| react, react-dom | 19.3.0 | 09-09 | create-next-app 16.4.3's own pin |
 | viem | 2.57.13 | Oct 28 | ships `whitechainSepolia` (1874) in `viem/chains`, verified in the package source |
-| tailwindcss, @tailwindcss/postcss | 4.3.3 | Jul 16 | |
+| three, @types/three | 0.186.1 / 0.186.0 | Sep 24 / Sep 11 | human asked for three.js (21:43): the DitherScene as GPU points (gather, parallax, cursor push, twinkle); 0.187.0 was 6 days old |
+| tailwindcss, @tailwindcss/turbopack | 4.3.3 | Jul 16 / Jul 31 | 4.3.4 was 1–3 days old |
 | @anon-rpc/browser-harness | 0.4.0 | Oct 28 | FR-PRIV-1; read its README and spec-types before writing calls |
-| @arkiv-network/sdk | 1.0.1 | Nov 2 | ARCHITECTURE §5 pin. 1.0 removed payloads and `buildQuery`, so read the source |
-| @privy-io/react-auth | 3.51.0 | Oct 21 | only if DEP-3 passes in Phase 1; otherwise use the guest wallet |
+| @arkiv-network/sdk | 1.0.1 | Nov 2 | ARCHITECTURE §5 pin, installed in batch 002. 1.0 removed payloads and `buildQuery`, so read the source |
 
-No wagmi and no react-query. Every signature is typed data, and viem does that alone: `custom(window.ethereum)` for merchant, investor and compliance; Privy's provider or a local key for the customer.
+No wagmi and no react-query. Every signature is typed data, and viem does that alone: `custom(window.ethereum)` for merchant, investor and compliance; a guest key held in the browser for the customer (DEP-3, human 20:31: Privy always sends analytics with the wallet address to auth.privy.io).
 
 ## Screens by phase (each line is one batch)
 
 **P1 Rail proofs (G1)**
 - Skeleton passes tsc, lint and build. `lib/anon.ts` reads `eth_blockNumber` from Ankr through Nym in the browser (DEP-6).
-- Privy against DEP-3: signs typed data on 1874, loads no third-party trackers (check the network tab), and takes about an hour to integrate. Any failure means the guest wallet, stated in the README limitations.
+- Guest wallet (DEP-3): a browser-held key signs typed data for 1874. Built in batch 001 (open: round 2).
 - One Arkiv create and query (DEP-5).
 
 **P2 Payments core (G2: AT-1, AT-2)**
@@ -52,16 +52,29 @@ No wagmi and no react-query. Every signature is typed data, and viem does that a
 ## Rules for every screen
 - One batched Multicall read per screen through `lib/anon.ts`, with no log scans (NFR-5). History comes from Blockscout `/api/v2/...`, listed as an exclusion (FR-PRIV-4). The tokens transfers endpoint works on the testnet explorer, checked at 18:35.
 - The customer never sees "sign", "gas", "WBT" or "Whitechain" (FR-PAY-7, NFR-6).
-- No trackers or analytics in the client (NFR-8). Check Privy's network calls before keeping it.
+- No trackers or analytics in the client (NFR-8).
 - No landing page: no SRS item asks for one.
 - No faucet or "get test USDT" button anywhere (CON-8). Demo wallets are funded by claude-contracts' seed script.
-- Design: the v7 lock in HANDOFF.md, to confirm with the human in Phase 2. Rebuild it from `design-refs/`; copy nothing.
+- **Design (human approved 2026-11-05 21:30): "Mercury + dither".**
+  - The spec is the clickable demo `design-refs/merchant-capital-demo.html` (made after the start, our own work) and the design system https://claude.ai/artifact/1FqWSDshf1hweQ6k7wLixx.
+  - Tokens:
+    - one blue `accent` #3b4fd9 (dark #8796ff)
+    - Instrument Sans at 420/500, Instrument Serif italic for one phrase, Geist Mono for data
+    - glass over a dithered Marine Drive night scene (DitherScene, dots gather on load)
+    - pill buttons; cards `radius-md`; checkout sheet `radius-lg`
+    - **human picks 21:37:** Instrument Sans, pill buttons, **press-and-hold to pay** (900 ms fill, release cancels, one keyboard press confirms)
+  - Build order:
+    1. copy `tokens.css` into `apps/web/app/` and map it in Tailwind `@theme`
+    2. fonts via `next/font/google`
+    3. DitherScene as a client component
+    4. `/checkout/[sessionId]` and `/merchant` as in the demo
+  - It supersedes the v7 cream lock.
 
 ## Decisions (human, SRS 1.1, 19:50)
 - FR-TOK-8 moved to P4 as M, so AT-8 holds at G4.
 - Demo funding: seed script (CON-8), no button in the app.
 - /pay and /checkout make no browser chain reads (FR-PRIV-1, FR-PRIV-4).
-- Privy: tested against DEP-3 in P1, guest wallet on any failure.
+- Customer wallet: guest wallet, no Privy (human, 20:31).
 - Batch size: one batch per bullet above.
 
 ## Demo amounts (human, SRS §6, 19:55)
