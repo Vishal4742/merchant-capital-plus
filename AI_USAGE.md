@@ -30,4 +30,5 @@ ETHGlobal asks teams to say where AI was used, down to files, and to commit spec
 | `apps/relayer/` drain guard (allowlist, simulate-before-send, caps, windows, payer-has-code refusal, 6 gwei cap) | claude-relayer | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 3) + claude-review drain review + human gate | 002-P2-drain-guard |
 | `contracts/script/LiveInvoice.s.sol`, `contracts/test/EventAbi.t.sol`, seed fee top-up | claude-contracts | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 2) + human gate | 006-P4-g4-live |
 | `apps/web/` invoices (fee on top, part payments), refunds (exact approval), payments table | claude-frontend | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 2) + human gate | 005-P2-web-invoices-refunds |
+| `packages/sdk/` (Gateway client: sessions, payments, webhook verify/sign; zero dependencies) | claude-sdk (tests first) | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 2) + human gate | 005-P4-sdk-core |
 | ⟨path⟩ | ⟨lane / agent⟩ | ⟨reviewers + human⟩ | ⟨NNN⟩ |
