@@ -141,7 +141,6 @@ Vercel projects: `apps/web`, `apps/relayer`, `apps/shop` (push to deploy) + Neon
 | Toolchain | solc **0.8.38** (pin `solc_version`; 0.8.35/0.8.37 downloads returned HTTP 500 today) · OpenZeppelin **v5.7.0** (`forge install OpenZeppelin/openzeppelin-contracts@tag=v5.7.0`; npm `latest` still says 5.6.1) · `_update(from, to, ids, values)` unchanged · `ReentrancyGuardTransient` available · EIP712 name and version must be ≤31 bytes in 5.7 | GitHub API, compile + `cast call --create` on 1874 (2.16M gas for an ERC1155Supply test) |
 | ERC-7943 | **Final** (2026-05-05); ERC-1155 interface id `0x41c4fbad` (recomputed). Reference `uRWA1155.sol` (unaudited): its `forcedTransfer` calls `super._update`, which would skip our holder-count bookkeeping; a forced burn above the unfrozen amount must lower frozen first and emit `Frozen` before the transfer event | ethereum/ERCs @46745bdc |
 | Gas baseline | USDT `transfer` 61,748 gas (new recipient) / 44,201 (existing); L1 data fee ≈ 6k wei, negligible | cast estimate |
-| Rival (awareness only) | `InvoiceRegistry` `0x5997429835570A11cfD0aD70bF152154fb803ef9`, `ReceivableMarket` `0x85d5403e247826C3d69CdafedBbC3575738D4ED6` | explorer |
 
 ## 8. Lanes (human, 18:46: zcode is out)
 
