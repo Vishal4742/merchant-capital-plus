@@ -2,7 +2,7 @@
 
 How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the requirements it delivers, tasks by owner, and an **exit gate** made of acceptance tests (SRS §6). **Rule: a phase's gate must pass before the next phase's core work starts.** Tick boxes as you go and log each passed gate in HANDOFF_LOG.md. Design and ABI: ARCHITECTURE.md. Event deadlines: HANDOFF.md.
 
-**Owners:** `C` claude-contracts · `L` claude-relayer · `F` claude-frontend · `R` claude-research · `O` opencode (review only) · `H` human.
+**Owners:** `C` claude-contracts · `L` claude-relayer · `F` claude-frontend · `S` claude-sdk · `R` claude-research · `O` opencode (review only) · `H` human.
 **Order = unique part first.** Phase 2 qualifies Operate + Scale; **Phase 3 delivers the advance repaid from checkout (our differentiator, never cut)**; Phase 4 adds invoice financing, Arkiv and Anon-RPC. After any passed gate the product is complete enough to submit.
 
 | Phase | Name | Delivers (SRS IDs) | Exit gate | Tracks secured |
@@ -78,7 +78,7 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 - [ ] `C` **Freeze the ABI** in `packages/shared` and ARCHITECTURE.md §2; later changes go through agentbus
 - [ ] `F` Merchant "Cash advance" with the total cost shown before signing (FR-ADV-1, 6); investor funding flow (FR-ADV-3); payments table shows the split; compliance desk with the owner list (FR-KYC-1)
 
-**Gate G3:** AT-3 (advance funded), AT-4 (a sale repays 20% in the same tx), AT-5 (cap reached, lien ends).
+✅ **Gate G3 (verified by claude-research 02:47 on the final contracts):** AT-3 (advance funded), AT-4 (a sale repays 20% in the same tx), AT-5 (cap reached, lien ends). The UI half of Phase 3 moves to the Phase 5 Capital tab.
 **If blocked here:** cut invoice financing (Phase 4) before touching the advance.
 
 ---
@@ -91,9 +91,10 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 - [ ] `F` Multi-currency prices with a locked FX quote at checkout (FR-GW-11)
 - [ ] `F` Reports with a sales chart and CSV, and a Settlements page (FR-GW-9, FR-GW-10)
 - [ ] `F` API keys, webhooks, a `/docs` page and the test-mode badge (FR-GW-6, 7, 8, 14)
-- [ ] `L` SDK + payment-button script in `packages/sdk` (FR-GW-4, FR-GW-5), after the drain guard and Postgres lock
+- [ ] `S` SDK + payment-button script in `packages/sdk` (FR-GW-4, FR-GW-5), started now by claude-sdk
 - [ ] `C` Capital on chain: AT-6, AT-7, AT-8 live, the E1 event-ABI snapshot and the NFR-10 coverage report (batch 006); then **contracts freeze**
-- [ ] `C` After the freeze: rebuild `apps/shop` on the SDK or button in ≤ 20 lines (FR-PAY-11, AT-14)
+- [ ] `S` Rebuild `apps/shop` on the SDK or button in ≤ 20 lines (FR-PAY-11, AT-14)
+- [ ] `C` After the freeze: the gateway backend API in `apps/web/app/api/v1/{links,pages,vouchers,quotes,reports,settlements,keys,webhooks}` + Neon `app_gw_*` tables (FR-GW-1, 2, 6, 7, 9, 10, 11, 12 server side); claude-frontend builds the screens against it
 - [ ] `F` Private reads by default on dashboard pages, with the meter (FR-PRIV-1–3)
 - [ ] `F` Record every Arkiv problem (post it to claude-research)
 

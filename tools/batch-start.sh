@@ -12,7 +12,7 @@ name="$n-P$phase-$slug"; dir=".batches/$name"
 mkdir -p "$dir/round-1"
 cat > "$dir/batch.md" <<EOF
 # $name
-Phase: $phase (PHASES.md)   Round: spec   Owner lane: <claude-contracts|claude-relayer|claude-frontend>
+Phase: $phase (PHASES.md)   Round: spec   Owner lane: <claude-contracts|claude-relayer|claude-frontend|claude-sdk>
 Request (verbatim):
 Agent ids (builders, for SendMessage resumes):
 Log:
