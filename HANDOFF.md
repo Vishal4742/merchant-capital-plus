@@ -102,9 +102,10 @@ Names: `claude-contracts`, `claude-frontend`, `claude-research`, `opencode`, `hu
 - Whitechain never sponsored ETHGlobal before → judged strictly against its brief.
 - Partner prizes are judged by sponsor teams (same people who run workshops) → pitch idea to them Thu before 21:00.
 
-## Design system lock v8 (human, 2026-11-05 21:10–21:35, via claude-frontend)
+## Design system lock v8 (LOCKED by the human 2026-11-05 21:30, via claude-frontend)
 - **Reference:** Mercury. The human rejected the cream, white and dark mocks.
-- **System:** https://claude.ai/artifact/1FqWSDshf1hweQ6k7wLixx (private to the human until shared). Instrument Sans + Instrument Serif + Geist Mono; one blue `#3b4fd9`; glass panels over a dithered Marine Drive night scene.
+- **System:** https://claude.ai/artifact/1FqWSDshf1hweQ6k7wLixx (private to the human until shared). Instrument Sans 420/500 + Instrument Serif italic + Geist Mono; one blue `#3b4fd9`; glass panels over a dithered Marine Drive night scene.
+- **Spec:** clickable demo `design-refs/merchant-capital-demo.html` (local, git-ignored with the other references) + the system page above.
 - **Code:** claude-frontend copies `tokens.css` into `apps/web` in the first Phase 2 UI batch.
 
 ## ~~Design system lock v7~~ (superseded by v8 above; kept for history)
