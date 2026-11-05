@@ -8,6 +8,7 @@ HANDOFF_LOG.md lines containing "VERIFIED <batch or gate>" (written by claude-re
 import pathlib, re, subprocess, time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+LANES = {"main": "claude-frontend", "contracts": "claude-contracts", "relayer": "claude-relayer"}
 VERDICTS = ["test", "review-code", "review-security", "review-ux-ui", "ci"]
 
 
@@ -83,11 +84,12 @@ def main():
     for path, branch in worktrees():
         bdir = path / ".batches"
         active = first_line(bdir / "ACTIVE") if (bdir / "ACTIVE").exists() else ""
-        lane = "?"
-        batches = sorted(d for d in bdir.glob("[0-9][0-9][0-9]-P*") if d.is_dir()) if bdir.exists() else []
-        for b in batches:
+        lane = LANES.get(branch, branch)
+        def owner(b):
             m = re.search(r"Owner lane: (claude-[a-z]+)", (b / "batch.md").read_text(errors="replace")) if (b / "batch.md").exists() else None
-            lane = m.group(1) if m else lane
+            return m.group(1) if m else lane
+        # merged batches appear in every checkout: show each one only under its owner lane
+        batches = sorted(d for d in bdir.glob("[0-9][0-9][0-9]-P*") if d.is_dir() and owner(d) == lane) if bdir.exists() else []
         print(f"  {lane:<17} {branch:<10} {path.name:<20} last commit {last_commit(path)}")
         for b in batches:
             print(f"      {'▶ ' if b.name == active else '  '}{batch_state(b, active, verified)}")
