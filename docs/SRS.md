@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Version | 1.1 (pre-event planning; no code before the hackathon starts) |
-| Changes | 1.1 (human approved 2026-11-05 19:50): FR-TOK-8 → M, Phase 4 (AT-8 needs it at G4); FR-PRIV-1 and FR-PRIV-4 reworded (pay and checkout pages make no browser chain reads); CON-8 added (demo funding by seed script); DEP-3 pass criteria (Privy then failed them, guest wallet); demo amounts divided by 10 in AT-3–AT-7 to fit the test USDT we can collect; FR-PRIV-4 lists the Nym worker's own traffic (human 21:18); NFR-12–14 speed budgets for web and relayer (human 22:28: "the system should be fast"); FR-PAY-15 merchant wallet sign-in (human asked in the frontend session, 22:5x); FR-PAY-16 owner sweep of stray USDT (human 23:40, contracts gate) |
+| Changes | 1.1 (human approved 2026-11-05 19:50): FR-TOK-8 → M, Phase 4 (AT-8 needs it at G4); FR-PRIV-1 and FR-PRIV-4 reworded (pay and checkout pages make no browser chain reads); CON-8 added (demo funding by seed script); DEP-3 pass criteria (Privy then failed them, guest wallet); demo amounts divided by 10 in AT-3–AT-7 to fit the test USDT we can collect; FR-PRIV-4 lists the Nym worker's own traffic (human 21:18); NFR-12–14 speed budgets for web and relayer (human 22:28: "the system should be fast"); FR-PAY-15 merchant wallet sign-in (human asked in the frontend session, 22:5x); FR-PAY-16 owner sweep of stray USDT (human 23:40, contracts gate); demo amounts ÷100 in AT-3–AT-7 (human 23:58: ~110 test USDT available) |
 | Status | Approved scope, locked by the human 2026-11-05 |
 | Related | ARCHITECTURE.md (design and ABI), PHASES.md (delivery plan), `research_notes/Mumbai hackathon idea validation/build_H1_merchant_capital.md` (design detail and sources), HANDOFF.md (decisions, event facts) |
 | Change control | Requirements change only through HANDOFF.md + an agentbus message; IDs are never reused |
@@ -232,11 +232,11 @@ Priority: **M** = must (never cut), **S** = should, **C** = could (first to cut)
 |---|---|---|
 | AT-1 | A customer with 0 WBT pays a 25 USDT shop sale | Explorer shows one tx: fee to the relayer recipient, rest to the merchant; webhook received |
 | AT-2 | The merchant refunds the sale | Customer receives USDT; investors untouched |
-| AT-3 | An investor funds a 100 USDT advance (cap 110, holdback 20%) | Merchant receives 100; investor holds 110,000,000 units |
-| AT-4 | A 50 USDT sale after AT-3 | 10 USDT to the investor in the same tx; outstanding falls to 100 |
+| AT-3 | An investor funds a 10 USDT advance (cap 11, holdback 20%) | Merchant receives 10; investor holds 11,000,000 units |
+| AT-4 | A 5 USDT sale after AT-3 | 1 USDT to the investor in the same tx; outstanding falls from 11 to 10 |
 | AT-5 | The advance reaches its cap | Lien removed; the next sale pays the merchant 100% minus the fee |
-| AT-6 | Two investors fund a 1,000 USDT invoice at 12% APR, 60 days (600 / 400 split) | Prices ≈588.39 and ≈392.26 (exact 6-decimal values from the contract); merchant receives their sum |
-| AT-7 | The debtor pays the invoice | Investors receive 600 and 400 in the same tx; claim settled |
+| AT-6 | Two investors fund a 100 USDT invoice at 12% APR, 60 days (60 / 40 split) | Prices ≈58.84 and ≈39.23 (exact 6-decimal values from the contract); merchant receives their sum |
+| AT-7 | The debtor pays the invoice | Investors receive 60 and 40 in the same tx; claim settled |
 | AT-8 | An investor tries to send a claim to a non-eligible wallet | Transaction reverts; the UI showed the reason first |
 | AT-9 | The investor offer book loads | Offers come from Arkiv; expired offers are gone; meter shows private reads |
 | AT-10 | The relayer is asked to submit an invalid or unprofitable call | Rejected before sending; no gas spent |
