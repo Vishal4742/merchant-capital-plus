@@ -4,6 +4,13 @@
 
 > Status: pre-event skeleton (written before hacking starts, Start Fresh). Slots marked `⟨…⟩` are filled with real links during the build. Requirements: `docs/SRS.md`. Design: `ARCHITECTURE.md`. How we built it: `PIPELINE.md`, `AI_USAGE.md`.
 
+## What makes it different
+- **Zero gas for the payer:** the customer signs once; our relayer pays the gas.
+- **Instant settlement (T+0):** money lands in the merchant's own wallet in the same transaction; we never hold it.
+- **Exact amounts:** the customer signs an authorization for an exact amount, so under- and overpayment (a common problem at crypto gateways) can't happen.
+- **Every receipt is an on-chain transaction** anyone can check.
+- **Easiest to integrate:** a one-line payment button or a small SDK, with signed webhooks.
+
 ## Why this needs on-chain stablecoin settlement
 Repayment is enforced where the money arrives. One customer payment is split, in the same transaction, between the merchant, the investors who financed it and the gas fee, under rules neither the merchant nor we can change. A card rail or bank transfer can't route one payment to three parties by code, and an investor would have to trust the merchant to forward the money. With USDT on Whitechain, any verified investor can fund a café at 3 a.m. and gets repaid in one second.
 
