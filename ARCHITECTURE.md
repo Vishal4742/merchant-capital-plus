@@ -96,7 +96,7 @@ M1 pay invoice + nonce binding + direct `transferWithAuthorization` can't bypass
 - `POST /schedule`: stores a debtor's pre-signed authorization with `validAfter = dueDate` (it can only pay that one invoice to MerchantPay); a keeper submits it when due.
 - `GET /health` → `{wbt, gasSpentToday, budgetLeft, usdtFeesUnswapped, paused}`, shown on the merchant dashboard (Scale asks who pays gas).
 - **Drain guard:** (1) target + selector allowlist; (2) simulate before sending, never send a revert; (3) x402-style pre-checks (signature, balance, window, `authorizationState`); (4) fee inside the tx, minimum payment 1 USDT; (5) `maxFeePerGas ≤ 10 gwei`, gas limit 400k; (6) `validBefore ≤ now + 15 min`; (7) rate limits per payer, merchant and IP in SQL; (8) daily WBT budget, 503 when exhausted; (9) hot wallet ≤ 0.5 WBT, topped up by the swap job; (10) pause switch + alert on any failed tx. One hot key, serialized sends (Postgres advisory lock), key only in `.env` / Vercel env.
-- **Where the WBT comes from:** faucet 2 WBT/day ≈ 1,600–2,000 payments (gas per payment ~200–250k, estimate). Fee-swap keeper: `SwapRouter02.exactInputSingle(USDT → WWBT, fee 3000, minOut = QuoterV2 − 1%)` then `WWBT.withdraw` to the relayer EOA. Pool is shallow (≈99k USDT): swap small amounts. Mainnet story: same swap, or a merchant gas deposit (README only).
+- **Where the WBT comes from:** faucet 2 WBT/day ≈ 1,600–2,000 payments. Measured on 1874 (batch 001-P1-rail-proof): relayed EIP-3009 pull + forward of 1 USDT = **94,034 gas** live (5 gwei, L1 fee ≈ 6k wei) = 0.00047 WBT ≈ 0.035 USDT; PullStub deploy 230,639. Estimate for a full routed payment: 180–200k with no lien, 230–260k with one advance lien push + burn ≈ 0.086–0.097 USDT, just under the 0.10 fee; many holders would exceed it. Fee-swap keeper: `SwapRouter02.exactInputSingle(USDT → WWBT, fee 3000, minOut = QuoterV2 − 1%)` then `WWBT.withdraw` to the relayer EOA. Pool is shallow (≈99k USDT): swap small amounts. Mainnet story: same swap, or a merchant gas deposit (README only).
 
 ## 4. Apps (claude-frontend)
 
@@ -154,6 +154,6 @@ Claim files on agentbus before editing (`CLAIM <path>` / `DONE <path>`); two ses
 
 ## 9. Open items (resolve in Phase 1)
 1. ~~Privy embedded wallet signing on 1874~~ decided: guest wallet.
-2. Full gas of one routed payment (estimate 200–250k), which sets whether 0.10 USDT covers it.
+2. Full gas of one routed payment: the pull alone is measured at 94k; the routed payment (180–260k estimate) is measured with `forge --gas-report` in Phase 2 before the 0.10 USDT fee is fixed.
 3. Does the Ankr hacker key raise the `eth_getLogs` range? (We don't depend on it.)
 4. ~~Does Privy send telemetry?~~ Yes, to auth.privy.io with no off switch, so it was dropped.
