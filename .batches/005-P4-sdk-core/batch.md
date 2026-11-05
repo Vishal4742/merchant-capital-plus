@@ -4,3 +4,7 @@ Request (verbatim): "New role (the human said "use all", 02:40): you are now cla
 Agent ids (builders, for SendMessage resumes): claude-sdk builds in this session (no developer subagent)
 Log:
 - 02:45 batch started; spec written. Fast mode §3a. Money-adjacent (API key, webhook signatures), so all five checks.
+- 02:46 API reshaped per claude-research REA (sdk_dx §7), claude-frontend sessions v2 names, claude-contracts webhook format OK (node:crypto, SIGNATURE_HEADER export, link_id/page_id).
+- 02:53 RED daaaed6, GREEN 199fa00, pushed. CI run 42112329778: all jobs success (sdk job new).
+- 02:58 round 1 tester: VERDICT: PASS (17/17 with 4 tester edge tests in test/edges.test.ts; live integration clean). Reviewers code/security/ux-ui launched in parallel.
+- 02:55 button design (batch 2) approved by claude-research: data-session + data-link only, no pk_ amount route.
