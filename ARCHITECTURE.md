@@ -110,7 +110,7 @@ M1 pay invoice + nonce binding + direct `transferWithAuthorization` can't bypass
 | `apps/shop` | Separate demo café store; **≈20-line integration**: `POST /api/buy` (≈8 lines) + button (≈4) + webhook handler (≈8). Count the lines in the README |
 | Wallets | Customer: **guest wallet** (a key kept in the browser; human 20:31, Privy failed DEP-3 because it always sends analytics with the wallet address to auth.privy.io). Merchant/investor: injected wallet. UI never says "sign", "gas" or "Whitechain" to the customer |
 | Reads | `lib/anon.ts`: viem `http(ANKR, { fetchFn: worker.fetch, timeout: 60_000, retryCount: 1 })` (Anon-RPC 0.4.0; Nym worker hash `0xf13a448a…1fceb8` pinned in code, because the specifier owner can call `setWorker`), `batch: { multicall: true }`, Nym default, Tor fallback, a "Private reads · 100%" meter chip. `/pay` and `/checkout` make no browser chain reads (SRS 1.1 FR-PRIV-1). Needs a mainnet bootstrap RPC for one specifier read, a sandboxed iframe (CSP), lazy-load the 18 MB Nym bundle |
-| Design | HANDOFF.md "Design system lock v7" (cream editorial, one cobalt accent, Clash Display / Satoshi / Geist Mono) + references in `design-refs/`; confirm with the human in Phase 2 |
+| Design | HANDOFF.md "Design system lock v8" (Mercury reference, Instrument Sans/Serif + Geist Mono, one blue `#3b4fd9`, glass over a dithered Marine Drive night scene) + references in `design-refs/`; confirm with the human in Phase 2 |
 
 ## 5. Arkiv (`@arkiv-network/sdk` **1.0.1**, Rabdi testnet 7794095)
 
