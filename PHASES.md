@@ -24,7 +24,7 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 **H**
 - [ ] Claim faucet WBT from home (limited per wallet, IP and GitHub account): relayer hot wallet first, then demo customer and investor wallets; swap part to USDT on YetiTrade
 - [ ] Keys: Ankr (code `Whitechain2026`), Arkiv access key + Rabdi funds, Vercel + Neon, an empty public GitHub repo (keys in `.env` only, CON-7)
-- [ ] Start the `claude-contracts` session: "You are claude-contracts. Read AGENTS.md, HANDOFF.md, docs/SRS.md, ARCHITECTURE.md, PHASES.md and the build plan. Planning only until hacking starts."
+- [x] Start the `claude-contracts` session: "You are claude-contracts. Read AGENTS.md, HANDOFF.md, docs/SRS.md, ARCHITECTURE.md, PHASES.md and the build plan. Planning only until hacking starts."
 - [x] Tell the frontend session: the idea is Merchant Capital+, its name is `claude-frontend`, and it rewrites `docs/FRONTEND-PLAN.md` against the SRS
 - [ ] Optional: product name and design direction
 
@@ -35,16 +35,16 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 
 **C / F:** read the SRS and ARCHITECTURE.md; plan tests and screens. No product code (CON-1).
 
-**Gate G0:** WBT and USDT in the wallets · three Claude sessions named on agentbus · the documents above exist.
+✅ **Gate G0 (verified by claude-research 21:05):** WBT and USDT in the wallets · three Claude sessions named on agentbus · the documents above exist.
 
 ---
 
 ## Phase 1: Rail proofs
 **Goal:** prove the risky assumptions before building on them.
 
-- [x] `H` Create the repo (local `main` 6b0ccd4 at 20:26; GitHub remote pending); first commit = AGENTS.md, CLAUDE.md, PIPELINE.md, docs/SRS.md, ARCHITECTURE.md, PHASES.md, `tools/{pipeline-gate,batch-start,batch-close}.sh`, `.claude/agents/*`, `.claude/settings.json` (gate hook)
+- [x] `H` Create the repo (`main` 6b0ccd4 at 20:26, public on GitHub: Vishal4742/merchant-capital-plus); first commit = AGENTS.md, CLAUDE.md, PIPELINE.md, docs/SRS.md, ARCHITECTURE.md, PHASES.md, `tools/{pipeline-gate,batch-start,batch-close}.sh`, `.claude/agents/*`, `.claude/settings.json` (gate hook)
 - [x] `R` Run `bash ~/.claude/skills/three-techniques/scripts/setup.sh typescript` in the repo (ECC + Ponytail, commands, agents); merge the gate hook back if the merge touched it; restart sessions; **prove the gate fires** (an edit under `apps/` with no batch is denied) — PIPELINE.md §9
-- [ ] From here on, every task in this file runs as a PIPELINE.md batch (`bash tools/batch-start.sh <phase> <slug>`)
+- [x] From here on, every task in this file runs as a PIPELINE.md batch (`bash tools/batch-start.sh <phase> <slug>`)
 - [ ] `C` Foundry project (`prague`); a stub contract pulls USDT with `receiveWithAuthorization`, submitted by a relayer key (DEP-1); measure the gas of a routed payment
 - [ ] `F` Next.js skeleton passing tsc, lint and build; one Anon-RPC read inside our app (DEP-6); guest wallet for the customer (DEP-3 decided: Privy failed the tracker check); one Arkiv write + read (DEP-5)
 - [ ] `H`+`F` Vercel projects (`apps/web`, `apps/relayer`, `apps/shop`) and Neon connected
