@@ -50,7 +50,22 @@ Dashboards read the chain privately via Anon-RPC (Nym), one Multicall per screen
 Contracts: `contracts/` (Solidity 0.8.38, Foundry) · Relayer: `apps/relayer/` (Node, viem) · Apps: `apps/web/`, `apps/shop/` (Next.js 16) · Details: `ARCHITECTURE.md`
 
 ## Setup
-⟨commands: install, env vars from `.env.example`, `forge test`, run apps⟩
+Requirements: Node 26, Foundry 1.8.6, git. Everything runs on Whitechain Sepolia (chain 1874); no mainnet funds are needed.
+
+```bash
+git clone --recursive https://github.com/Vishal4742/merchant-capital-plus && cd merchant-capital-plus
+cp .env.example .env          # fill in the values; never commit .env
+
+# Contracts (Foundry; fork tests run against Whitechain Sepolia with the real USDT)
+cd contracts && forge build && forge test -vv && cd ..
+
+# Relayer (localhost only until its drain guard ships): http://127.0.0.1:8787
+cd apps/relayer && npm ci && npm test && npm run dev        # GET /health, POST /relay
+
+# Web app (merchant, investor, customer pages): http://localhost:3000
+cd apps/web && npm ci && npm run typecheck && npm test && npm run dev
+```
+Test funds: claim WBT at faucet.testnet.whitechain.io, then swap some to the prize USDT (`0xcedfB561…f55a7`) on testnet.yetitrade.fi. CI runs the same checks on every push (`.github/workflows/ci.yml`).
 
 ## Limitations (honest)
 - Testnet only (official USD₮ isn't on Whitechain mainnet yet). Maturity lock 60 s and grace 120 s on testnet so the demo can show them; 1 day / 7 days in production.
