@@ -26,6 +26,7 @@ contract LiveAdvance is Script {
     CapitalMarket market;
     uint256 deployerKey;
     uint256 customerKey;
+    uint256 merchantKey;
     address merchant;
     uint256 validBefore;
 
@@ -34,7 +35,7 @@ contract LiveAdvance is Script {
         market = CapitalMarket(vm.envAddress("CAPITAL_MARKET"));
         deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         customerKey = vm.envUint("PAYER_PRIVATE_KEY");
-        uint256 merchantKey = vm.envUint("DEMO_MERCHANT_PRIVATE_KEY");
+        merchantKey = vm.envUint("DEMO_MERCHANT_PRIVATE_KEY");
         uint256 investorKey = vm.envUint("DEMO_INVESTOR_A_PRIVATE_KEY");
         merchant = vm.addr(merchantKey);
         address investor = vm.addr(investorKey);
@@ -49,11 +50,12 @@ contract LiveAdvance is Script {
         vm.broadcast(deployerKey);
         market.fundWithAuthorization(claimId, investor, CAP, 0, validBefore, "at3", v, r, s);
 
-        // Customer float for the sales (test funding from the team wallet; the customer never gets WBT).
+        // Customer float: what the team wallet can spare now; the merchant recycles its takings for the rest (_sale).
         address customer = vm.addr(customerKey);
         uint256 held = USDT.balanceOf(customer);
-        if (held < CUSTOMER_FLOAT) {
-            uint256 topUp = CUSTOMER_FLOAT - held;
+        uint256 spare = USDT.balanceOf(vm.addr(deployerKey));
+        if (held < CUSTOMER_FLOAT && spare != 0) {
+            uint256 topUp = CUSTOMER_FLOAT - held < spare ? CUSTOMER_FLOAT - held : spare;
             vm.broadcast(deployerKey);
             require(USDT.transfer(customer, topUp), "funding failed");
         }
@@ -67,6 +69,13 @@ contract LiveAdvance is Script {
 
     function _sale(uint256 amount, bytes32 label) internal {
         address customer = vm.addr(customerKey);
+        uint256 held = USDT.balanceOf(customer);
+        if (held < amount) {
+            // The shop sends back some of its takings (its own tx and WBT), so the customer can keep buying.
+            uint256 shortfall = amount - held;
+            vm.broadcast(merchantKey);
+            require(USDT.transfer(customer, shortfall), "recycle failed");
+        }
         bytes32 orderRef = keccak256(abi.encode(label, block.timestamp, address(market)));
         bytes32 nonce = mp.saleNonce(merchant, orderRef, amount, "s");
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(customerKey, _digest(customer, address(mp), amount, nonce));
