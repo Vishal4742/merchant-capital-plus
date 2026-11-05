@@ -13,10 +13,12 @@ Honest notes from building Merchant Capital+ on Whitechain Sepolia (chain 1874).
 | Tokenize: real transfer rules in the contract; issuer + investor roles; one full lifecycle step | SR-TK-1/2 | AT-3/4/5 advance; AT-8 blocked transfer | not started |
 
 ## What worked
-- **2026-10-25:** the public RPC answered `eth_chainId`, block and `eth_call` queries fast; Foundry `cast` worked against 1874 with zero special config. The explorer is Blockscout, so `forge verify-contract --verifier blockscout --verifier-url https://explorer.testnet.whitechain.io/api/` plugs straight in.
+- **2026-10-25:** the public RPC answered `eth_chainId`, block and `eth_call` queries fast; Foundry `cast` worked against 1874 with zero special config. The explorer is Blockscout, which we expected `forge verify-contract --verifier blockscout` to plug straight into; on build day it didn't (friction 12), but its standard-input API gave a full match.
 - **2026-10-25 / 11-05:** the official test USDT `0xcedf…55a7` supports EIP-2612 `permit` **and** EIP-3009 (`transferWithAuthorization`, `receiveWithAuthorization` that enforces payee == caller, `validAfter` "auth early" checks). That is what makes gasless checkout and pre-signed due-date payments possible.
 - **2026-11-05:** the P-256 precompile (`0x…0100`) verifies a real passkey signature on testnet and mainnet; EAS is predeployed at `0x4200…0021`; Multicall3, Permit2, CreateX and Safe are at their canonical addresses.
 - **2026-11-05:** the workshop and the venue one-pager were clear and practical (2 WBT/day faucet, YetiTrade swap for USDT, the free Ankr RPC code, docs for AI agents at docs.whitechain.io/build-with-ai).
+- **2026-11-05 (build):** the gasless path worked on the first live try: a payer with 0 WBT and nonce 0 paid through our relayer with `receiveWithAuthorization` (94,034 gas, ≈0.035 USDT of WBT). MerchantPay then split a 2 USDT sale into fee + merchant share in one 217k-gas transaction and refunded 1 USDT, both **fully verified** on Blockscout.
+- **2026-11-05 (build):** 1 s blocks and a 5 gwei floor make a gasless sale cost about a cent of WBT; the keyless Ankr endpoint is fast, has CORS `*`, and also works through the Nym mixnet (block reads with 0 direct requests). Foundry fork tests against the real USDT run in GitHub Actions through the public RPC with no key.
 
 ## Where we got stuck (friction)
 1. **Getting test USDT wasn't documented on Oct 25** (the faucet drips WBT only). By Nov 5 the answer is "swap WBT on YetiTrade", which works, but the docs' token list page still describes v1.1.0 without the prize USDT while the official token list v3.0.0 includes it.
