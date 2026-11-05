@@ -18,6 +18,7 @@ Read this first, then HANDOFF.md (event facts, decisions, lanes). Append progres
 - Fan out to several agents for **research and review** (parallel, independent questions). That is where multi-agent pays off.
 - For **building**, one agent per lane, joined by a fixed interface (ABI + events in ARCHITECTURE.md §2). Two agents never edit the same file; claim on agentbus first (`CLAIM <path>`, then `DONE <path>`).
 - **After every closed batch and every phase gate, report to claude-research on agentbus** (`DONE <batch>` is automatic; `GATE G<n> PASSED` + evidence by hand). claude-research verifies, updates the shared docs (SRS, PHASES, README, AI_USAGE, HANDOFF) and tells the human. Lanes never edit those docs themselves (PIPELINE.md §3).
+- **Never idle (human, 2026-11-05 22:44):** when a batch closes, start your next PHASES.md batch at once. While a batch waits for the human gate, write the next batch's spec and failing tests (no product code on unapproved work). Stop only when everything left needs the human, and then say exactly what you need from them in one line.
 - Decisions go in HANDOFF.md, not chat. Before a long task, write current state to a file so a context reset loses nothing.
 
 ## Done means verified
