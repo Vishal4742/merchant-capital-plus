@@ -10,7 +10,7 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 | 0 | Preparation | none (setup only; CON-1) | G0: funds, keys, sessions, docs ready | none |
 | 1 | Rail proofs | FR-REL-1 (stub), DEP-1, DEP-3, DEP-5, DEP-6 checks | G1: relayed gasless USDT pull + one private read | none |
 | 2 | Payments core | FR-PAY-1–9, FR-PAY-11, FR-PAY-15, FR-REL-1–7, FR-REL-9 | G2: AT-1, AT-2, AT-10 | Operate, Scale |
-| 3 | **Advance** | FR-ADV-1–6, FR-TOK-1–4, FR-TOK-6–7, FR-KYC-1 | G3: AT-3, AT-4, AT-5 · **ABI frozen** | **Tokenize** |
+| 3 | **Advance** | FR-PAY-16, FR-ADV-1–6, FR-TOK-1–4, FR-TOK-6–7, FR-KYC-1 | G3: AT-3, AT-4, AT-5 · **ABI frozen** | **Tokenize** |
 | 4 | Invoice financing, Arkiv, private reads | FR-INV-1–5, FR-TOK-8, FR-ARK-1–5, FR-PRIV-1–3, FR-PAY-10, FR-PAY-12 | G4: AT-6, AT-7, AT-8, AT-9 | Arkiv, EF |
 | 5 | Extras and integration | FR-PAY-13–14, FR-REL-8, FR-ADV-7, FR-INV-6–7, FR-TOK-5, FR-KYC-2–3, FR-ARK-6 | G5: two clean full demo runs | polish |
 | 6 | Proof and documentation | FR-PRIV-4, SR-* evidence, NFR-9 | G6: README review finds every SR item | all |
