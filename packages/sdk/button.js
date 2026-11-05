@@ -1,9 +1,10 @@
 /* Merchant Capital+ pay button (FR-GW-4): <script src="https://GATEWAY/v1/button.js" data-session="ID"></script>
- * or data-link="SLUG"; optional data-label. Or load it once and mark your own elements: data-mc-session="ID".
+ * or data-link="SLUG", optional data-label; or load once and mark your own elements data-mc-session="ID".
  * Opens the hosted checkout on the gateway that served this file. No dependencies, no requests. */
 (function () {
-  var script = document.currentScript;
-  if (!script || !script.src) return;
+  // From the prototype: an <img name="currentScript"> on the page can't stand in (DOM clobbering).
+  var script = Object.getOwnPropertyDescriptor(Document.prototype, "currentScript").get.call(document);
+  if (!(script instanceof HTMLScriptElement) || !script.src) return;
   var origin = new URL(script.src).origin;
   var ID = /^[\w-]{1,64}$/;
 
@@ -13,13 +14,13 @@
     return link !== null && ID.test(link) ? origin + "/l/" + link : null;
   }
   function complain() {
-    console.error("Merchant Capital+ button: bad data-session/data-link (letters, digits, - and _ only).");
+    console.error("Merchant Capital+ button: bad data-session/data-link (letters, digits, - and _).");
   }
 
-  if (!window.__mcPayButton) {
+  if (window.__mcPayButton !== true) {
     window.__mcPayButton = true;
     document.addEventListener("click", function (event) {
-      var el = event.target && event.target.closest && event.target.closest("[data-mc-session],[data-mc-link]");
+      var el = !event.defaultPrevented && event.target && event.target.closest && event.target.closest("[data-mc-session],[data-mc-link]");
       if (!el) return;
       var url = destination(el);
       if (!url) return complain();

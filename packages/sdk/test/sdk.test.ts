@@ -72,6 +72,25 @@ test("sessions.retrieve reads the session by id, and refuses anything that isn't
   assert.equal(calls.length, 1); // none of them reached the network
 });
 
+test("sameAmount compares money, not formatting (round 2 H2: '1,000.00' from the API vs '1000.00' from a webhook)", async () => {
+  const { sameAmount } = await import("../index.ts");
+  for (const [a, b] of [["1,000.00", "1000.00"], ["25", "25.00"], ["27.012345", "27.012345"], ["0.10", "0.1"], [" 25.00", "25.000000"]]) assert.ok(sameAmount(a, b), `${a} = ${b}`);
+  for (const [a, b] of [["1000.00", "100.00"], ["25.00", "25.01"], ["0.000001", "0"], ["", ""], ["abc", "abc"], ["1e3", "1000"], ["-1", "-1"], ["1.0000001", "1.0000001"]]) assert.ok(!sameAmount(a, b), `${a} != ${b}`);
+});
+
+test("a bare ? or # on baseUrl doesn't drop the path prefix", async () => {
+  for (const baseUrl of ["https://example.test/gw?", "https://example.test/gw#", "https://example.test/gw/"]) {
+    const { calls, fetch } = fakeFetch(ok({ id: "x", status: "open" }));
+    await gw(fetch, { baseUrl }).sessions.retrieve("abc");
+    assert.equal(calls[0].url, "https://example.test/gw/api/v1/sessions/abc", baseUrl);
+  }
+});
+
+test("the currency-mismatch error is scrubbed of the key too", async () => {
+  const { fetch } = fakeFetch(ok({ id: `x-${KEY}`, url: "u", amount: "1.00", currency: "USDT", expiresAt: "t" }, 201));
+  await assert.rejects(gw(fetch).sessions.create({ amount: "1.00", currency: "EUR" }), (err: unknown) => err instanceof GatewayError && !err.message.includes(KEY));
+});
+
 test("requests refuse redirects and keep a path prefix in baseUrl", async () => {
   const { calls, fetch } = fakeFetch(ok({ id: "x", url: "u", amount: "1.00", currency: "USDT", expiresAt: "t" }, 201));
   await gw(fetch, { baseUrl: "https://example.test/gateway" }).sessions.create({ amount: "1.00" });

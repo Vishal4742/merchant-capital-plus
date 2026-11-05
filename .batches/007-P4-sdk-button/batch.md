@@ -4,3 +4,5 @@ Request (verbatim): docs/prompts/claude-sdk.md step 2: "A one-line payment butto
 Agent ids (builders, for SendMessage resumes): claude-sdk builds in this session (no developer subagent)
 Log:
 - 03:27 batch started. Hosting agreed with claude-frontend 03:13: apps/web/public/v1/button.js (a copy, owned by claude-sdk), links at /l/<slug>.
+- 03:31 RED b5ceb00 (8 of 32 failing, all new), GREEN 3e48d40 (39/39, tsc clean, button.js 2026 B, copy identical). Pushed.
+- 03:36 round 1 tester PASS (39/39; headless Chrome via CDP on a :4400 stub at 375/1440 light/dark: keyboard Enter → /checkout/<id>, link, shop-written and late-added elements navigate, one console error for the bad id). Reviewers code/security/ux-ui launched.

@@ -77,6 +77,17 @@ export class WebhookSignatureError extends Error {
   }
 }
 
+/** True when two USDT amount strings are the same money: "1,000.00", "1000.00" and "1000" all match.
+ *  Compare amounts with this, never with ===: API and webhook amounts may be formatted differently. */
+export function sameAmount(a: string, b: string): boolean {
+  const units = (s: string) => {
+    const m = /^(\d+)(?:\.(\d{1,6}))?$/.exec(String(s).replaceAll(",", "").trim());
+    return m ? BigInt(m[1]) * 1_000_000n + BigInt((m[2] ?? "").padEnd(6, "0")) : null;
+  };
+  const x = units(a);
+  return x !== null && x === units(b);
+}
+
 export const SIGNATURE_HEADER = "MC-Signature";
 const DEFAULT_TOLERANCE_SEC = 300;
 
@@ -132,7 +143,7 @@ export class Gateway {
   constructor(secretKey: string, opts: GatewayOptions) {
     if ("window" in globalThis) throw new Error("Gateway uses your secret key: create it on your server, never in the browser.");
     if (!secretKey) throw new Error("Gateway needs your secret key.");
-    if (secretKey.startsWith("pk_")) throw new Error("That's a publishable key (pk_): Gateway needs the secret key. Use pk_ keys only in the pay button.");
+    if (secretKey.startsWith("pk_")) throw new Error("That's a publishable key (pk_): Gateway needs the secret key, and only on your server.");
     // Printable ASCII only: a pasted key with a newline would otherwise land, in full, in fetch's error text.
     if (!/^[\x21-\x7e]+$/.test(secretKey)) throw new Error("That secret key has spaces, line breaks or other characters a key never has: copy it again.");
     const base = URL.canParse(opts?.baseUrl ?? "") ? new URL(opts.baseUrl) : undefined;
@@ -142,7 +153,8 @@ export class Gateway {
       throw new Error("Gateway needs baseUrl, the gateway's https origin, like https://merchant-capital.vercel.app (http only for localhost; no user:pass, ?query or #hash).");
     }
     this.#key = secretKey;
-    this.#base = new URL(base.href.endsWith("/") ? base.href : `${base.href}/`); // keeps a path prefix
+    // origin + path only (a bare "?" or "#" leaves no search/hash but would break the join); keeps a path prefix.
+    this.#base = new URL(`${base.origin}${base.pathname.endsWith("/") ? base.pathname : `${base.pathname}/`}`);
     this.#fetch = opts.fetch ?? globalThis.fetch;
     this.#timeoutMs = opts.timeoutMs ?? 10_000;
     this.#maxRetries = opts.maxRetries ?? 2;
@@ -159,7 +171,7 @@ export class Gateway {
       // A gateway without FR-GW-11 ignores `currency` and would charge 25 EUR as 25 USDT; the quote is the proof.
       const want = params.currency ?? "USDT", got = session.priced?.currency ?? "USDT";
       if (got !== want) {
-        throw new GatewayError(200, `Checkout ${session.id} came back priced in ${got}, not ${want}: don't send the customer to it. This gateway may not support ${want} yet; price in USDT.`);
+        throw new GatewayError(200, this.#scrub(`Checkout ${session.id} came back priced in ${got}, not ${want}: don't send the customer to it. This gateway may not support ${want} yet; price in USDT.`));
       }
       return session;
     },

@@ -31,7 +31,11 @@
   - a script with neither attribute renders nothing (load-once mode).
 - [ ] **Loading:**
   - loading the script twice installs one listener;
-  - no network requests, no globals except one guard flag, no dependencies, ≤ 2 KB unminified.
+  - no network requests, no globals except one guard flag, no dependencies, ≤ 2.5 KB unminified. (Round 2 raised this from 2 KB for the DOM-clobbering guard and the comment that keeps it from being "simplified" away.)
+- [ ] **(round 2, H1) DOM clobbering:**
+  - `currentScript` is read from `Document.prototype`, and it must be an `HTMLScriptElement`, so an `<img name="currentScript">` on the page can't redirect the button;
+  - a clobbered guard flag (`<div id="__mcPayButton">`) can't switch the listener off (`!== true`);
+  - a shop handler that called `preventDefault()` cancels the redirect.
 - [ ] **Hosting:** `apps/web/public/v1/button.js` is byte-identical to `packages/sdk/button.js` (a test compares them).
 - [ ] **Browser check (real Chrome):** a static page served by a stub gateway that serves the real `button.js`:
   - at 375 and 1440, light and dark: the button is reachable by keyboard (Tab, then Enter) and shows a visible focus ring;

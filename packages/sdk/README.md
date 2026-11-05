@@ -15,14 +15,18 @@ Neither has dependencies.
 - **What it does:** renders a button right after the script tag. A click opens the hosted checkout on the gateway that served the script. `SESSION_ID` comes from your server (`sessions.create` below), so the browser never sets the amount.
 - **Payment link:** `data-link="SLUG"` opens the payment link you made in the dashboard (`/l/SLUG`).
 - **Your own element (React, SPA):** load the script once, without `data-session`, then mark any element: `<button data-mc-session="SESSION_ID">Pay</button>` or `data-mc-link="SLUG"`. One delegated click listener handles every element, including ones rendered later. Style it however you like. The script's own button is styled inline (`.mc-pay-button`).
-- **Bad input:** an id with anything other than letters, digits, `-` and `_` renders nothing, never navigates, and logs a console error.
+- **Bad input:** an id (1–64 characters) with anything other than letters, digits, `-` and `_` renders nothing, never navigates, and logs a console error. That's deliberate: a broken id is a developer mistake, and customers never see a dead button.
+- **Placement:** put the script tag in `<body>` where the button should appear; in `<head>` it has nowhere visible to go. Use one gateway per page: the first copy of the script to load handles every button.
+- **Styling:** the script's own button has inline styles (so a strict `style-src` CSP doesn't strip them). To change its look, write your own element with `data-mc-session` instead of overriding with `!important`.
+- **User content:** strip `data-mc-*` attributes from anything users can post (reviews, comments). Otherwise someone could post a pay button for their own checkout on your page. It would still open our gateway, never another site.
+- **Canceling:** a click handler of yours that calls `event.preventDefault()` cancels the redirect.
 
 ## Server SDK
 
 The server SDK holds your **secret** key. It refuses to run in a browser and refuses a `pk_` key. It talks only to an `https` gateway: plain `http` is allowed only for localhost, and a `baseUrl` with `user:pass`, `?query` or `#hash` is refused.
 
 ```ts
-import { Gateway, WebhookSignatureError, constructEvent, SIGNATURE_HEADER } from "@merchant-capital/sdk";
+import { Gateway, WebhookSignatureError, constructEvent, sameAmount, SIGNATURE_HEADER } from "@merchant-capital/sdk";
 // saveOrderSession, orderBySessionId and markPaidOnce are YOUR shop's own database helpers.
 
 const gateway = new Gateway(process.env.GATEWAY_SECRET_KEY!, { baseUrl: process.env.GATEWAY_URL! });
@@ -42,7 +46,7 @@ export async function POST(request: Request) {
     throw err; // a config mistake (no secret, bad toleranceSec): let it be a 500
   }
   const order = await orderBySessionId(event.data.id); // the id YOU stored in step 1
-  if (order && event.type === "payment.succeeded" && event.data.status === "paid" && event.data.amount === order.amount) {
+  if (order && event.type === "payment.succeeded" && event.data.status === "paid" && sameAmount(event.data.amount, order.amount)) {
     await markPaidOnce(order, event.id); // one transaction: mark paid + record event.id; skip if event.id was seen
   }
   return new Response("ok");
@@ -53,7 +57,7 @@ const session = await gateway.sessions.retrieve(order.sessionId);
 ```
 
 - **Credit an order only from your own records:**
-  - match the session id you stored, and check that the amount equals the amount you stored;
+  - match the session id you stored, and check the amount with `sameAmount(a, b)`. It compares money, so `"1,000.00"` and `"1000.00"` match; a plain `===` would not;
   - never credit from a session id the browser hands you (a query string, a form field), because a paid 1 USDT session could then pass for a bigger order;
   - payments through links and pages carry `data.link_id` / `data.page_id` and no stored session id, so step 2 ignores them.
 - **Deduplicate on `event.id`** in the same transaction that marks the order paid, because retries repeat the id.
