@@ -36,7 +36,7 @@ export interface Session {
 
 // ponytail: in-memory store, so sessions vanish on restart and aren't shared between serverless
 // instances. Move to Neon (`app_sessions`) when the Vercel project and DATABASE_URL exist.
-const globalStore = globalThis as unknown as { __mcSessions?: Map<string, Session> };
+const globalStore = globalThis as unknown as { __mcSessions?: Map<string, Session>; __mcInvoiceAttempts?: Map<string, InvoiceAttempt> };
 const sessions = (globalStore.__mcSessions ??= new Map<string, Session>());
 
 export function createSession(input: Omit<Session, "id" | "orderRef" | "createdAt" | "expiresAt" | "payment" | "pending">, now = Date.now()): Session {
@@ -65,11 +65,14 @@ export function listPayments(merchant: string): { session: Session; payment: Pay
   return out.sort((a, b) => b.payment.paidAt - a.payment.paidAt);
 }
 
-// One payment in flight per checkout: without this, two quick requests with different salts could both
-// settle and charge the customer twice.
+// One payment in flight per checkout (key: the session id) or invoice (key: "invoice:<id>"): without this, two quick
+// requests with different salts could both settle and charge the customer twice.
 const inFlight = new Set<string>();
 
-/** True if this caller may relay a payment for the session now; false if one is already in flight. */
+/** The in-flight key of an invoice, shared by its pay route and its page. */
+export const invoiceLock = (id: string) => `invoice:${id}`;
+
+/** True if this caller may relay a payment for this checkout or invoice now; false if one is already in flight. */
 export function claimPayment(id: string): boolean {
   if (inFlight.has(id)) return false;
   inFlight.add(id);
@@ -104,4 +107,21 @@ export function markPending(id: string, pending: NonNullable<Session["pending"]>
 /** Clears `expected` only if it is still the pending attempt: a newer one that arrived meanwhile stays. */
 export function clearPending(id: string, expected: Session["pending"]): Session {
   return update(id, (session) => (session.pending === expected ? { ...session, pending: undefined } : session));
+}
+
+/** What our server remembers about paying one invoice (FR-PAY-3), by invoice id. The invoice itself lives on chain;
+ *  this only decides what its pay page shows. Losing it on restart is safe: MerchantPay never takes more than is owed
+ *  (WrongAmount) and refuses a paid invoice (InvoiceNotOpen); a lost `pending` only drops a "Don't pay again". */
+export interface InvoiceAttempt {
+  /** An attempt whose outcome is unknown: the chain decides (lib/settle.ts invoiceState). */
+  pending?: { from: Address; validBefore: bigint };
+  receipt?: { paymentId: string; txHash: Hex | null };
+}
+
+const invoiceAttempts = (globalStore.__mcInvoiceAttempts ??= new Map<string, InvoiceAttempt>());
+
+export const invoiceAttempt = (id: string): InvoiceAttempt => invoiceAttempts.get(id) ?? {};
+
+export function setInvoiceAttempt(id: string, attempt: InvoiceAttempt): void {
+  invoiceAttempts.set(id, attempt);
 }

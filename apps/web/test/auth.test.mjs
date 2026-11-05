@@ -105,3 +105,20 @@ test("sign-in is off when AUTH_SECRET isn't set", async () => {
     process.env.AUTH_SECRET = saved;
   }
 });
+
+// Batch 005 (code review 004 R2 F5): guards no test pinned yet.
+test("every nonce is new (N20)", async () => {
+  const [a, b] = await Promise.all([1, 2].map(async () => (await nonceRoute(new Request("http://shop.test/api/auth/nonce"))).json()));
+  assert.match(a.nonce, /^[0-9a-zA-Z]{32,}$/);
+  assert.notEqual(a.nonce, b.nonce);
+});
+
+test("a mangled nonce cookie is a 401, not a 500 (N21)", async () => {
+  const message = siwe();
+  const res = await verifyRoute(new Request("http://shop.test/api/auth/verify", { method: "POST", headers: { cookie: "mc_nonce=%E0%A4%A" }, body: JSON.stringify({ message, signature: await merchant.signMessage({ message }) }) }));
+  assert.equal(res.status, 401);
+});
+
+test("a nonce cookie stamped in the future is refused (M45)", () => {
+  assert.equal(auth.readNonce(auth.signNonce("abcdefgh12345678", SECRET, Date.now() + 120_000), SECRET), null);
+});
