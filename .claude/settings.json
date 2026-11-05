@@ -1,0 +1,40 @@
+{
+  "extraKnownMarketplaces": {
+    "supermemory-plugins": {
+      "source": {
+        "source": "github",
+        "repo": "supermemoryai/claude-supermemory"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "supermemory@supermemory-plugins": true
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR\"/tools/pipeline-gate.sh",
+            "timeout": 10,
+            "statusMessage": "Pipeline gate"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR\"/tools/memory-up.sh",
+            "timeout": 5,
+            "statusMessage": "Starting shared memory"
+          }
+        ]
+      }
+    ]
+  }
+}

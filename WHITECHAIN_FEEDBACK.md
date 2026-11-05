@@ -1,0 +1,41 @@
+# WHITECHAIN_FEEDBACK.md
+
+Honest notes from building Merchant Capital+ on Whitechain Sepolia (chain 1874). Whitechain asked for this file ("a few honest lines on what worked, where you got stuck and what our docs were missing") and called it "extremely important" at the workshop. Everything below was verified on-chain or with live tooling on the date given.
+
+## Brief → build map (keep honest; a row is done only with a demo moment and a README link)
+| Track requirement (official wording, shortened) | SRS | Demo moment | Status |
+|---|---|---|---|
+| Contracts deployed and verified on Whitechain Sepolia | SR-WC-1 | Explorer pages of the four contracts | not started |
+| ≥1 USDT payment in the main flow, explorer link in the README | SR-WC-2 | AT-1 shop sale tx | not started |
+| Operate: drop-in piece a separate demo app adds in about 20 lines; merchant + customer views | SR-OP-1 | `apps/shop` integration, lines counted | not started |
+| Operate extra credit: past the first payment (refund, export) | SR-OP-2 | AT-2 refund, CSV export | not started |
+| Scale: payer with zero crypto steps; who pays gas, how the relayer gets WBT, what stops draining | SR-SC-1/2 | Checkout with no WBT; relayer `/health` + drain guard | not started |
+| Tokenize: real transfer rules in the contract; issuer + investor roles; one full lifecycle step | SR-TK-1/2 | AT-3/4/5 advance; AT-8 blocked transfer | not started |
+
+## What worked
+- **2026-10-25:** the public RPC answered `eth_chainId`, block and `eth_call` queries fast; Foundry `cast` worked against 1874 with zero special config. The explorer is Blockscout, so `forge verify-contract --verifier blockscout --verifier-url https://explorer.testnet.whitechain.io/api/` plugs straight in.
+- **2026-10-25 / 11-05:** the official test USDT `0xcedf…55a7` supports EIP-2612 `permit` **and** EIP-3009 (`transferWithAuthorization`, `receiveWithAuthorization` that enforces payee == caller, `validAfter` "auth early" checks). That is what makes gasless checkout and pre-signed due-date payments possible.
+- **2026-11-05:** the P-256 precompile (`0x…0100`) verifies a real passkey signature on testnet and mainnet; EAS is predeployed at `0x4200…0021`; Multicall3, Permit2, CreateX and Safe are at their canonical addresses.
+- **2026-11-05:** the workshop and the venue one-pager were clear and practical (2 WBT/day faucet, YetiTrade swap for USDT, the free Ankr RPC code, docs for AI agents at docs.whitechain.io/build-with-ai).
+
+## Where we got stuck (friction)
+1. **Getting test USDT wasn't documented on Oct 25** (the faucet drips WBT only). By Nov 5 the answer is "swap WBT on YetiTrade", which works, but the docs' token list page still describes v1.1.0 without the prize USDT while the official token list v3.0.0 includes it.
+2. **Two testnets share the name** (chain 2625 "Whitechain Testnet" vs 1874 "Whitechain Sepolia"); search results and Chainlist pages mix them.
+3. **`eth_getLogs` range caps:** keyless Ankr rejects ranges over ~1,000–3,000 blocks; the official RPC caps at 10,000. With 1 s blocks a dashboard can't scan history, so we read state through Multicall and history from Blockscout instead.
+4. **No `debug_traceCall`** on either public RPC, so standard ERC-4337 bundlers can't run safely; no public bundler or paymaster service supports 1874.
+5. **No price oracle on testnet** (Chainlink, Pyth, RedStone absent; one third-party feed was stale since Oct 29), so fees are priced from the YetiTrade pool.
+6. **The public RPC is behind Cloudflare,** which can challenge privacy-network (Tor) traffic; the Ankr endpoint works through Anon-RPC.
+7. **Mainnet status is stated three ways** (homepage "shipped", FAQ "testnet only", prize page "planned for November"), and official USD₮ on mainnet is "in later releases".
+8. *(Oct 25)* The USDT contract was hard to identify on the explorer; its dispatcher looked like old Tether while behaving like OpenZeppelin.
+
+## Suggestions
+1. Document the test-USDT route (YetiTrade) on the faucet page, and update the token-list docs page to v3.
+2. One canonical "Networks" page: 1874 vs 2625 vs mainnet 1875, with RPC, explorer, faucet, tokens and status.
+3. Publish RPC limits (rate, `eth_getLogs` range) and whether trace methods are planned.
+4. A recommended paymaster/bundler path, or a hosted relayer, for the Scale track.
+5. An oracle on testnet before mainnet, since Tokenize projects need prices.
+
+## Feedback log (sponsor interactions)
+| When | Who / where | What they said | What we changed |
+|---|---|---|---|
+| 2026-11-05 16:30 | Workshop (Toma Sadova) | Build what business needs; B2B2C; Tokenize includes lending; judging is a 2–3 min booth pitch | Picked Merchant Capital+ (financing for merchants); pitch trimmed to 3 min |

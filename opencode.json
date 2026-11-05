@@ -1,0 +1,5 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["opencode-supermemory@2.1.1"],
+  "permission": { "supermemory_recall": "allow" }
+}

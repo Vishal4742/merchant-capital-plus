@@ -1,0 +1,26 @@
+# secrets (CON-7)
+.env
+.env.*
+!.env.example
+
+# local tooling and personal state
+.supermemory/
+.remember/
+.commandcode/
+.claude/settings.local.json
+.claude/.supermemory-claude/
+.batches/ACTIVE
+.DS_Store
+
+# references only, never assets (Start Fresh)
+design-refs/
+
+# build output
+node_modules/
+.next/
+.vercel/
+contracts/out/
+contracts/cache/
+contracts/broadcast/*/31337/
+coverage/
+lcov.info
