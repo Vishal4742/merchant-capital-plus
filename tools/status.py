@@ -8,7 +8,7 @@ HANDOFF_LOG.md lines containing "VERIFIED <batch or gate>" (written by claude-re
 import pathlib, re, subprocess, time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-LANES = {"main": "claude-frontend", "contracts": "claude-contracts", "relayer": "claude-relayer", "sdk": "claude-sdk"}
+LANES = {"main": "claude-frontend", "contracts": "claude-contracts", "relayer": "claude-relayer", "sdk": "claude-sdk", "backend": "claude-contracts"}
 VERDICTS = ["test", "review-code", "review-security", "review-ux-ui", "ci"]
 
 
