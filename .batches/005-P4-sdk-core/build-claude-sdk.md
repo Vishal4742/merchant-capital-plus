@@ -1,6 +1,31 @@
 STATUS: READY
 
-# Build: 005-P4-sdk-core (claude-sdk, round 1)
+# Build: 005-P4-sdk-core (claude-sdk)
+
+## Round 2 (human 03:05 at the gate: "Fix now, then merge"; also keep 300 s, accept retries on create)
+Diff: `git diff bf648a6..HEAD`. Every round-1 follow-up fixed in this batch:
+- **Security MEDIUM:**
+  - **(a) key in an error message:** the constructor refuses a key that isn't printable ASCII (a pasted newline or space), and fetch errors have the key replaced by `[secret key]`.
+  - **(b) replay window off:** `toleranceSec` that is NaN, infinite or negative is refused, and the window check is written to fail closed (`!(… <= tol)`).
+  - **(c) cleartext key:** `baseUrl` must be `https:`. Plain `http:` is allowed only for localhost, 127.0.0.1 and [::1]; ftp and javascript are refused.
+  - **(d) README:** shops credit on the session id they stored, never on an id the browser hands them; they dedupe on `event.id` and catch only `WebhookSignatureError`; link/page events are ignored by construction; the raw body is spelled out for Fetch and Express.
+- **Code MEDIUM:**
+  - the currency guard now reads the quote (`priced?.currency ?? "USDT"`) and checks both directions;
+  - `orderId` must be 1–40 characters with no spaces at either end (the server trims it and cuts it to 40);
+  - the edge-test labels are fixed.
+- **LOW:**
+  - `retrieve` validates the id (`^[\w-]{1,64}$`, so `..` can't climb the path);
+  - `redirect: "error"`;
+  - a 5xx body is cancelled before the retry;
+  - `signWebhook` refuses an empty secret;
+  - the `baseUrl` path prefix is kept;
+  - the `webhooks.sign` alias is removed.
+- **Sent to claude-frontend (its server):** stop cutting `reference` at 40 characters (answer 400 instead), and return amounts without commas.
+- **Evidence:**
+  - `npm test` → `ℹ tests 22 · ℹ pass 22 · ℹ fail 0`; `npx tsc --noEmit` → exit 0.
+  - The live run against the real route handlers is unchanged, except the EUR guard text: `Checkout e923a481-… came back priced in USDT, not EUR: don't send the customer to it. This gateway may not support EUR yet; price in USDT.`
+
+## Round 1
 
 Commits on branch `sdk` (pushed): `daaaed6` test(sdk) RED, `199fa00` feat(sdk) GREEN.
 

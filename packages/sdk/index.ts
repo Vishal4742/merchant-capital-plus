@@ -7,11 +7,11 @@ export type Currency = "USDT" | "USD" | "EUR" | "GBP" | "INR" | "AED" | "SGD";
 export interface LineItem { name: string; qty: number; price: string }
 
 export interface CreateSessionParams {
-  /** Like "25.00" (up to 6 decimals), in `currency`. A number is sent as String(n). */
+  /** Like "25.00" (up to 6 decimals), in `currency`. A number is sent as String(n); prefer strings. */
   amount: string | number;
   /** Default USDT. Any other currency is converted at a quote locked for the session (FR-GW-11). */
   currency?: Currency;
-  /** Your order id; comes back as `reference` on the session, the payment and the webhook. */
+  /** Your order id, 1-40 characters. It comes back as `reference` on the session, the payment and the webhook. */
   orderId?: string;
   items?: LineItem[];
   /** Where the checkout's "Back to shop" link goes (http/https). */
@@ -25,6 +25,7 @@ export interface CreatedSession {
   /** USDT the customer pays. */
   amount: string;
   currency: Currency;
+  /** The locked FX quote; present when you priced in a currency other than USDT. */
   priced?: { currency: Currency; amount: string; rate: string; rateAt: string; source: string };
   expiresAt: string;
 }
@@ -84,6 +85,7 @@ const hmac = (secret: string, timestamp: number, rawBody: string | Uint8Array) =
 
 /** The MC-Signature header for a webhook body: `t=<unix s>,v1=<hex HMAC-SHA256(secret, "<t>.<body>")>`. */
 export function signWebhook(rawBody: string | Uint8Array, secret: string, timestamp = Math.floor(Date.now() / 1000)): string {
+  if (!secret) throw new Error("signWebhook needs the endpoint's webhook secret.");
   return `t=${timestamp},v1=${hmac(secret, timestamp, rawBody).toString("hex")}`;
 }
 
@@ -91,26 +93,32 @@ export function signWebhook(rawBody: string | Uint8Array, secret: string, timest
  *  Throws WebhookSignatureError: answer 400 and don't act on the body. */
 export function constructEvent(rawBody: string | Uint8Array, header: string | null | undefined, secret: string, opts: { toleranceSec?: number } = {}): GatewayEvent {
   if (!secret) throw new WebhookSignatureError("No webhook secret configured.");
+  const tolerance = opts.toleranceSec ?? DEFAULT_TOLERANCE_SEC;
+  if (!Number.isFinite(tolerance) || tolerance < 0) throw new WebhookSignatureError("toleranceSec must be a finite number of seconds, 0 or more.");
   const parts = new Map((header ?? "").split(",").map((part) => part.trim().split("=", 2) as [string, string]));
   const t = parts.get("t") ?? "", v1 = parts.get("v1") ?? "";
   if (!/^\d{1,12}$/.test(t) || !/^[0-9a-f]{64}$/.test(v1)) throw new WebhookSignatureError(`Missing or malformed ${SIGNATURE_HEADER} header.`);
   const timestamp = Number(t);
-  if (Math.abs(Math.floor(Date.now() / 1000) - timestamp) > (opts.toleranceSec ?? DEFAULT_TOLERANCE_SEC)) {
+  if (!(Math.abs(Math.floor(Date.now() / 1000) - timestamp) <= tolerance)) {
     throw new WebhookSignatureError("Webhook timestamp is outside the tolerance window (possible replay).");
   }
-  if (!timingSafeEqual(hmac(secret, timestamp, rawBody), Buffer.from(v1, "hex"))) throw new WebhookSignatureError("Webhook signature doesn't match.");
+  if (!timingSafeEqual(hmac(secret, timestamp, rawBody), Buffer.from(v1, "hex"))) {
+    throw new WebhookSignatureError("Webhook signature doesn't match: check the secret, and pass the raw body, not re-serialized JSON.");
+  }
   const text = typeof rawBody === "string" ? rawBody : new TextDecoder().decode(rawBody);
   return JSON.parse(text) as GatewayEvent;
 }
 
 export interface GatewayOptions {
-  /** The gateway's origin, like https://merchant-capital.vercel.app */
+  /** The gateway's https origin, like https://merchant-capital.vercel.app (http only for localhost). */
   baseUrl: string;
   fetch?: typeof globalThis.fetch;
   timeoutMs?: number;
   /** Retries for network errors and 5xx answers (never for 4xx). Default 2. */
   maxRetries?: number;
 }
+
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 export class Gateway {
   readonly #key: string;
@@ -123,9 +131,14 @@ export class Gateway {
     if ("window" in globalThis) throw new Error("Gateway uses your secret key: create it on your server, never in the browser.");
     if (!secretKey) throw new Error("Gateway needs your secret key.");
     if (secretKey.startsWith("pk_")) throw new Error("That's a publishable key (pk_): Gateway needs the secret key. Use pk_ keys only in the pay button.");
-    if (!URL.canParse(opts?.baseUrl ?? "")) throw new Error("Gateway needs baseUrl, the gateway's origin, like https://merchant-capital.vercel.app");
+    // Printable ASCII only: a pasted key with a newline would otherwise land, in full, in fetch's error text.
+    if (!/^[\x21-\x7e]+$/.test(secretKey)) throw new Error("That secret key has spaces, line breaks or other characters a key never has: copy it again.");
+    const base = URL.canParse(opts?.baseUrl ?? "") ? new URL(opts.baseUrl) : undefined;
+    if (!base || !(base.protocol === "https:" || (base.protocol === "http:" && LOCAL_HOSTS.has(base.hostname)))) {
+      throw new Error("Gateway needs baseUrl, the gateway's https origin, like https://merchant-capital.vercel.app (http only for localhost).");
+    }
     this.#key = secretKey;
-    this.#base = new URL(opts.baseUrl);
+    this.#base = new URL(base.href.endsWith("/") ? base.href : `${base.href}/`); // keeps a path prefix
     this.#fetch = opts.fetch ?? globalThis.fetch;
     this.#timeoutMs = opts.timeoutMs ?? 10_000;
     this.#maxRetries = opts.maxRetries ?? 2;
@@ -134,14 +147,22 @@ export class Gateway {
   readonly sessions = {
     create: async (params: CreateSessionParams, opts: { idempotencyKey?: string } = {}): Promise<CreatedSession> => {
       const { orderId, amount, ...rest } = params;
-      const session = await this.#call<CreatedSession>("POST", "/api/v1/sessions", { ...rest, amount: String(amount), reference: orderId }, opts.idempotencyKey);
-      // A gateway without FR-GW-11 ignores `currency` and would charge 25 EUR as 25 USDT.
-      if ((params.currency ?? "USDT") !== "USDT" && session.currency !== params.currency) {
-        throw new GatewayError(200, `This gateway doesn't price in ${params.currency} yet; checkout ${session.id} was created in USDT. Don't send the customer to it.`);
+      // The server trims and cuts reference to 40 characters; two orders could then share one reference.
+      if (orderId !== undefined && !/^\S(.{0,38}\S)?$/.test(orderId)) {
+        throw new GatewayError(400, "orderId must be 1-40 characters with no spaces at either end: it comes back as the payment's reference.");
+      }
+      const session = await this.#call<CreatedSession>("POST", "api/v1/sessions", { ...rest, amount: String(amount), reference: orderId }, opts.idempotencyKey);
+      // A gateway without FR-GW-11 ignores `currency` and would charge 25 EUR as 25 USDT; the quote is the proof.
+      const want = params.currency ?? "USDT", got = session.priced?.currency ?? "USDT";
+      if (got !== want) {
+        throw new GatewayError(200, `Checkout ${session.id} came back priced in ${got}, not ${want}: don't send the customer to it. This gateway may not support ${want} yet; price in USDT.`);
       }
       return session;
     },
-    retrieve: (id: string): Promise<Session> => this.#call<Session>("GET", `/api/v1/sessions/${encodeURIComponent(id)}`),
+    retrieve: async (id: string): Promise<Session> => {
+      if (!/^[\w-]{1,64}$/.test(id)) throw new GatewayError(400, "That isn't a checkout session id.");
+      return this.#call<Session>("GET", `api/v1/sessions/${id}`);
+    },
   };
 
   readonly payments = {
@@ -150,17 +171,18 @@ export class Gateway {
       if (params.limit !== undefined) query.set("limit", String(params.limit));
       if (params.cursor !== undefined) query.set("cursor", params.cursor);
       const qs = query.toString();
-      return this.#call("GET", `/api/v1/payments${qs ? `?${qs}` : ""}`);
+      return this.#call("GET", `api/v1/payments${qs ? `?${qs}` : ""}`);
     },
   };
 
-  readonly webhooks = { constructEvent, sign: signWebhook };
+  readonly webhooks = { constructEvent };
 
   async #call<T>(method: "GET" | "POST", path: string, body?: object, idempotencyKey?: string): Promise<T> {
     const headers: Record<string, string> = { authorization: `Bearer ${this.#key}` };
     if (body) headers["content-type"] = "application/json";
     if (idempotencyKey) headers["idempotency-key"] = idempotencyKey;
-    const init = { method, headers, body: body ? JSON.stringify(body) : undefined };
+    // redirect "error": never re-send the key to wherever a redirect points; use the final URL as baseUrl.
+    const init = { method, headers, body: body ? JSON.stringify(body) : undefined, redirect: "error" as const };
     // ponytail: the sessions API has no idempotency yet, so a retried POST can leave an extra unpaid session
     // (it expires in 30 min; no money moves). Harmless; the key is sent for when the server dedupes.
     for (let attempt = 0; ; attempt++) {
@@ -170,9 +192,14 @@ export class Gateway {
         res = await this.#fetch(new URL(path, this.#base), { ...init, signal: AbortSignal.timeout(this.#timeoutMs) });
       } catch (err) {
         if (retry) { await backoff(attempt); continue; }
-        throw new GatewayError(0, `Couldn't reach the gateway: ${(err as Error).message}`);
+        const why = String((err as Error)?.message ?? err).replaceAll(this.#key, "[secret key]");
+        throw new GatewayError(0, `Couldn't reach the gateway: ${why}`);
       }
-      if (res.status >= 500 && retry) { await backoff(attempt); continue; }
+      if (res.status >= 500 && retry) {
+        await res.body?.cancel().catch(() => {}); // free the connection before retrying
+        await backoff(attempt);
+        continue;
+      }
       const json = (await res.json().catch(() => null)) as { error?: unknown } | null;
       if (!res.ok || !json || typeof json !== "object") {
         throw new GatewayError(res.status, typeof json?.error === "string" ? json.error : `The gateway answered ${res.status} without a JSON body.`);

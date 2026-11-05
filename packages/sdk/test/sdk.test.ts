@@ -58,13 +58,55 @@ test("a non-USDT price is refused if the gateway doesn't echo the currency, so 2
   assert.deepEqual(await gw(fakeFetch(ok(priced, 201)).fetch).sessions.create({ amount: "25.00", currency: "EUR" }), priced);
 });
 
-test("sessions.retrieve reads the session by its URL-encoded id", async () => {
-  const reply = { id: "a/b", status: "paid", amount: "25.00", currency: "USDT", reference: "order-42", paymentId: "7", txHash: "0xabc" };
+test("sessions.retrieve reads the session by id, and refuses anything that isn't an id", async () => {
+  const id = "70359474-3587-4bc8-8eca-80eb35d5cbdc";
+  const reply = { id, status: "paid", amount: "25.00", currency: "USDT", reference: "order-42", paymentId: "7", txHash: "0xabc" };
   const { calls, fetch } = fakeFetch(ok(reply));
-  assert.deepEqual(await gw(fetch).sessions.retrieve("a/b"), reply);
-  assert.equal(calls[0].url, `${BASE}/api/v1/sessions/a%2Fb`);
+  assert.deepEqual(await gw(fetch).sessions.retrieve(id), reply);
+  assert.equal(calls[0].url, `${BASE}/api/v1/sessions/${id}`);
   assert.equal(calls[0].init.method, "GET");
   assert.equal(new Headers(calls[0].init.headers).get("authorization"), `Bearer ${KEY}`);
+  for (const bad of ["", "..", "a/b", "x?y", "a".repeat(65)]) {
+    await assert.rejects(gw(fetch).sessions.retrieve(bad), (err: unknown) => err instanceof GatewayError && err.status === 400);
+  }
+  assert.equal(calls.length, 1); // none of them reached the network
+});
+
+test("requests refuse redirects and keep a path prefix in baseUrl", async () => {
+  const { calls, fetch } = fakeFetch(ok({ id: "x", url: "u", amount: "1.00", currency: "USDT", expiresAt: "t" }, 201));
+  await gw(fetch, { baseUrl: "https://example.test/gateway" }).sessions.create({ amount: "1.00" });
+  assert.equal(calls[0].url, "https://example.test/gateway/api/v1/sessions");
+  assert.equal(calls[0].init.redirect, "error");
+});
+
+test("an orderId the server would cut or trim is refused before any request", async () => {
+  const { calls, fetch } = fakeFetch(ok({ id: "x", url: "u", amount: "1.00", currency: "USDT", expiresAt: "t" }, 201));
+  for (const bad of ["", " order-1", "order-1 ", "o".repeat(41)]) {
+    await assert.rejects(gw(fetch).sessions.create({ amount: "1.00", orderId: bad }), (err: unknown) => err instanceof GatewayError && /orderId/.test(err.message));
+  }
+  assert.equal(calls.length, 0);
+  await gw(fetch).sessions.create({ amount: "1.00", orderId: "o".repeat(40) });
+  assert.equal(calls.length, 1);
+});
+
+test("the currency guard checks the returned quote in both directions", async () => {
+  const reply = (extra: object) => fakeFetch(ok({ id: "x", url: "u", amount: "27.00", currency: "EUR", expiresAt: "t", ...extra }, 201)).fetch;
+  // a top-level currency without a quote is not proof that EUR was priced
+  await assert.rejects(gw(reply({})).sessions.create({ amount: "25.00", currency: "EUR" }), GatewayError);
+  // asked for USDT, got an EUR quote back
+  const eurQuote = { priced: { currency: "EUR", amount: "25.00", rate: "1.08", rateAt: "t", source: "ecb" } };
+  await assert.rejects(gw(reply(eurQuote)).sessions.create({ amount: "25.00" }), (err: unknown) => err instanceof GatewayError && /USDT/.test(err.message));
+  assert.equal((await gw(reply(eurQuote)).sessions.create({ amount: "25.00", currency: "EUR" })).priced?.currency, "EUR");
+});
+
+test("a fetch error that quotes the key never puts the key in GatewayError's message", async () => {
+  const { fetch } = fakeFetch(new TypeError(`Headers.append: "Bearer ${KEY}" is an invalid header value.`));
+  await assert.rejects(gw(fetch, { maxRetries: 0 }).sessions.retrieve("abc"), (err: unknown) => {
+    assert.ok(err instanceof GatewayError);
+    assert.ok(!err.message.includes(KEY), err.message);
+    assert.match(err.message, /\[secret key\]/);
+    return true;
+  });
 });
 
 test("payments.list pages through GET /api/v1/payments (FR-GW-5)", async () => {
@@ -112,6 +154,13 @@ test("the constructor refuses a missing key, a publishable key, a bad base URL, 
   assert.throws(() => new Gateway("pk_test_0123456789abcdef", { baseUrl: BASE }), /publishable/);
   assert.throws(() => new Gateway(KEY, { baseUrl: "" }), /baseUrl/);
   assert.throws(() => new Gateway(KEY, { baseUrl: "not a url" }), /baseUrl/);
+  assert.throws(() => new Gateway(KEY, { baseUrl: "http://gateway.test" }), /https/); // the key would travel in cleartext
+  assert.throws(() => new Gateway(KEY, { baseUrl: "ftp://gateway.test" }), /baseUrl/);
+  assert.ok(new Gateway(KEY, { baseUrl: "http://localhost:3000" }));
+  assert.ok(new Gateway(KEY, { baseUrl: "http://127.0.0.1:3000" }));
+  for (const pasted of [`${KEY}\n`, `\r${KEY}`, `${KEY} `, "sk test"]) {
+    assert.throws(() => new Gateway(pasted, { baseUrl: BASE }), (err: unknown) => err instanceof Error && /line breaks/.test(err.message) && !err.message.includes(KEY));
+  }
   const g = globalThis as { window?: unknown };
   g.window = {};
   try {
@@ -150,6 +199,14 @@ test("constructEvent rejects a wrong secret, a changed body, and a missing or ma
   bad(() => constructEvent(body, "v1=abc", SECRET), /header/);
   bad(() => constructEvent(body, header.replace(/v1=.*/, "v1=zz"), SECRET), /header/);
   bad(() => constructEvent(body, header, ""), /secret/);
+  assert.throws(() => signWebhook(body, ""), /secret/);
+});
+
+test("a toleranceSec that is NaN, infinite or negative is refused, so the replay window can't switch off", () => {
+  const old = signWebhook(body, SECRET, now() - 10 * 365 * 86400);
+  for (const toleranceSec of [Number(undefined), Infinity, -1]) {
+    assert.throws(() => constructEvent(body, old, SECRET, { toleranceSec }), (err: unknown) => err instanceof WebhookSignatureError && /toleranceSec/.test(err.message));
+  }
 });
 
 test("constructEvent rejects a timestamp more than 300 s old or ahead (replay window)", () => {

@@ -1,4 +1,4 @@
-// tester round-1 probes (FR-GW-5, FR-GW-7): header edge cases, Buffer body, timeout, baseUrl path.
+// tester round-1 probes (FR-GW-5, FR-GW-7): header edge cases, Buffer body, timeout. (baseUrl path: sdk.test.ts)
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Gateway, GatewayError, WebhookSignatureError, constructEvent, signWebhook } from "../index.ts";
@@ -12,12 +12,12 @@ test("constructEvent accepts a Buffer body and spaces after the comma", () => {
   assert.equal(constructEvent(Buffer.from(body), h.replace(",", ", "), SECRET).id, "evt_1");
 });
 
-test("constructEvent rejects uppercase hex, t with letters, duplicate-v1 forgery, empty/undefined header", () => {
+test("constructEvent rejects uppercase hex, t with letters, an all-zero v1, empty/undefined/garbage headers", () => {
   const h = signWebhook(body, SECRET, now());
   const [t, v1] = h.split(",");
   assert.throws(() => constructEvent(body, `${t},v1=${v1.slice(3).toUpperCase()}`, SECRET), WebhookSignatureError);
   assert.throws(() => constructEvent(body, `t=12ab,${v1}`, SECRET), WebhookSignatureError);
-  // attacker prepends a bad v1: last one wins in the Map; the forged-first/valid-last must not matter for security
+  // a well-formed but wrong v1 (all zeros) is rejected by the HMAC compare, not by the header parse
   assert.throws(() => constructEvent(body, `${t},v1=${"0".repeat(64)}`, SECRET), WebhookSignatureError);
   assert.throws(() => constructEvent(body, "", SECRET), WebhookSignatureError);
   assert.throws(() => constructEvent(body, undefined, SECRET), WebhookSignatureError);
