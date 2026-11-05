@@ -62,7 +62,7 @@ contract LiveAdvance is Script {
 
         _sale(5e6, "at4"); // AT-4: 1 to the investor, 10 left
         for (uint256 i = 0; i < 5; ++i) {
-            _sale(10e6, bytes32(abi.encode("at5", i))); // AT-5: 2 each until the cap
+            _sale(10e6, keccak256(abi.encode("at5", i))); // AT-5: 2 each until the cap
         }
         _sale(1e6, "after-cap"); // lien gone: 100% minus the fee to the merchant
     }
