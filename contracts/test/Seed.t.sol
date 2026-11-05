@@ -112,9 +112,10 @@ contract SeedForkTest is Test {
         vm.prank(HOLDER);
         USDT.transfer(poorTeam, 100e6);
         vm.deal(poorTeam, 1 ether);
+        Seed.Target[] memory targets = _targets(); // its view calls must happen before expectRevert
 
         vm.expectRevert(abi.encodeWithSelector(Seed.TeamWalletShort.selector, 166e6, 0));
-        seed.fundWith(poorKey, _targets());
+        seed.fundWith(poorKey, targets);
         assertEq(USDT.balanceOf(poorTeam), 100e6);
         assertEq(USDT.balanceOf(investorA), 0);
     }
