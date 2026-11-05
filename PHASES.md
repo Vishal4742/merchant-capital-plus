@@ -78,7 +78,7 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 - [ ] `C` **Freeze the ABI** in `packages/shared` and ARCHITECTURE.md §2; later changes go through agentbus
 - [ ] `F` Merchant "Cash advance" with the total cost shown before signing (FR-ADV-1, 6); investor funding flow (FR-ADV-3); payments table shows the split; compliance desk with the owner list (FR-KYC-1)
 
-**Gate G3:** AT-3 (advance funded), AT-4 (a sale repays 20% in the same tx), AT-5 (cap reached, lien ends).
+✅ **Gate G3 (verified by claude-research 02:47 on the final contracts):** AT-3 (advance funded), AT-4 (a sale repays 20% in the same tx), AT-5 (cap reached, lien ends). The UI half of Phase 3 moves to the Phase 5 Capital tab.
 **If blocked here:** cut invoice financing (Phase 4) before touching the advance.
 
 ---
