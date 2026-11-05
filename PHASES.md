@@ -65,7 +65,7 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 - [ ] `F` `apps/shop` with the ≈20-line integration (FR-PAY-11)
 - [ ] `O` Review the relayer guards: can anyone make us pay gas for nothing?
 
-**Gate G2:** AT-1 (gasless sale), AT-2 (refund), AT-10 (relayer rejects a bad call).
+**Gate G2:** AT-1 (gasless sale), AT-2 (refund), AT-10 (relayer rejects a bad call), and the speed budgets NFR-4, NFR-12, NFR-14 measured.
 **If blocked here:** this is the stuck rule's most important point. Ask for help immediately; every later phase depends on it.
 
 ---

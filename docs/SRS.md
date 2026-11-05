@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Version | 1.1 (pre-event planning; no code before the hackathon starts) |
-| Changes | 1.1 (human approved 2026-11-05 19:50): FR-TOK-8 → M, Phase 4 (AT-8 needs it at G4); FR-PRIV-1 and FR-PRIV-4 reworded (pay and checkout pages make no browser chain reads); CON-8 added (demo funding by seed script); DEP-3 pass criteria (Privy then failed them, guest wallet); demo amounts divided by 10 in AT-3–AT-7 to fit the test USDT we can collect; FR-PRIV-4 lists the Nym worker's own traffic (human 21:18) |
+| Changes | 1.1 (human approved 2026-11-05 19:50): FR-TOK-8 → M, Phase 4 (AT-8 needs it at G4); FR-PRIV-1 and FR-PRIV-4 reworded (pay and checkout pages make no browser chain reads); CON-8 added (demo funding by seed script); DEP-3 pass criteria (Privy then failed them, guest wallet); demo amounts divided by 10 in AT-3–AT-7 to fit the test USDT we can collect; FR-PRIV-4 lists the Nym worker's own traffic (human 21:18); NFR-12–14 speed budgets for web and relayer (human 22:28: "the system should be fast") |
 | Status | Approved scope, locked by the human 2026-11-05 |
 | Related | ARCHITECTURE.md (design and ABI), PHASES.md (delivery plan), `research_notes/Mumbai hackathon idea validation/build_H1_merchant_capital.md` (design detail and sources), HANDOFF.md (decisions, event facts) |
 | Change control | Requirements change only through HANDOFF.md + an agentbus message; IDs are never reused |
@@ -195,6 +195,9 @@ Priority: **M** = must (never cut), **S** = should, **C** = could (first to cut)
 | NFR-9 | Transparency | Testnet timings (60 s lock, 120 s grace) and simulated KYC are stated in the README limitations | README review |
 | NFR-10 | Maintainability | Foundry tests M1–M3, C1–C6, T1–T2, I1, F1, E1; coverage report before the freeze | `forge test`, `forge coverage` |
 | NFR-11 | Quality gate | Web: `tsc --noEmit`, lint and build pass with a screenshot of each changed page | AGENTS.md "done means verified" |
+| NFR-12 | Performance (web) | Customer pay and checkout pages: LCP ≤ 2.0 s and INP ≤ 200 ms on a mid-range phone over 4G; ≤ 200 KB of JS (gzip); no Nym bundle and no 3D scene on those pages | Lighthouse mobile (perf ≥ 90) + bundle report in test.md |
+| NFR-13 | Performance (web) | Merchant and investor pages: first paint ≤ 2.5 s; the dither scene and the Anon-RPC worker load after first paint and never block input; last-known chain data shows at once, private reads update in the background; `prefers-reduced-motion` turns the scene off | Lighthouse mobile + a recorded load in test.md |
+| NFR-14 | Performance (backend) | Relayer: `GET /health` ≤ 300 ms p95; an invalid or unprofitable `/relay` is rejected in ≤ 500 ms with no transaction; a valid payment meets NFR-4 (≤ 5 s, using `eth_sendRawTransactionSync`) | Timed runs in test.md (20 requests, p95) |
 
 ---
 
