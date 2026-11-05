@@ -90,11 +90,13 @@ export function signWebhook(rawBody: string | Uint8Array, secret: string, timest
 }
 
 /** Checks the MC-Signature header against the raw body (not re-serialized JSON) and returns the event.
- *  Throws WebhookSignatureError: answer 400 and don't act on the body. */
+ *  Throws WebhookSignatureError for a bad or old signature (answer 400, don't act on the body), and a plain
+ *  Error for a config mistake (no secret, bad toleranceSec), which should surface as a 500. */
 export function constructEvent(rawBody: string | Uint8Array, header: string | null | undefined, secret: string, opts: { toleranceSec?: number } = {}): GatewayEvent {
-  if (!secret) throw new WebhookSignatureError("No webhook secret configured.");
+  // Config mistakes are the shop's bug, not a bad request: plain Errors, so the handler answers 500 and someone notices.
+  if (!secret) throw new Error("No webhook secret configured: set the signing secret shown for your endpoint.");
   const tolerance = opts.toleranceSec ?? DEFAULT_TOLERANCE_SEC;
-  if (!Number.isFinite(tolerance) || tolerance < 0) throw new WebhookSignatureError("toleranceSec must be a finite number of seconds, 0 or more.");
+  if (!Number.isFinite(tolerance) || tolerance < 0) throw new Error("toleranceSec must be a finite number of seconds, 0 or more.");
   const parts = new Map((header ?? "").split(",").map((part) => part.trim().split("=", 2) as [string, string]));
   const t = parts.get("t") ?? "", v1 = parts.get("v1") ?? "";
   if (!/^\d{1,12}$/.test(t) || !/^[0-9a-f]{64}$/.test(v1)) throw new WebhookSignatureError(`Missing or malformed ${SIGNATURE_HEADER} header.`);
@@ -134,8 +136,10 @@ export class Gateway {
     // Printable ASCII only: a pasted key with a newline would otherwise land, in full, in fetch's error text.
     if (!/^[\x21-\x7e]+$/.test(secretKey)) throw new Error("That secret key has spaces, line breaks or other characters a key never has: copy it again.");
     const base = URL.canParse(opts?.baseUrl ?? "") ? new URL(opts.baseUrl) : undefined;
-    if (!base || !(base.protocol === "https:" || (base.protocol === "http:" && LOCAL_HOSTS.has(base.hostname)))) {
-      throw new Error("Gateway needs baseUrl, the gateway's https origin, like https://merchant-capital.vercel.app (http only for localhost).");
+    const secure = base && (base.protocol === "https:" || (base.protocol === "http:" && LOCAL_HOSTS.has(base.hostname)));
+    // No user:pass (it would leak into fetch errors) and no ?query or #hash (they break the path join).
+    if (!base || !secure || base.username || base.password || base.search || base.hash) {
+      throw new Error("Gateway needs baseUrl, the gateway's https origin, like https://merchant-capital.vercel.app (http only for localhost; no user:pass, ?query or #hash).");
     }
     this.#key = secretKey;
     this.#base = new URL(base.href.endsWith("/") ? base.href : `${base.href}/`); // keeps a path prefix
@@ -148,7 +152,7 @@ export class Gateway {
     create: async (params: CreateSessionParams, opts: { idempotencyKey?: string } = {}): Promise<CreatedSession> => {
       const { orderId, amount, ...rest } = params;
       // The server trims and cuts reference to 40 characters; two orders could then share one reference.
-      if (orderId !== undefined && !/^\S(.{0,38}\S)?$/.test(orderId)) {
+      if (orderId !== undefined && (typeof orderId !== "string" || !/^\S(.{0,38}\S)?$/.test(orderId))) {
         throw new GatewayError(400, "orderId must be 1-40 characters with no spaces at either end: it comes back as the payment's reference.");
       }
       const session = await this.#call<CreatedSession>("POST", "api/v1/sessions", { ...rest, amount: String(amount), reference: orderId }, opts.idempotencyKey);
@@ -192,8 +196,7 @@ export class Gateway {
         res = await this.#fetch(new URL(path, this.#base), { ...init, signal: AbortSignal.timeout(this.#timeoutMs) });
       } catch (err) {
         if (retry) { await backoff(attempt); continue; }
-        const why = String((err as Error)?.message ?? err).replaceAll(this.#key, "[secret key]");
-        throw new GatewayError(0, `Couldn't reach the gateway: ${why}`);
+        throw new GatewayError(0, this.#scrub(`Couldn't reach the gateway: ${(err as Error)?.message ?? err}`));
       }
       if (res.status >= 500 && retry) {
         await res.body?.cancel().catch(() => {}); // free the connection before retrying
@@ -202,10 +205,17 @@ export class Gateway {
       }
       const json = (await res.json().catch(() => null)) as { error?: unknown } | null;
       if (!res.ok || !json || typeof json !== "object") {
-        throw new GatewayError(res.status, typeof json?.error === "string" ? json.error : `The gateway answered ${res.status} without a JSON body.`);
+        const said = typeof json?.error === "string" ? json.error : `The gateway answered ${res.status} without a JSON body.`;
+        const hint = res.status === 401 ? " Check GATEWAY_SECRET_KEY and that baseUrl is the right gateway." : "";
+        throw new GatewayError(res.status, this.#scrub(said + hint));
       }
       return json as T;
     }
+  }
+
+  /** Every error message passes here, so the key never reaches a shop's logs, whoever echoed it. */
+  #scrub(text: string): string {
+    return text.replaceAll(this.#key, "[secret key]");
   }
 }
 

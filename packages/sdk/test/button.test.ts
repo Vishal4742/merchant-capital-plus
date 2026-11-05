@@ -12,7 +12,7 @@ const ID = "70359474-3587-4bc8-8eca-80eb35d5cbdc";
 
 type El = {
   tag: string; attrs: Map<string, string>; style: { cssText: string }; textContent: string; type: string; className: string;
-  parent: El | null; inserted: El[];
+  parent: El | null; inserted: El[]; src?: string;
   getAttribute(n: string): string | null; setAttribute(n: string, v: string): void;
   closest(sel: string): El | null; insertAdjacentElement(where: string, el: El): El; appendChild(el: El): El;
 };
@@ -43,6 +43,7 @@ function page() {
     listeners, navigations, errors, created,
     load(attrs: Record<string, string>, src = `${GATEWAY}/v1/button.js`) {
       const script = el("script", { src, ...attrs });
+      script.src = src; // a real <script> exposes the resolved URL as a property
       document.currentScript = script;
       runInNewContext(code, ctx);
       return script;

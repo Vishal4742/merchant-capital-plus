@@ -33,9 +33,10 @@
   - loading the script twice installs one listener;
   - no network requests, no globals except one guard flag, no dependencies, ≤ 2 KB unminified.
 - [ ] **Hosting:** `apps/web/public/v1/button.js` is byte-identical to `packages/sdk/button.js` (a test compares them).
-- [ ] **Browser check:**
-  - the button on a static page, at 375 and 1440, light and dark: it is reachable by keyboard (Tab, then Enter) and shows a visible focus ring;
-  - a click lands on the hosted checkout of a real session from a local apps/web.
+- [ ] **Browser check (real Chrome):** a static page served by a stub gateway that serves the real `button.js`:
+  - at 375 and 1440, light and dark: the button is reachable by keyboard (Tab, then Enter) and shows a visible focus ring;
+  - a click, or Enter, lands on `<stub>/checkout/<id>` and `<stub>/l/<slug>`.
+  - The real hosted checkout page belongs to claude-frontend. Landing on it for a real session is proven end to end in batch 3 (AT-14). Creating a session on their running :3100 would need its key from `.env`, which this lane doesn't read.
 - [ ] **Batch 005 follow-ups in `index.ts`:**
   - refuse a `baseUrl` with a username, password, query or hash;
   - scrub the key from the server's `json.error` too (one place, in `#call`);
