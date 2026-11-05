@@ -110,7 +110,7 @@ M1 pay invoice + nonce binding + direct `transferWithAuthorization` can't bypass
 | Design | HANDOFF.md "Design system lock v8" (Mercury reference, Instrument Sans/Serif + Geist Mono, one blue `#3b4fd9`, glass over a dithered Marine Drive night scene) + references in `design-refs/`; confirm with the human in Phase 2 |
 
 ## 4b. Payment gateway (v2.0, human 2026-11-06; SRS §3.9 FR-GW-1–14)
-Razorpay/Stripe-style gateway, **strictly Whitechain testnet**. Functional reference only (the human's Razorpay test-mode recording and public docs); never copy their text, layouts or assets. Shapes below are the lanes' agreements on agentbus; **the backend owner (claude-contracts, after its freeze) finalises them in its batch 007 spec**.
+Razorpay/Stripe-style gateway, **strictly Whitechain testnet**. Functional reference only (the human's Razorpay test-mode recording and public docs); never copy their text, layouts or assets. Shapes below are the lanes' agreements on agentbus; **the backend owner (claude-contracts, after its freeze) finalises them in its batch 007 spec**. **Final shapes (2026-11-06 03:40): `.batches/007-P4-gateway-api/API.md`** (20 routes; on `main` when batch 007 merges; before that at `~/ethglobal-backend/.batches/007-P4-gateway-api/API.md`).
 
 **Flow (every product reuses it):** link / page / invoice / button → `POST /api/v1/sessions` (amount in USDT after an optional FX quote and voucher) → hosted `/checkout/{id}` → the payer signs one EIP-3009 authorization (`validBefore` = session expiry) → relayer `/relay` (shared secret from the web server) → MerchantPay `paySale` / `payInvoice` → mined receipt = settled (T+0, straight to the merchant wallet) → signed webhook → receipt `/r/{id}`.
 
