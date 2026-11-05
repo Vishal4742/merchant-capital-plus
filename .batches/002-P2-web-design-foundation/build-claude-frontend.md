@@ -48,7 +48,7 @@ Round 1 was CHANGES from the tester, code, security and ux reviewers; ci was not
 # Round 1 report (kept)
 
 ## DONE
-- `app/tokens.css`: generated from the design system's `tokens.json` (artifact 1FqWSDshf1hweQ6k7wLixx) with the same values.
+- `app/tokens.css`: generated from the design system's `tokens.json` with the same values.
   - App differences: font families point at the next/font variables; dark mode also follows the OS (`prefers-color-scheme`, guarded by `:root:not([data-theme="light"])`); `--shadow-glow` added for the primary button hover.
 - `app/globals.css`: Tailwind 4 `@theme inline` maps every colour token, the fonts, `radius-pill`, the shadows and `ease-spring`, plus the type-style classes (display-xl, display, amount-xl, title, label, emphasis, data). Reduced motion turns animations off.
 - `app/layout.tsx`: Instrument Sans (variable), Instrument Serif (400, normal + italic) and Geist Mono through `next/font/google`, self-hosted at build time.
