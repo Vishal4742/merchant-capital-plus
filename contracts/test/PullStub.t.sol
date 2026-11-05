@@ -6,6 +6,21 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {PullStub} from "../src/PullStub.sol";
 import {USDT, receiveDigest} from "../script/RelayPull.s.sol";
 
+/// The token's other EIP-3009 entry point. It has no caller check, so it must reject a receive signature.
+interface ITransferWithAuthorization {
+    function transferWithAuthorization(
+        address from,
+        address to,
+        uint256 value,
+        uint256 validAfter,
+        uint256 validBefore,
+        bytes32 nonce,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external;
+}
+
 /// @notice Fork tests on Whitechain Sepolia 1874 against the real prize USDT (SRS DEP-1, CON-2, CON-4).
 contract PullStubForkTest is Test {
     /// Large USDT holder that funds the test payer (research_notes/build_prep/contracts_prep.md §5).
@@ -83,5 +98,20 @@ contract PullStubForkTest is Test {
         (uint8 v, bytes32 r, bytes32 s) = _sign(otherKey);
         vm.expectRevert(bytes("TetherToken: invalid signature"));
         _relay(v, r, s);
+    }
+
+    /// The copied signature can't push the payer's USDT into the stub outside `pull` (it would be stuck there):
+    /// the token signs transfers under a different typehash.
+    function test_RevertWhen_SignatureReusedForTransferWithAuthorization() public {
+        (uint8 v, bytes32 r, bytes32 s) = _sign(payerKey);
+        vm.expectRevert(bytes("TetherToken: invalid signature"));
+        vm.prank(relayer);
+        ITransferWithAuthorization(address(USDT))
+            .transferWithAuthorization(payer, address(stub), AMOUNT, 0, validBefore, NONCE, v, r, s);
+    }
+
+    function test_RevertWhen_PayeeIsZero() public {
+        vm.expectRevert(bytes("PullStub: zero payee"));
+        new PullStub(USDT, address(0));
     }
 }
