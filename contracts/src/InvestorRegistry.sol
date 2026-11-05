@@ -2,13 +2,14 @@
 pragma solidity 0.8.38;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {IInvestorRegistry} from "./interfaces/IInvestorRegistry.sol";
 
 /// @title InvestorRegistry: who may hold and trade claims
 /// @notice The compliance admin lists each investor with an expiry; ClaimToken asks `isEligible` on every mint and
 ///         transfer, so a revocation applies at once. (SRS FR-KYC-1)
 /// @dev ponytail: owner list only; EAS attestations (FR-KYC-2/3) come in a later phase behind the same `isEligible`.
-contract InvestorRegistry is IInvestorRegistry, Ownable {
+contract InvestorRegistry is IInvestorRegistry, Ownable2Step {
     mapping(address investor => uint64 expiry) public expiryOf;
 
     error ZeroAddress();

@@ -55,6 +55,19 @@ contract InvestorRegistryTest is Test {
         reg.setEligible(alice, type(uint64).max);
     }
 
+    function test_OwnershipTransferNeedsAcceptance() public {
+        vm.prank(admin);
+        reg.transferOwnership(alice);
+        assertEq(reg.owner(), admin); // two-step: nothing changes until alice accepts
+        assertEq(reg.pendingOwner(), alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, admin));
+        vm.prank(admin);
+        reg.acceptOwnership();
+        vm.prank(alice);
+        reg.acceptOwnership();
+        assertEq(reg.owner(), alice);
+    }
+
     function test_RevertWhen_ZeroAddressSetEligible() public {
         vm.expectRevert(InvestorRegistry.ZeroAddress.selector);
         vm.prank(admin);
@@ -108,6 +121,24 @@ contract ClaimTokenTest is Test {
     function _send(address from, address to, uint256 id, uint256 amount) internal {
         vm.prank(from);
         token.safeTransferFrom(from, to, id, amount, "");
+    }
+
+    function _batch(address from, address to, uint256[] memory ids, uint256[] memory values) internal {
+        vm.prank(from);
+        token.safeBatchTransferFrom(from, to, ids, values, "");
+    }
+
+    function _sameId(uint256 id, uint256 n) internal pure returns (uint256[] memory ids) {
+        ids = new uint256[](n);
+        for (uint256 i; i < n; ++i) {
+            ids[i] = id;
+        }
+    }
+
+    function _values(uint256 x, uint256 y) internal pure returns (uint256[] memory v) {
+        v = new uint256[](2);
+        v[0] = x;
+        v[1] = y;
     }
 
     function _freeze(address account, uint256 id, uint256 amount) internal {
@@ -180,6 +211,22 @@ contract ClaimTokenTest is Test {
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, a));
         vm.prank(a);
         fresh.setMarket(market);
+    }
+
+    function test_TokenOwnershipTransferNeedsAcceptance() public {
+        vm.prank(admin);
+        token.transferOwnership(a);
+        assertEq(token.owner(), admin);
+        assertEq(token.pendingOwner(), a);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, b));
+        vm.prank(b);
+        token.acceptOwnership();
+        vm.prank(a);
+        token.acceptOwnership();
+        assertEq(token.owner(), a);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, admin));
+        vm.prank(admin);
+        token.setFrozenTokens(b, ID, 1); // the old admin lost its powers
     }
 
     // ---------- market-only entry points ----------
@@ -359,6 +406,43 @@ contract ClaimTokenTest is Test {
         vm.expectRevert(abi.encodeWithSelector(IERC1155Errors.ERC1155InvalidArrayLength.selector, 2, 1));
         vm.prank(a);
         token.safeBatchTransferFrom(a, b, ids, values, "");
+    }
+
+    function test_RevertWhen_BatchRepeatsAnIdPastTheUnfrozenBalance() public {
+        _mint(a, ID, 100);
+        _freeze(a, ID, 60); // 40 unfrozen
+        uint256[] memory values = new uint256[](3);
+        values[0] = 40;
+        values[1] = 40;
+        values[2] = 20; // each entry fits the 40 unfrozen; together they would move all 100
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC7943MultiToken.ERC7943InsufficientUnfrozenBalance.selector, a, ID, 80, 40)
+        );
+        _batch(a, b, _sameId(ID, 3), values);
+        assertFalse(token.canTransfer(a, b, ID, 100)); // the batch total, as one query
+        assertEq(token.balanceOf(a, ID), 100);
+
+        // Past the whole balance, ERC-1155's own error still wins.
+        vm.expectRevert(abi.encodeWithSelector(IERC1155Errors.ERC1155InsufficientBalance.selector, a, 60, 70, ID));
+        _batch(a, b, _sameId(ID, 2), _values(40, 70));
+
+        _batch(a, b, _sameId(ID, 2), _values(20, 20)); // within the unfrozen balance in total
+        assertEq(token.balanceOf(a, ID), 60);
+        assertEq(token.getFrozenTokens(a, ID), 60);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC7943MultiToken.ERC7943InsufficientUnfrozenBalance.selector, a, ID, 1, 0)
+        );
+        _batch(a, b, _sameId(ID, 2), _values(0, 1)); // nothing unfrozen is left
+    }
+
+    function test_BatchRepeatingAnIdCountsOnceForTheHolderCap() public {
+        _fillHolders(ID); // a holds 10
+        address newcomer = investors[8];
+        vm.expectRevert(abi.encodeWithSelector(ClaimToken.TooManyHolders.selector, ID));
+        _batch(a, newcomer, _sameId(ID, 2), _values(4, 5)); // a keeps 1: newcomer would be the 9th
+        _batch(a, newcomer, _sameId(ID, 2), _values(4, 6)); // a leaves, newcomer takes its slot
+        assertEq(token.holdersOf(ID).length, 8);
+        _assertHolders(ID);
     }
 
     // ---------- burn and the frozen amount (ERC-7943 permissioned burn) ----------

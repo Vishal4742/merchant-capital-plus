@@ -6,6 +6,7 @@ import {ERC1155Supply} from "@openzeppelin/contracts/token/ERC1155/extensions/ER
 import {ERC1155Utils} from "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Utils.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {IClaimToken} from "./interfaces/IClaimToken.sol";
 import {IInvestorRegistry} from "./interfaces/IInvestorRegistry.sol";
 
@@ -33,7 +34,7 @@ interface IERC7943MultiToken is IERC165 {
 ///         before the lock, and never more than the unfrozen balance; at most 8 holders per id. Burns are never
 ///         blocked, so a revoked investor is still repaid. The owner is the compliance admin.
 ///         (SRS FR-TOK-1–4, 6, 7; ERC-7943)
-contract ClaimToken is ERC1155Supply, Ownable, IClaimToken, IERC7943MultiToken {
+contract ClaimToken is ERC1155Supply, Ownable2Step, IClaimToken, IERC7943MultiToken {
     uint256 public constant MAX_HOLDERS = 8;
 
     struct ClaimState {
@@ -146,8 +147,8 @@ contract ClaimToken is ERC1155Supply, Ownable, IClaimToken, IERC7943MultiToken {
     }
 
     /// @inheritdoc IERC7943MultiToken
-    /// @dev Same rules as a public transfer. A plain balance shortfall is left to ERC-1155 (ERC-7943 rule) unless
-    ///      units are frozen.
+    /// @dev Same rules as a public transfer; for a batch, `amount` is the id's total across the batch. A plain
+    ///      balance shortfall is left to ERC-1155 (ERC-7943 rule) unless units are frozen.
     function canTransfer(address from, address to, uint256 id, uint256 amount) external view returns (bool) {
         return _movable(id) && canSend(from) && canReceive(to)
             && (_frozen[from][id] == 0 || amount <= _unfrozen(from, id)) && _fitsHolderCap(from, to, id, amount);
@@ -168,7 +169,8 @@ contract ClaimToken is ERC1155Supply, Ownable, IClaimToken, IERC7943MultiToken {
     // ---------- rules ----------
 
     /// @dev Mint: receiver eligible. Burn: never blocked, frozen lowered first. Transfer (per id): claim not frozen,
-    ///      before `lockFrom`, both sides eligible, within the unfrozen balance. All paths: holder cap (in `_move`).
+    ///      before `lockFrom`, both sides eligible, the id's total in the batch within the unfrozen balance.
+    ///      All paths: holder cap (in `_move`, on final balances, so repeated ids count once).
     function _update(address from, address to, uint256[] memory ids, uint256[] memory values) internal override {
         if (ids.length != values.length) revert ERC1155InvalidArrayLength(ids.length, values.length);
         if (from == address(0)) {
@@ -179,21 +181,28 @@ contract ClaimToken is ERC1155Supply, Ownable, IClaimToken, IERC7943MultiToken {
             }
         } else {
             for (uint256 i; i < ids.length; ++i) {
-                _checkTransfer(from, to, ids[i], values[i]);
+                // A batch may repeat an id, so the freeze is checked against the running total for that id.
+                // ponytail: O(n²) in the batch length, paid by the sender; batches carry a handful of ids
+                uint256 sent = values[i];
+                for (uint256 j; j < i; ++j) {
+                    if (ids[j] == ids[i]) sent += values[j];
+                }
+                _checkTransfer(from, to, ids[i], values[i], sent);
             }
         }
         _move(from, to, ids, values);
     }
 
     // forge-lint: disable-next-item(require-revert-in-loop) ERC-1155 batches are atomic: one bad id reverts them all
-    function _checkTransfer(address from, address to, uint256 id, uint256 value) private view {
+    /// @param sent `value` plus what earlier entries of the same batch already send of this id
+    function _checkTransfer(address from, address to, uint256 id, uint256 value, uint256 sent) private view {
         if (!_movable(id)) revert ERC7943CannotTransfer(from, to, id, value);
         if (!canSend(from)) revert ERC7943CannotSend(from);
         if (!canReceive(to)) revert ERC7943CannotReceive(to);
         uint256 unfrozen = _unfrozen(from, id);
         // Above the whole balance, ERC-1155's own ERC1155InsufficientBalance is the more specific error.
-        if (value > unfrozen && value <= balanceOf(from, id)) {
-            revert ERC7943InsufficientUnfrozenBalance(from, id, value, unfrozen);
+        if (sent > unfrozen && sent <= balanceOf(from, id)) {
+            revert ERC7943InsufficientUnfrozenBalance(from, id, sent, unfrozen);
         }
     }
 
