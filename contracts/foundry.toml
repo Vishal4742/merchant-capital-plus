@@ -7,6 +7,9 @@ solc_version = "0.8.38"
 evm_version = "prague"
 optimizer = true
 optimizer_runs = 200
+# MerchantPay's 10-argument paySale (ARCHITECTURE §2 ABI) is "stack too deep" under legacy codegen.
+# Coverage under the IR pipeline: forge coverage --ir-minimum.
+via_ir = true
 # Explicit relative remappings only. Auto-detection pulls an absolute local path in from OZ's nested
 # remappings.txt; it lands in the metadata hash, so other machines and Blockscout could only partially match.
 auto_detect_remappings = false
