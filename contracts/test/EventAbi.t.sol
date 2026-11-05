@@ -4,7 +4,7 @@ pragma solidity 0.8.38;
 import {Test} from "forge-std/Test.sol";
 import {MerchantPay} from "../src/MerchantPay.sol";
 import {CapitalMarket} from "../src/CapitalMarket.sol";
-import {IERC7943MultiToken} from "../src/ClaimToken.sol";
+import {ClaimToken, IERC7943MultiToken} from "../src/ClaimToken.sol";
 import {IClaimToken} from "../src/interfaces/IClaimToken.sol";
 import {IInvestorRegistry} from "../src/interfaces/IInvestorRegistry.sol";
 
@@ -48,6 +48,7 @@ contract EventAbiSnapshotTest is Test {
             0xa7f01abbf5b7ec7bac7fb74feb5c1f54af9e430f18a33681c1b9149875339a45 // ERC-7943 (contracts_prep §1)
         );
         assertEq(IERC7943MultiToken.Frozen.selector, 0x7b0c29e799ed468266b4d070c03070137a95cb869c5eb7c18063fb7b1a7a09c5);
+        assertEq(ClaimToken.MarketSet.selector, keccak256("MarketSet(address)"));
         assertEq(IInvestorRegistry.EligibilitySet.selector, keccak256("EligibilitySet(address,uint64)"));
     }
 }
