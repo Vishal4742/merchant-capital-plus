@@ -14,3 +14,4 @@ Log:
 - Renumbering (L3): Arkiv Rabdi is still down, so batch 002 = design foundation (tokens, fonts, three.js DitherScene, Button/HoldButton; L1 comment rename rides along) and the Arkiv probe moves to 003.
 - 21:56 round 3: security PASS (S1/S2/S5 resolved; N1–N4 LOW → batch 002 follow-ups). ci launched.
 - 21:57 round 3 ci PASS. All five round-3 verdicts PASS. Waiting on the human gate (prove it works + grill me).
+- 22:03 human gate passed (saw both OK; a yes, b yes, c reduce-then-disclose; deadline 90 s; copy + deps approved). Committed f42f465..ed17ab7 (6 commits), pushed to origin/main.

@@ -15,7 +15,7 @@ const WORKER_HASH_SELECTOR = "0x3898587d"; // workerHash()
 // The one plain read: the harness reads the specifier on mainnet to find the worker bundle
 // (a disclosed exclusion, FR-PRIV-4). Sends CORS *.
 const BOOTSTRAP_RPC = "https://ethereum-rpc.publicnode.com";
-// A cold Nym mixnet can take tens of seconds; with one retry the worst case is about two minutes.
+// Per read attempt. A cold first read can take the 90 s boot plus two 60 s attempts (about 3.5 min).
 const ANON_TIMEOUT_MS = 60_000;
 // The harness has no boot or bundle-fetch timeout of its own; past this the boot counts as failed.
 export const BOOT_DEADLINE_MS = 90_000;
@@ -45,7 +45,8 @@ async function connect() {
     address: NYM_SPECIFIER,
     preExisting: { rpcProvider: pinWorkerHash({ request: (args) => bootstrap.request(args as never) }) },
   });
-  // A failed or stalled boot must not stay cached, and close() is the only thing that removes its iframe.
+  // A failed or stalled boot must not stay cached. close() removes the iframe if it exists; with harness
+  // 0.4.0 it can't stop a boot whose bundle arrives after the deadline (an orphan worker; report upstream).
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error("Private connection timed out. Try again.")), BOOT_DEADLINE_MS);
@@ -70,7 +71,7 @@ let client: ReturnType<typeof connect> | undefined;
 
 /** One shared Nym-backed client per page load; a failed boot is forgotten so the next call retries. */
 export function getChainClient() {
-  // shortcut: harness 0.4.0 has no public signal for a worker that dies after `ready`, so such a
+  // ponytail: harness 0.4.0 has no public signal for a worker that dies after `ready`, so such a
   // worker stays cached until reload. Upgrade when the harness exposes one, or on the first report.
   client ??= connect().catch((error: unknown) => {
     client = undefined;

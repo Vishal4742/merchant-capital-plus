@@ -12,7 +12,7 @@ ETHGlobal asks teams to say where AI was used, down to files, and to commit spec
 |---|---|---|
 | `docs/SRS.md` | Requirements, acceptance tests | Before the event (planning), approved by the human |
 | `ARCHITECTURE.md`, `PHASES.md`, `PIPELINE.md`, `AGENTS.md` | Design, delivery plan, process, rules | Before the event (planning) |
-| `research_notes/`, `research/` | Prize research, Whitechain inventory, build-plan research | Before the event |
+| `research_notes/`, `research/`, `HANDOFF_LOG.md` | Prize research, Whitechain inventory, build-plan research, the agents' running log | Before and during the event; kept local, not in the public repo (competitive strategy) |
 | `.batches/NNN-*/` | Every change: spec, build reports, test and review verdicts | During the event |
 
 ## Per-file record (filled at each batch close)
@@ -21,4 +21,8 @@ ETHGlobal asks teams to say where AI was used, down to files, and to commit spec
 | `contracts/` (foundry.toml, src/PullStub.sol, test/, script/), `.gitmodules` | claude-contracts (tests first: RED 7ab43b5 → GREEN 8710439) | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 1) + human gate | 001-P1-rail-proof |
 | `apps/web/` (Next.js skeleton, `lib/anon.ts` Nym transport with pinned worker hash, `lib/guest-wallet.ts`) | claude-frontend | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 3, after 2 rounds of fixes) + human gate | 001-P1-web-rail-proofs |
 | `apps/relayer/` (`POST /relay` stub, `GET /health`, dev server) | claude-relayer | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 3, after 2 rounds of fixes) + human gate | 001-P1-relay-stub |
+| `apps/web/` design foundation (tokens.css, fonts, DitherScene, Button, HoldButton) | claude-frontend | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 3) + human gate | 002-P2-web-design-foundation |
+| `apps/web/lib/arkiv.ts`, `apps/web/scripts/arkiv-probe.ts` | claude-frontend | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 2) + human gate | 003-P1-arkiv-probe |
+| `contracts/src/MerchantPay.sol`, its tests and deploy/smoke scripts, `packages/shared/merchantPay.ts` | claude-contracts (tests first) | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 1) + outside opinion + human gate | 002-P2-merchantpay |
+| `contracts/script/` demo seed (fund + reclaim) | claude-contracts | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 1) + human gate | 004-P2-seed |
 | ⟨path⟩ | ⟨lane / agent⟩ | ⟨reviewers + human⟩ | ⟨NNN⟩ |

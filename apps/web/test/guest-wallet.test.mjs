@@ -53,7 +53,7 @@ test("uses an existing saved key and never replaces it", () => {
 });
 
 test("throws on an unreadable saved value and leaves it untouched", () => {
-  for (const bad of ["not-a-key", "0x1234", `${TEST_KEY}00`, TEST_KEY.slice(2)]) {
+  for (const bad of ["not-a-key", "0x1234", `${TEST_KEY}00`, TEST_KEY.slice(2), `0x${"0".repeat(64)}`]) { // last: right shape, not a valid key
     store.set(STORAGE_KEY, bad);
     assert.throws(() => getGuestAccount(), /unreadable/);
     assert.equal(store.get(STORAGE_KEY), bad);

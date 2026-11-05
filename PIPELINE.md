@@ -51,6 +51,13 @@ start ─► spec ─► build ─► round N: tester ─► [code · security �
 
 **Phase gate:** when a phase's batches are closed and its gate's AT-* scenarios pass end to end, report it (above), run phase-close (a fresh-context review, `/ponytail-audit` on the phase diff, prune CLAUDE.md "Mistakes and rules"), and log the gate.
 
+## 3a. Fast mode (human, 2026-11-06 00:25: "we don't have time")
+1. **Block only on HIGH or CRITICAL.** A reviewer returns `VERDICT: CHANGES` only for a HIGH or CRITICAL finding (wrong money, lost funds, broken acceptance test, security hole, crash). MEDIUM and LOW findings go under a `FOLLOW-UP` heading in the verdict file with `VERDICT: PASS`; the lane fixes them in its next batch.
+2. **At most 2 rounds** (1 resume). Still HIGH after round 2 → stop and ask the human.
+3. **CI from GitHub.** Push the branch first; `ci.md` may be written by the lane as `VERDICT: PASS` plus the link to the green GitHub Actions run for that commit, instead of spawning the ci agent. A red run is `VERDICT: CHANGES`.
+4. **Light batches** (UI copy, layout, styles, docs; no signing, payment, key, auth or contract code in the diff): tester + reviewer-ux-ui + CI only. The lane writes `review-code.md` and `review-security.md` as `VERDICT: PASS` + "light batch (§3a.4): no money, signing, auth or contract code in the diff" + the `git diff --stat`. Anything that touches money, signatures, keys, sign-in, the relayer or contracts always gets all five checks.
+5. **Cheaper models:** the tester and ci run on Sonnet; reviewer-code and reviewer-security stay on Opus for money code.
+
 ## 4. Batch files (agents read these, not the chat; each writes only its own)
 The first line is exact; the lane orchestrator reads only that line to decide.
 | File | Written by | First line |

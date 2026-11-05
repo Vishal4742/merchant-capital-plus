@@ -1,6 +1,6 @@
 # ETHGlobal Mumbai — rules for every agent (all Claude sessions, subagents, opencode)
 
-Read this first, then HANDOFF.md (event facts, decisions, lanes). Append progress to HANDOFF_LOG.md. Keep this file short: rules only.
+Read this first, then `~/ethglobal/HANDOFF.md` (event facts, decisions, lanes). HANDOFF.md, HANDOFF_LOG.md, `research/` and `research_notes/` are **local only, never in git** (human, 2026-11-06: competitive strategy); in a worktree read them at their `~/ethglobal/` paths and send log lines to claude-research. Keep this file short: rules only.
 
 ## The pipeline (mandatory, enforced)
 **Every line of product code goes through PIPELINE.md:** batch → spec citing `docs/SRS.md` IDs → build → tester + reviewers (code, security, ux-ui) → ci → human gate → commit → close. A PreToolUse hook (`tools/pipeline-gate.sh`) **blocks** edits to `contracts/`, `apps/`, `packages/` without an active batch whose spec cites SRS IDs. Don't work around it (no other tools, no other agents, no renamed paths); if it blocks you, start a batch or ask the human.
@@ -18,6 +18,7 @@ Read this first, then HANDOFF.md (event facts, decisions, lanes). Append progres
 - Fan out to several agents for **research and review** (parallel, independent questions). That is where multi-agent pays off.
 - For **building**, one agent per lane, joined by a fixed interface (ABI + events in ARCHITECTURE.md §2). Two agents never edit the same file; claim on agentbus first (`CLAIM <path>`, then `DONE <path>`).
 - **After every closed batch and every phase gate, report to claude-research on agentbus** (`DONE <batch>` is automatic; `GATE G<n> PASSED` + evidence by hand). claude-research verifies, updates the shared docs (SRS, PHASES, README, AI_USAGE, HANDOFF) and tells the human. Lanes never edit those docs themselves (PIPELINE.md §3).
+- **Never idle (human, 2026-11-05 22:44):** when a batch closes, start your next PHASES.md batch at once. While a batch waits for the human gate, write the next batch's spec and failing tests (no product code on unapproved work). Stop only when everything left needs the human, and then say exactly what you need from them in one line.
 - Decisions go in HANDOFF.md, not chat. Before a long task, write current state to a file so a context reset loses nothing.
 
 ## Done means verified
