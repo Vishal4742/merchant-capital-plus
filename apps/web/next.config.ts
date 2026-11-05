@@ -35,7 +35,11 @@ const nextConfig: NextConfig = {
       },
       // ponytail: CSP only where nothing third-party loads; home and /proofs need Nym's CDNs and gateways
       { source: "/checkout/:path*", headers: csp },
+      { source: "/pay/:path*", headers: csp },
       { source: "/r/:path*", headers: csp },
+      // the dashboard sends invoices, approvals and refunds, and loads nothing from another origin (security review 005
+      // F8); wallet extensions aren't bound by a page's CSP
+      { source: "/merchant", headers: csp },
     ];
   },
   partialPrefetching: true,
