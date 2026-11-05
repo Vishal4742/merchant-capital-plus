@@ -6,7 +6,7 @@
 
 **Other apps** (a deals page, a wallet, an aggregator) can list a merchant's live vouchers and offers with one owner-scoped query, without our API.
 
-**Scope today:** Arkiv's Rabdi testnet (chain 7794095), test USDT, one writer key. Codes are stored as hashes, but short codes can be guessed offline by anyone reading the public entities; a merchant should not treat a code as a secret. Voucher redemption counts are on our server, not on Arkiv.
+**Scope today:** Arkiv's Rabdi testnet (chain 7794095), test USDT, one writer key. Codes are stored only as keyed hashes (HMAC with a server-side secret), so they can't be guessed from the public entities. Voucher redemption counts are on our server, not on Arkiv.
 
 **Try it:** ⟨live link⟩
 **After Mumbai:** ⟨plan: mainnet Arkiv once the gateway moves off testnet⟩

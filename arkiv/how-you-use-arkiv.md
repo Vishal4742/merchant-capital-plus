@@ -3,7 +3,7 @@
 ## Vouchers (FR-GW-12)
 
 1. **Merchant creates a code** in the dashboard (percent or fixed off, expiry, usage limit, optional minimum and first-time-only).
-2. **Entity written.** Our server computes `code_hash = keccak256(merchant, code)` and calls `createEntity(Voucher, {...}, { expiration: ExpirationTime.atDate(expiresAt) })` from the writer key. The plain code is shown to the merchant once and not stored.
+2. **Entity written.** Our server computes `code_hash = HMAC-SHA256(VOUCHER_HASH_SECRET, merchant ‖ code)` and calls `createEntity(Voucher, {...}, { expiration: ExpirationTime.atDate(expiresAt) })` from the writer key. The plain code is shown to the merchant once and not stored.
 3. **Checkout reads the code.** When a shopper enters a code, the server hashes it and queries Arkiv for a live entity with that hash.
 4. **Server validates and counts.** It checks the rules (currency, minimum, first-time-only) and the redemption count in its own database, then applies the discount. Redemptions stay on our server because Arkiv entities are only patched by the writer, and a counter there would cost a transaction per payment.
 5. **Entity expires on its own** at the code's expiry. An expired code returns no result; there is no cleanup job.
