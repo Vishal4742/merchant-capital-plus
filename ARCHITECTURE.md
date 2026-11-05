@@ -48,9 +48,12 @@
 
 ## 2. Contracts: the interface between lanes (change only via agentbus + this file; **ABI frozen at gate G3**)
 
-Deploy order: `InvestorRegistry` → `ClaimToken(registry, admin, LOCK_WINDOW)` → `MerchantPay(usdt)` → `CapitalMarket(merchantPay, claimToken, usdt, GRACE)` → `ClaimToken.setMarket` + `MerchantPay.setMarket` (one-time). `evm_version = "prague"`. Verify all four on Blockscout. `LOCK_WINDOW` / `GRACE` are constructor parameters: **60 s / 120 s on testnet** (so maturity and default show live), 1 day / 7 days in production (README says so).
+Deploy order: `InvestorRegistry` → `ClaimToken(registry, admin, LOCK_WINDOW)` → `MerchantPay(usdt, feeRecipient)` → `CapitalMarket(merchantPay, claimToken, usdt, GRACE)` → `ClaimToken.setMarket` + `MerchantPay.setMarket` (one-time). `evm_version = "prague"`. Verify all four on Blockscout. `LOCK_WINDOW` / `GRACE` are constructor parameters: **60 s / 120 s on testnet** (so maturity and default show live), 1 day / 7 days in production (README says so).
 
 ### `MerchantPay.sol` (Operate + Scale)
+**Deployed (preview, batch 002-P2-merchantpay, verified by claude-research 23:12):** `0x83b53Cc0a5A67fAd41bCc56e2ac40465Cf1573b7`, full Blockscout match, deploy tx `0x7364ac31…c51b`. Constructor `(IERC20 usdt, address feeRecipient)`; `feeRecipient` = relayer hot wallet `0xdd02…a651` (owner can change; human confirms at the batch gate). Getters: `invoices(id)` → `(merchant, uint64 dueDate, uint8 status 0 None/1 Open/2 Paid/3 Cancelled, customer, uint128 amount, uint128 paid)`; `payments(id)` → `(merchant, uint96 gross, payer, uint96 refunded)`; `saleOf(merchant, orderRef)`; views `saleNonce`, `invoiceNonce`; kinds `INVOICE=1`, `SALE=2`. `foundry.toml` uses `via_ir = true` (the 10-argument `paySale` is stack-too-deep otherwise). ABI + constants + USDT EIP-712 domain: `packages/shared/merchantPay.ts`. Smoke: 2 USDT sale `0xae155c49…cfb1a` (217,194 gas: 0.10 → relayer, 1.90 → merchant, payer 0 WBT), refund 1 USDT `0xbd91e67e…f939` (78,354 gas).
+**Consumer rules:** count an order as paid only if `payments(saleOf(merchant, orderRef)).gross` equals the session amount, with `orderRef` = 32 random bytes per session; refunds pull from the merchant's wallet, so the merchant approves MerchantPay once.
+**Phase 3 note:** CapitalMarket takes MerchantPay in its constructor and `ClaimToken.setMarket` is one-time, so the MerchantPay used in Phase 3 must be the last one: Phase 3 adds `onPayment` routing, the 'not financed' cancel check, partial `paid` and the acknowledge field in **one** redeploy.
 | Function | Caller | Does |
 |---|---|---|
 | `createInvoice(address customer, uint128 amount, uint64 dueDate, bytes32 refHash) → id` | merchant | Stores the invoice. No token |
