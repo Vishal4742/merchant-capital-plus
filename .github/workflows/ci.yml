@@ -1,0 +1,70 @@
+# CI for Merchant Capital+ (the same checks the pipeline's ci agent runs locally; AGENTS.md "Done means verified").
+name: ci
+on:
+  push:
+    branches: [main, contracts, relayer]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.8.6
+      # Fork tests run against Whitechain Sepolia through the public Ankr RPC in foundry.toml (no key).
+      - run: forge build
+        working-directory: contracts
+      - run: forge test -vv
+        working-directory: contracts
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+  relayer:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/relayer
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/relayer/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # CON-7 / NFR-3: no private keys or provider tokens in tracked files (agentbus.py holds the detector patterns).
+      - run: |
+          if git grep -nE 'PRIVATE_KEY=0x[0-9a-fA-F]{64}|-----BEGIN [A-Z ]*PRIVATE KEY|(^|[^a-z])sk-[A-Za-z0-9_-]{20,}|sm_[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}' -- ':!tools/agentbus.py'; then
+            echo "::error::possible secret in a tracked file"; exit 1
+          fi
+          git ls-files | grep -E '(^|/)\.env$' && { echo "::error::.env is tracked"; exit 1; } || true
