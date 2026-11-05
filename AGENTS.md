@@ -1,6 +1,6 @@
 # ETHGlobal Mumbai — rules for every agent (all Claude sessions, subagents, opencode)
 
-Read this first, then HANDOFF.md (event facts, decisions, lanes). Append progress to HANDOFF_LOG.md. Keep this file short: rules only.
+Read this first, then `~/ethglobal/HANDOFF.md` (event facts, decisions, lanes). HANDOFF.md, HANDOFF_LOG.md, `research/` and `research_notes/` are **local only, never in git** (human, 2026-11-06: competitive strategy); in a worktree read them at their `~/ethglobal/` paths and send log lines to claude-research. Keep this file short: rules only.
 
 ## The pipeline (mandatory, enforced)
 **Every line of product code goes through PIPELINE.md:** batch → spec citing `docs/SRS.md` IDs → build → tester + reviewers (code, security, ux-ui) → ci → human gate → commit → close. A PreToolUse hook (`tools/pipeline-gate.sh`) **blocks** edits to `contracts/`, `apps/`, `packages/` without an active batch whose spec cites SRS IDs. Don't work around it (no other tools, no other agents, no renamed paths); if it blocks you, start a batch or ask the human.
