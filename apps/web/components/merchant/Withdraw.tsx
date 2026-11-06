@@ -28,6 +28,8 @@ interface Review {
 }
 
 const txLink = (hash: Hex) => `${EXPLORER}/tx/${hash}`;
+// ponytail: a second balance re-read after a send, for an RPC backend a block behind; poll the balance if 3 s isn't enough
+const REREAD_MS = 3_000;
 
 export function Withdraw({ merchant, balance }: WithdrawProps) {
   const units = balance === null ? null : BigInt(balance);
@@ -64,7 +66,13 @@ function WithdrawForm({ merchant, balance }: { merchant: Address; balance: bigin
   const [busy, setBusy] = useState(false);
   const [review, setReview] = useState<Review | null>(null);
   const [sent, setSent] = useState<{ hash: Hex; amount: bigint; to: Address } | null>(null);
-  const [unconfirmed, setUnconfirmed] = useState<Hex | null>(null);
+  const [pending, setPending] = useState<Hex | null>(null); // sent by the wallet, not confirmed yet
+
+  /** The headline balance is our server's read: refresh now, and once more a few seconds later (042). */
+  function reread() {
+    router.refresh();
+    setTimeout(() => router.refresh(), REREAD_MS);
+  }
 
   function reset() {
     setSent(null);
@@ -80,7 +88,10 @@ function WithdrawForm({ merchant, balance }: { merchant: Address; balance: bigin
     setToError(dest.ok ? null : dest.error);
     setAmountError(units.ok ? null : units.error);
     setError(null);
-    if (!dest.ok || !units.ok) return;
+    if (!dest.ok || !units.ok) {
+      document.getElementById(dest.ok ? "withdraw-amount" : "withdraw-to")?.focus(); // the first invalid field (042)
+      return;
+    }
     setBusy(true);
     try {
       const wallet = await connectMerchant(window.ethereum, merchant, MERCHANT_PAY); // the signed-in wallet, on chain 1874
@@ -98,17 +109,18 @@ function WithdrawForm({ merchant, balance }: { merchant: Address; balance: bigin
     setBusy(true);
     setError(null);
     try {
-      const hash = await withdraw(review.wallet, review.to, review.amount);
+      // the hash shows with its link as soon as the wallet returns it, not after the receipt (042)
+      const hash = await withdraw(review.wallet, review.to, review.amount, setPending);
       setSent({ hash, amount: review.amount, to: review.to });
+      setPending(null);
       setReview(null);
-      router.refresh(); // re-read the balance on our server
+      reread();
     } catch (err) {
       setError(withdrawError(err));
-      const hash = (err as { hash?: Hex }).hash;
-      if (hash) {
-        setUnconfirmed(hash); // it may still land: link it, and show the balance the chain has now
-        router.refresh();
-      }
+      // a hash means it was sent and may still land: keep it linked, re-read the balance. Without one (refused before
+      // sending, or the receipt says it reverted) nothing moved, so Send is offered again.
+      if ((err as { hash?: Hex }).hash) reread();
+      else setPending(null);
     } finally {
       setBusy(false);
     }
@@ -116,18 +128,18 @@ function WithdrawForm({ merchant, balance }: { merchant: Address; balance: bigin
 
   // ponytail: the pending hash lives in this page's state, so a reload forgets it; keep it in sessionStorage if that bites
   async function checkAgain() {
-    if (busy || !review || !unconfirmed) return;
+    if (busy || !review || !pending) return;
     setBusy(true);
-    const status = await sendStatus(review.wallet, unconfirmed);
+    const status = await sendStatus(review.wallet, pending);
     if (status === "sent") {
-      setSent({ hash: unconfirmed, amount: review.amount, to: review.to });
+      setSent({ hash: pending, amount: review.amount, to: review.to });
       setReview(null);
       setError(null);
     } else {
       setError(status === "failed" ? NOT_THROUGH : UNCONFIRMED);
     }
-    if (status !== "pending") setUnconfirmed(null);
-    router.refresh();
+    if (status !== "pending") setPending(null);
+    reread();
     setBusy(false);
   }
 
@@ -165,12 +177,22 @@ function WithdrawForm({ merchant, balance }: { merchant: Address; balance: bigin
           A transfer can&apos;t be undone. Check the address matches the one you were given, every character.
           {review.noChecksum && " It was typed in lower case, which carries no checksum, so a typo wouldn't be caught."}
         </p>
-        {/* while a send is unconfirmed there is no Send and no Back: only Check again, so it can't go out twice (033 M2) */}
+        {pending && !error && (
+          <p role="status" className="text-sm text-ink">
+            Sent, waiting for confirmation…{" "}
+            <a href={txLink(pending)} target="_blank" rel="noreferrer" className="text-accent underline underline-offset-4">
+              View transaction ↗
+            </a>
+          </p>
+        )}
+        {/* once sent there is no Send and no Back: the receipt wait, then Check again if it can't be read (033 M2) */}
         <div className="flex flex-wrap items-center gap-2">
-          {unconfirmed ? (
-            <Button onClick={checkAgain} aria-disabled={busy}>
-              {busy ? "Checking…" : "Check again"}
-            </Button>
+          {pending ? (
+            error && (
+              <Button onClick={checkAgain} aria-disabled={busy}>
+                {busy ? "Checking…" : "Check again"}
+              </Button>
+            )
           ) : (
             <>
               <Button onClick={send} aria-disabled={busy}>
@@ -185,8 +207,8 @@ function WithdrawForm({ merchant, balance }: { merchant: Address; balance: bigin
         {error && (
           <p role="alert" className="text-sm text-critical">
             {error}{" "}
-            {unconfirmed && (
-              <a href={txLink(unconfirmed)} target="_blank" rel="noreferrer" className="text-accent underline underline-offset-4">
+            {pending && (
+              <a href={txLink(pending)} target="_blank" rel="noreferrer" className="text-accent underline underline-offset-4">
                 View transaction ↗
               </a>
             )}
@@ -198,9 +220,14 @@ function WithdrawForm({ merchant, balance }: { merchant: Address; balance: bigin
 
   if (balance === null) {
     return (
-      <p role="status" className="text-sm text-warning">
-        Your wallet balance isn&apos;t available right now, so Withdraw is off. Reload the page in a minute.
-      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <p role="status" className="text-sm text-warning">
+          Your wallet balance isn&apos;t available right now, so Withdraw is off.
+        </p>
+        <Button variant="quiet" onClick={() => router.refresh()}>
+          Try again
+        </Button>
+      </div>
     );
   }
   if (balance === 0n) return <p className="text-sm text-ink-muted">Nothing to withdraw yet. Each payment lands here the moment it&apos;s paid.</p>;
@@ -228,7 +255,7 @@ function WithdrawForm({ merchant, balance }: { merchant: Address; balance: bigin
           className={`${field} data`}
         />
         {toError && (
-          <p id="withdraw-to-error" className="text-sm text-critical">
+          <p id="withdraw-to-error" role="alert" className="text-sm text-critical">
             {toError}
           </p>
         )}
@@ -254,6 +281,7 @@ function WithdrawForm({ merchant, balance }: { merchant: Address; balance: bigin
           />
           <Button
             variant="quiet"
+            className="min-w-11 px-3"
             onClick={() => {
               setAmount(plainUsdt(balance)); // the exact balance, no rounding
               setAmountError(null);
@@ -266,7 +294,7 @@ function WithdrawForm({ merchant, balance }: { merchant: Address; balance: bigin
           Up to {formatUsdt(balance)} USDT. Your wallet pays a small network fee in WBT.
         </p>
         {amountError && (
-          <p id="withdraw-amount-error" className="text-sm text-critical">
+          <p id="withdraw-amount-error" role="alert" className="text-sm text-critical">
             {amountError}
           </p>
         )}

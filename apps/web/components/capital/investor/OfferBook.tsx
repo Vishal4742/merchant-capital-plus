@@ -9,7 +9,7 @@ import type { Address } from "viem";
 import { Button } from "@/components/Button";
 import { CopyButton } from "@/components/CopyButton";
 import { card } from "@/components/gateway/Frame";
-import { aprPercent, buyBlocker, readHolders, readInvestor, type BookOffer } from "@/lib/capital-wallet";
+import { aprPercent, arkivNote, buyBlocker, investorsLabel, readHolders, readInvestor, usdt2, type BookOffer } from "@/lib/capital-wallet";
 import { formatUsdt, parseUsdt } from "@/lib/usdt";
 import { FundPanel } from "./FundPanel";
 import { KIND_LABEL, istDate, istDateTime, kindBadge, short } from "./format";
@@ -135,6 +135,7 @@ function OfferRow({ offer: o, state, connect, me, open, toggle, retry }: RowProp
         <span className={`${kindBadge} ${advance ? "text-accent" : "text-ink"}`}>{KIND_LABEL[o.kind]}</span>
         <span className="data text-ink-muted">#{o.id}</span>
         <span className="font-medium">{o.merchant_name}</span>
+        <span className="text-xs text-ink-muted">{investorsLabel(o.kind)}</span>
       </div>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-4">
         <Field label="You get back">
@@ -142,7 +143,7 @@ function OfferRow({ offer: o, state, connect, me, open, toggle, retry }: RowProp
           <Sub>{advance ? `from ${o.holdback_pct}% of each sale` : `when it's paid, due ${istDate(maturity)}`}</Sub>
         </Field>
         <Field label="Price for all of it">
-          {formatUsdt(parseUsdt(o.price))} USDT
+          {usdt2(parseUsdt(o.price))} USDT
           {apr && <Sub>{`≈${apr.pct}% a year over ${apr.days} days`}</Sub>}
         </Field>
         <Field label="Left to buy">{formatUsdt(BigInt(o.units_left))} USDT</Field>
@@ -156,7 +157,7 @@ function OfferRow({ offer: o, state, connect, me, open, toggle, retry }: RowProp
               <CopyButton text={o.arkiv.entity_key} name={`the Arkiv entity key of offer ${o.id}`} />
             </>
           ) : (
-            "Not on Arkiv"
+            arkivNote(o)
           )}
         </span>
         <BuyAction offer={o} state={state} connect={connect} me={me} open={open} toggle={toggle} retry={retry} />
