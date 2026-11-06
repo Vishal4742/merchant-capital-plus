@@ -1,15 +1,16 @@
 #!/usr/bin/env node
-// Adapted from Pixa (MIT) src/index.ts: the stdio entry. stdout carries the MCP JSON-RPC only, so any library's
-// console.log goes to stderr. Run: node src/index.ts (Node >= 22.18 runs the TypeScript directly).
+// The stdio entry (started from Pixa's MIT src/index.ts). stdout carries MCP JSON-RPC only: every console method is
+// pointed at stderr before anything else loads, so no library can print onto the protocol stream.
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createServer } from "./server.ts";
 
-console.log = console.info = console.debug = console.error;
+const toStderr = (...parts: unknown[]) => process.stderr.write(`${parts.map(String).join(" ")}\n`);
+console.log = console.info = console.debug = console.warn = console.error = toStderr;
 
 try {
   await createServer({ env: process.env }).connect(new StdioServerTransport());
 } catch (error) {
-  // createServer's reasons never contain a key (FR-MCP-3)
-  console.error(`merchant-capital-mcp: ${error instanceof Error ? error.message : String(error)}`);
+  // config errors never contain a key value (src/config.ts)
+  process.stderr.write(`whiteflow-mcp: ${error instanceof Error ? error.message : String(error)}\n`);
   process.exit(1);
 }
