@@ -60,4 +60,8 @@ ETHGlobal asks teams to say where AI was used, down to files, and to commit spec
 | `apps/web/lib/server/` Arkiv voucher mirror: every attempt's outcome stored, /publish retry | claude-contracts | phase mode: ci + reviewer-security PASS | 018-P4-arkiv-voucher-mirror |
 | `apps/web/` voucher pay path: one fewer round trip before signing | claude-frontend | phase mode: ci + reviewer-security PASS | 021-P4-web-voucher-speed |
 | `apps/relayer/` deployed NFR-4: per-step timings, /health in the relay function, Fluid compute, 250 ms receipt poll (7.31 s → 4.32 s) | claude-relayer | phase mode: ci + reviewer-security PASS; human 'Ship it' 09:58 | 018-P2-deployed-nfr4 |
+| `apps/web/lib/server/` refund sync (payment.refunded from the chain's Refunded log), stable webhook event ids, publish lease | claude-contracts | phase mode: ci + reviewer-security PASS | 021-P4-refund-sync-webhook-ids |
+| `apps/web/lib/server/` Arkiv mirror hardening: createdBy filter, adopt only matching terms, never overwrite a stored key | claude-contracts | phase mode: ci + reviewer-security PASS (tests first) | 022-P4-arkiv-mirror-hardening |
+| `apps/web/lib/server/` webhook retries in production (dispatch on the next request) | claude-contracts | phase mode: ci PASS (tests first) | 025-P4-webhook-retries-prod |
+| `apps/web/` Vercel deploy config + docs research (curl, how a payment works, endpoint pages) | claude-frontend | phase mode: ci + reviewer-security PASS / ci PASS | 022-P4-web-vercel-deploy, 023-P4-web-docs-research |
 | ⟨path⟩ | ⟨lane / agent⟩ | ⟨reviewers + human⟩ | ⟨NNN⟩ |
