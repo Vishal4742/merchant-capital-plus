@@ -1,5 +1,6 @@
 // /api/v1/sessions/:id/voucher: the customer's discount code on a link or page checkout (FR-GW-12, AT-12). POST {code}
-// applies it, DELETE removes it, GET reads what is due now (the checkout fetches it right before the payer approves).
+// applies it, DELETE removes it, GET reads what is due now (the checkout no longer reads it before paying: the pay route
+// answers 409 with the amount due when the sheet's total is stale, batch 021).
 // The discount comes off the checkout's ORIGINAL amount (lib/server/vouchers.ts); the pay route charges exactly what it
 // claims from the hold. No code changes while a payment is in flight, pending or done (batch-009 security F5).
 import { amountDue, applyVoucher } from "../../../../../../lib/server/vouchers.ts";
