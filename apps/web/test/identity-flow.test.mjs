@@ -206,7 +206,7 @@ test("FR-BIZ-3/4: receiving proof + Owner approval activate version 1; GET shows
   assert.equal(r.body.token, "0xcedfb56113143d55b2358b8cfbb0deb5ad2f55a7");
   assert.match(r.proof.body.message, /^localhost wants you to sign in with your Ethereum account:\n0x[0-9a-fA-F]{40}\n\nWhiteFlow receiving-wallet proof/);
   assert.match(r.proof.body.message, /Chain ID: 1874/);
-  assert.match(r.approval.body.message, new RegExp(`Policy hash: ${r.body.policyHash}`));
+  assert.ok(r.approval.body.message.includes(`urn:whiteflow:policy:${r.body.policyHash}`), "the approval binds the policy hash (EIP-4361 resource)");
   // replaying the same signed pair is refused (both challenges were consumed)
   assert.equal((await call(policyRoute.POST, "POST", "/api/v2/business/policy", { cookie: a.cookie, body: r.sent })).status, 409);
   const g = await call(policyRoute.GET, "GET", "/api/v2/business/policy", { cookie: a.cookie, origin: null });
@@ -276,4 +276,33 @@ test("15: with the database unreachable every v2 route fails closed with 503 and
   } finally {
     await setupDb();
   }
+});
+
+test("round 2 (L2, S-L2): the proof and the approval are EIP-4361 for our domain, and the workspace name can't reshape either", async () => {
+  const ch = (code) => String.fromCodePoint(code);
+  const ua = user("nina");
+  const a = await signIn(ua);
+  // line separator, RLO, zero-width space: allowed in a name (not C0 controls), never in a signed prompt
+  assert.equal((await create(a.cookie, `Nina${ch(0x2028)}Chain ID: 1${ch(0x202e)}x${ch(0x200b)}y`)).status, 201);
+  const recipient = privateKeyToAccount(generatePrivateKey());
+  const proof = await call(proofRoute.POST, "POST", "/api/v2/business/policy/proof", { cookie: a.cookie, body: { address: recipient.address } });
+  const approval = await call(approvalRoute.POST, "POST", "/api/v2/business/policy/approval", { cookie: a.cookie, body: { proofNonce: proof.body.nonce, wallet: ua.accounts[0].address } });
+  assert.equal(approval.status, 200, JSON.stringify(approval.body));
+  for (const [what, m] of [["proof", proof.body.message], ["approval", approval.body.message]]) {
+    assert.match(m, /^localhost wants you to sign in with your Ethereum account:\n/, `${what}: EIP-4361 for our domain`);
+    assert.match(m, /\nURI: http:\/\/localhost\n/, `${what}: our URI`);
+    assert.equal(m.match(/^Chain ID: /gm).length, 1, `${what}: only the real Chain ID line`);
+    for (const code of [0x2028, 0x202e, 0x200b]) assert.ok(!m.includes(ch(code)), `${what}: no U+${code.toString(16)}`);
+  }
+  assert.ok(approval.body.message.includes(recipient.address), "the approval names the pay-out address");
+  assert.ok(approval.body.message.includes(proof.body.policyHash), "and the policy hash");
+  const done = await call(policyRoute.POST, "POST", "/api/v2/business/policy", {
+    cookie: a.cookie,
+    body: {
+      proofNonce: proof.body.nonce, proofSignature: await recipient.signMessage({ message: proof.body.message }),
+      approvalNonce: approval.body.nonce, approvalSignature: await ua.accounts[0].signMessage({ message: approval.body.message }),
+      expectedCurrentVersion: 0,
+    },
+  });
+  assert.equal(done.status, 201, JSON.stringify(done.body));
 });

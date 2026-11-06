@@ -22,6 +22,10 @@ export const PROOF_TTL_MS = 10 * 60 * 1000;
 export const APPROVAL_TTL_MS = 5 * 60 * 1000;
 const CHALLENGES_PER_MINUTE = 20; // per principal
 const EXPIRED = "That confirmation expired or was already used. Start again.";
+// every control, format (bidi, zero-width, tags) and line/paragraph separator character: a quoted workspace name must
+// not reshape a wallet prompt (round 2; the same rule as batch 051's legacy claim). Property classes, no raw characters.
+const PROMPT_UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
+export const promptSafe = (text: string) => text.replace(PROMPT_UNSAFE, " ");
 
 export interface SettlementPolicy {
   version: number;
@@ -92,7 +96,7 @@ export async function issueReceivingProof(ctx: AuthContext, input: { address: un
   const message = createSiweMessage({
     domain: origin.host,
     address: recipient,
-    statement: `WhiteFlow receiving-wallet proof: this wallet will receive USDT for "${biz.display_name.replace(/[\r\n]/g, " ")}" on Whitechain Testnet. It proves control of this wallet only; it moves no funds.`,
+    statement: `WhiteFlow receiving-wallet proof: this wallet will receive USDT for "${promptSafe(biz.display_name)}" on Whitechain Testnet. It proves control of this wallet only; it moves no funds.`,
     uri: origin.origin,
     version: "1",
     chainId: whitechainSepolia.id,
@@ -130,25 +134,24 @@ export async function issueOwnerApproval(ctx: AuthContext, input: { proofNonce: 
   const [mine] = await query("SELECT 1 FROM wf_principal_wallets WHERE principal_id = $1 AND address = $2", [ctx.principalId, wallet]);
   if (!mine) throw new HttpError(403, "Approve with a wallet linked to your WhiteFlow sign-in. Link one in the sign-in dialog, then sign in again.");
   await sharedRateLimit(`wf-challenge:${ctx.principalId}`, CHALLENGES_PER_MINUTE, 60_000, "closed");
+  const origin = publicOrigin();
   const [biz] = await query<{ display_name: string }>("SELECT display_name FROM wf_businesses WHERE id = $1", [ctx.businessId]);
   const version = Number(proof.payload.proposedVersion);
   const nonce = generateSiweNonce();
   const expiresAt = now + APPROVAL_TTL_MS;
-  const message = [
-    "WhiteFlow: approve a receiving policy",
-    "",
-    `Workspace: ${biz.display_name.replace(/[\r\n]/g, " ")} (${ctx.businessId})`,
-    `Pay out to: ${getAddress(proof.address)}`,
-    `Token: USDT ${getAddress(POLICY_TOKEN)} on Whitechain Testnet (chain ${POLICY_CHAIN_ID})`,
-    `Policy version: ${version}`,
-    `Policy hash: ${String(proof.payload.policyHash)}`,
-    `Receiving proof: ${proof.nonce}`,
-    `Approver: ${getAddress(wallet)}`,
-    `Nonce: ${nonce}`,
-    `Expires: ${new Date(expiresAt).toISOString()}`,
-    "",
-    "Signing approves where this workspace is paid. It moves no funds.",
-  ].join("\n");
+  // EIP-4361 like the proof (review L2): the wallet checks the domain and URI, so a phishing site can't reuse it
+  const message = createSiweMessage({
+    domain: origin.host,
+    address: getAddress(wallet),
+    statement: `WhiteFlow: approve receiving policy version ${version} for "${promptSafe(biz.display_name)}": pay out to ${getAddress(proof.address)} in USDT ${getAddress(POLICY_TOKEN)} on Whitechain Testnet. Signing approves where this workspace is paid; it moves no funds.`,
+    uri: origin.origin,
+    version: "1",
+    chainId: whitechainSepolia.id,
+    nonce,
+    issuedAt: new Date(now),
+    expirationTime: new Date(expiresAt),
+    resources: [`urn:whiteflow:business:${ctx.businessId}`, `urn:whiteflow:policy:${String(proof.payload.policyHash)}`, `urn:whiteflow:proof:${proof.nonce}`],
+  });
   await query(
     `INSERT INTO wf_challenges (nonce, purpose, principal_id, business_id, address, chain_id, payload, message, created_at, expires_at)
      VALUES ($1, 'approval', $2, $3, $4, $5, $6::jsonb, $7, $8, $9)`,
