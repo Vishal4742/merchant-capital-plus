@@ -55,12 +55,10 @@ function wbt(value: string | null): string {
   return Number.isFinite(n) ? `${n.toFixed(4)} WBT` : "—";
 }
 
-function ackOf(acks: Map<string, InvoiceAck> | null, id: bigint) {
-  const ack = acks?.get(id.toString());
-  return ack ? ackView(ack) : null;
-}
+/** This invoice's acks, only those signed for its own terms (security 047 L1), or null. */
+const ackOf = (acks: Map<string, InvoiceAck[]> | null, invoice: Invoice) => ackView(acks?.get(invoice.id.toString()) ?? [], invoice);
 
-function invoiceRows(invoices: Invoice[], logs: PaidLog[], acks: Map<string, InvoiceAck> | null): InvoiceRow[] {
+function invoiceRows(invoices: Invoice[], logs: PaidLog[], acks: Map<string, InvoiceAck[]> | null): InvoiceRow[] {
   // the payment that completed each invoice: its last Paid log (a part-paid invoice has several)
   const paidBy = new Map(logs.filter((log) => log.invoiceId !== 0n).map((log) => [log.invoiceId, log.paymentId.toString()]));
   return invoices.flatMap((invoice) =>
@@ -74,7 +72,7 @@ function invoiceRows(invoices: Invoice[], logs: PaidLog[], acks: Map<string, Inv
             status: invoice.status,
             paidText: invoice.status === "open" && invoice.paid > 0n ? formatUsdt(invoice.paid) : null,
             receiptId: invoice.status === "paid" ? (paidBy.get(invoice.id) ?? null) : null,
-            ack: ackOf(acks, invoice.id),
+            ack: ackOf(acks, invoice),
           },
         ],
   );

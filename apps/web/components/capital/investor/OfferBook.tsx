@@ -84,6 +84,12 @@ export function OfferBook({ state, connect }: ScreenProps) {
       <h2 id="offers" className="eyebrow border-t border-hairline pt-3 text-ink-muted">
         {book.offers.length} {book.offers.length === 1 ? "offer" : "offers"} · checked against the chain
       </h2>
+      {/* what the two acknowledgement labels prove (security 047 H1) */}
+      {book.offers.some((o) => o.kind === "invoice") && (
+        <p className="text-xs text-ink-muted">
+          Debtor acknowledged ✓ means the customer wallet the shop named on the invoice signed it. A pay-link holder&apos;s acknowledgement doesn&apos;t check who they are.
+        </p>
+      )}
       {mine?.reads === "ready" && !mine.eligible && (
         <p role="status" className={`${card} text-sm text-warning`}>
           Your wallet is waiting for approval, so you can look but not buy yet. KYC is simulated on this demo: ask the team to approve {short(mine.account)}.
