@@ -8,7 +8,7 @@ import { decodeFunctionData, encodeAbiParameters, encodeErrorResult, getAddress,
 // lib/merchant-wallet.ts imports the Nym harness; these tests never boot it
 mock.module("@anon-rpc/browser-harness", { exports: { AnonRpcWorker: class {} } });
 
-const { CAPITAL_MARKET, MERCHANT_PAY, NOT_ENOUGH_WBT, UNCONFIRMED, WRONG_NETWORK, checkAmount, checkDestination, quoteWithdraw, withdraw, withdrawError } = await import("../lib/withdraw.ts");
+const { CAPITAL_MARKET, CLAIM_TOKEN, INVESTOR_REGISTRY, MERCHANT_PAY, NOT_ENOUGH_WBT, NOT_THROUGH, UNCONFIRMED, WRONG_NETWORK, checkAmount, checkDestination, quoteWithdraw, sendStatus, withdraw, withdrawError } = await import("../lib/withdraw.ts");
 const { connectMerchant, SENT_UNCONFIRMED } = await import("../lib/merchant-wallet.ts");
 const { readUsdtBalance } = await import("../lib/onchain.ts");
 const { USDT, plainUsdt } = await import("../lib/usdt.ts");
@@ -28,6 +28,8 @@ const refused = (result) => (assert.equal(result.ok, false, `expected a refusal,
 test("the copied contract addresses match packages/shared/contracts.ts", () => {
   assert.equal(MERCHANT_PAY.toLowerCase(), shared.addresses.merchantPay.toLowerCase());
   assert.equal(CAPITAL_MARKET.toLowerCase(), shared.addresses.capitalMarket.toLowerCase());
+  assert.equal(CLAIM_TOKEN.toLowerCase(), shared.addresses.claimToken.toLowerCase());
+  assert.equal(INVESTOR_REGISTRY.toLowerCase(), shared.addresses.investorRegistry.toLowerCase());
   assert.equal(USDT.toLowerCase(), shared.addresses.usdt.toLowerCase());
 });
 
@@ -50,6 +52,8 @@ test("each refused destination has its own plain reason", () => {
     [MERCHANT.toLowerCase(), /own address/],
     [shared.addresses.merchantPay, /MerchantPay contract/],
     [getAddress(shared.addresses.capitalMarket), /CapitalMarket contract/],
+    [shared.addresses.claimToken, /ClaimToken contract/],
+    [shared.addresses.investorRegistry, /InvestorRegistry contract/],
     [shared.addresses.usdt, /USDT contract/],
     [shared.addresses.usdt.toLowerCase(), /USDT contract/],
   ];
@@ -96,7 +100,7 @@ test("the balance read is USDT.balanceOf(merchant) on chain, as an exact bigint,
 
 // The fake wallet: transfer behaves like TetherTokenV2 (OZ ERC20: "exceeds balance"), every eth_sendTransaction is
 // recorded and mined at once unless the receipt is lost; `state.chainId` can change under the page like a real wallet.
-function fakeWallet({ balance = 70_710_000n, wbt = 10n ** 18n, rejectSend = false, noGas = false, lostReceipt = false } = {}) {
+function fakeWallet({ balance = 70_710_000n, wbt = 10n ** 18n, rejectSend = false, noGas = false, lostReceipt = false, returnsFalse = false } = {}) {
   const sent = [];
   const receipts = new Map();
   const state = { chainId: 1874 };
@@ -116,7 +120,7 @@ function fakeWallet({ balance = 70_710_000n, wbt = 10n ** 18n, rejectSend = fals
         const { functionName, args } = decodeFunctionData({ abi, data: params[0].data });
         if (functionName === "balanceOf") return encodeAbiParameters([{ type: "uint256" }], [balance]);
         if (args[1] > balance) throw { code: 3, message: "execution reverted", data: encodeErrorResult({ abi, errorName: "Error", args: ["ERC20: transfer amount exceeds balance"] }) };
-        return encodeAbiParameters([{ type: "bool" }], [true]);
+        return encodeAbiParameters([{ type: "bool" }], [!returnsFalse]);
       }
       case "eth_sendTransaction": {
         if (rejectSend) throw { code: 4001, message: "User rejected the request." };
@@ -194,4 +198,24 @@ test("sent but unconfirmed keeps the tx hash for its link, so the merchant check
   assert.match(error.hash, /^0x[0-9a-f]{64}$/);
   assert.equal(withdrawError(error), UNCONFIRMED);
   assert.equal(sent.length, 1);
+});
+
+test("Check again after an unconfirmed send: pending while there's no receipt, then sent or failed from the receipt (033 M2)", async () => {
+  const lost = fakeWallet({ lostReceipt: true });
+  const w = await connect(lost.provider);
+  const { hash } = await withdraw(w, EXCHANGE, ONE_USDT).catch((e) => e);
+  assert.equal(await sendStatus(w, hash), "pending");
+  const ok = fakeWallet();
+  const w2 = await connect(ok.provider);
+  assert.equal(await sendStatus(w2, await withdraw(w2, EXCHANGE, ONE_USDT)), "sent");
+  const reverted = { ...w2, reader: { getTransactionReceipt: async () => ({ status: "reverted" }) } };
+  assert.equal(await sendStatus(reverted, hash), "failed");
+  assert.equal(NOT_THROUGH, "That didn't go through, and nothing moved. Try again.");
+});
+
+test("a transfer whose dry run returns false is refused before the wallet is asked (033 L2)", async () => {
+  const { provider, sent } = fakeWallet({ returnsFalse: true });
+  const error = await withdraw(await connect(provider), EXCHANGE, ONE_USDT).catch((e) => e);
+  assert.match(withdrawError(error), /USDT refused this transfer/);
+  assert.equal(sent.length, 0);
 });

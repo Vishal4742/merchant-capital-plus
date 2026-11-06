@@ -12,17 +12,23 @@ import { USDT, formatUsdt, parseUsdt } from "./usdt.ts";
 // ponytail: copied from packages/shared/contracts.ts (apps/web can't import it yet, see lib/onchain.ts); test/withdraw pins them
 export const MERCHANT_PAY: Address = "0xab817593253a0a37de723072827d88fe0ca54251";
 export const CAPITAL_MARKET: Address = "0xecd63a369d23dfddc6bfac921e41a86760c20abe";
-/** Our contracts aren't wallets: USDT sent to them is stuck there. */
+export const CLAIM_TOKEN: Address = "0xce9b171a5c485a41dced9d7f043733bddc26c388";
+export const INVESTOR_REGISTRY: Address = "0x293430fae87ca79844c6e3a64e8044078c4d3e74";
+/** Our contracts aren't wallets and none can send USDT back: USDT sent to them is stuck there (security 033 M3). */
 const CONTRACTS = [
   ["MerchantPay", MERCHANT_PAY],
   ["CapitalMarket", CAPITAL_MARKET],
+  ["ClaimToken", CLAIM_TOKEN],
+  ["InvestorRegistry", INVESTOR_REGISTRY],
   ["USDT", USDT],
 ] as const;
 
 export const NOT_ENOUGH_WBT = "Your wallet needs a little WBT to pay the network fee. Add some, then try again.";
 export const WRONG_NETWORK = "Your wallet is on another network. Switch it to Whitechain Sepolia, then try again.";
 export const UNCONFIRMED = "It was sent, but it isn't confirmed yet. Open the transaction and check it before you send again.";
+export const NOT_THROUGH = "That didn't go through, and nothing moved. Try again.";
 const NOT_ENOUGH_USDT = "Your wallet doesn't have that much USDT now. Reload the page to see what's there.";
+const REFUSED = "USDT refused this transfer, so nothing was sent.";
 
 const erc20 = parseAbi(["function transfer(address to, uint256 amount) returns (bool)"]);
 const ok = <T>(value: T) => ({ ok: true, value }) as const;
@@ -72,13 +78,24 @@ export async function quoteWithdraw(w: MerchantWallet, to: Address, amount: bigi
 export async function withdraw(w: MerchantWallet, to: Address, amount: bigint): Promise<Hex> {
   // the wallet may have moved networks since Review; the dry run would then read another chain's state
   if ((await w.wallet.getChainId()) !== whitechainSepolia.id) throw new Error(WRONG_NETWORK);
-  const { request } = await w.reader.simulateContract(transfer(w, to, amount));
+  const { request, result } = await w.reader.simulateContract(transfer(w, to, amount));
+  if (result !== true) throw new Error(REFUSED); // a token that returns false instead of reverting (security 033 L2)
   const hash = await w.wallet.writeContract(request as Parameters<MerchantWallet["wallet"]["writeContract"]>[0]);
   const receipt = await w.reader.waitForTransactionReceipt({ hash }).catch(() => {
     throw Object.assign(new Error(SENT_UNCONFIRMED), { hash });
   });
-  if (receipt.status !== "success") throw new Error("That didn't go through, and nothing moved. Try again.");
+  if (receipt.status !== "success") throw new Error(NOT_THROUGH);
   return hash;
+}
+
+/** After an unconfirmed send: "sent" once its receipt reads success, "failed" if it reverted, "pending" while there is
+ *  no receipt yet. Until then the page offers no new send (security 033 M2). */
+export async function sendStatus(w: MerchantWallet, hash: Hex): Promise<"sent" | "failed" | "pending"> {
+  try {
+    return (await w.reader.getTransactionReceipt({ hash })).status === "success" ? "sent" : "failed";
+  } catch {
+    return "pending"; // not mined yet, or the receipt read failed: either way it may still land
+  }
 }
 
 /** Any error from the calls above as one plain sentence; the rest (cancelled, wrong account) as walletError says it. */

@@ -11,7 +11,7 @@ import { card, field, textLink } from "@/components/gateway/Frame";
 import { formatWbt } from "@/lib/dashboard";
 import { connectMerchant, type MerchantWallet } from "@/lib/merchant-wallet";
 import { EXPLORER, formatUsdt, plainUsdt } from "@/lib/usdt";
-import { MERCHANT_PAY, checkAmount, checkDestination, quoteWithdraw, withdraw, withdrawError } from "@/lib/withdraw";
+import { MERCHANT_PAY, NOT_THROUGH, UNCONFIRMED, checkAmount, checkDestination, quoteWithdraw, sendStatus, withdraw, withdrawError } from "@/lib/withdraw";
 
 interface WithdrawProps {
   merchant: Address;
@@ -24,6 +24,7 @@ interface Review {
   to: Address;
   amount: bigint;
   fee: bigint; // WBT wei, estimated
+  noChecksum: boolean; // typed all lower case: EIP-55 can't catch a typo (033 L1)
 }
 
 const txLink = (hash: Hex) => `${EXPLORER}/tx/${hash}`;
@@ -43,15 +44,8 @@ export function Withdraw({ merchant, balance }: WithdrawProps) {
       <a href={`${EXPLORER}/address/${merchant}`} target="_blank" rel="noreferrer" className={`${textLink} data break-all`}>
         {merchant} on the explorer ↗
       </a>
-      {units === null ? (
-        <p role="status" className="text-sm text-warning">
-          Your wallet balance isn&apos;t available right now, so Withdraw is off. Reload the page in a minute.
-        </p>
-      ) : units === 0n ? (
-        <p className="text-sm text-ink-muted">Nothing to withdraw yet. Each payment lands here the moment it&apos;s paid.</p>
-      ) : (
-        <WithdrawForm merchant={merchant} balance={units} />
-      )}
+      {/* always mounted, so a sent or pending withdraw stays on screen when the refresh reads 0 or nothing (033 M1) */}
+      <WithdrawForm merchant={merchant} balance={units} />
       <p className="max-w-[640px] border-t border-hairline pt-4 text-xs text-ink-muted">
         Turning USDT into cash happens outside this app: send it to an account that can sell it, such as an exchange account&apos;s
         deposit address that accepts USDT on Whitechain. We never hold your funds, so we can&apos;t pay out cash for you.
@@ -60,7 +54,7 @@ export function Withdraw({ merchant, balance }: WithdrawProps) {
   );
 }
 
-function WithdrawForm({ merchant, balance }: { merchant: Address; balance: bigint }) {
+function WithdrawForm({ merchant, balance }: { merchant: Address; balance: bigint | null }) {
   const router = useRouter();
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
@@ -73,16 +67,14 @@ function WithdrawForm({ merchant, balance }: { merchant: Address; balance: bigin
   const [unconfirmed, setUnconfirmed] = useState<Hex | null>(null);
 
   function reset() {
-    setReview(null);
     setSent(null);
-    setUnconfirmed(null);
     setError(null);
     setAmount("");
   }
 
   async function check(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (busy) return;
+    if (busy || balance === null) return;
     const dest = checkDestination(to, merchant);
     const units = checkAmount(amount, balance);
     setToError(dest.ok ? null : dest.error);
@@ -92,7 +84,8 @@ function WithdrawForm({ merchant, balance }: { merchant: Address; balance: bigin
     setBusy(true);
     try {
       const wallet = await connectMerchant(window.ethereum, merchant, MERCHANT_PAY); // the signed-in wallet, on chain 1874
-      setReview({ wallet, to: dest.value, amount: units.value, fee: await quoteWithdraw(wallet, dest.value, units.value) });
+      const fee = await quoteWithdraw(wallet, dest.value, units.value);
+      setReview({ wallet, to: dest.value, amount: units.value, fee, noChecksum: to.trim() === to.trim().toLowerCase() });
     } catch (err) {
       setError(withdrawError(err));
     } finally {
@@ -119,6 +112,23 @@ function WithdrawForm({ merchant, balance }: { merchant: Address; balance: bigin
     } finally {
       setBusy(false);
     }
+  }
+
+  // ponytail: the pending hash lives in this page's state, so a reload forgets it; keep it in sessionStorage if that bites
+  async function checkAgain() {
+    if (busy || !review || !unconfirmed) return;
+    setBusy(true);
+    const status = await sendStatus(review.wallet, unconfirmed);
+    if (status === "sent") {
+      setSent({ hash: unconfirmed, amount: review.amount, to: review.to });
+      setReview(null);
+      setError(null);
+    } else {
+      setError(status === "failed" ? NOT_THROUGH : UNCONFIRMED);
+    }
+    if (status !== "pending") setUnconfirmed(null);
+    router.refresh();
+    setBusy(false);
   }
 
   if (sent) {
@@ -151,14 +161,26 @@ function WithdrawForm({ merchant, balance }: { merchant: Address; balance: bigin
           <dt className="text-ink-muted">Network fee</dt>
           <dd className="tabular-nums">About {formatWbt(review.fee)} WBT, paid from this wallet</dd>
         </dl>
-        <p className="text-sm text-ink-muted">A transfer can&apos;t be undone. Check the address matches the one you were given, every character.</p>
+        <p className="text-sm text-ink-muted">
+          A transfer can&apos;t be undone. Check the address matches the one you were given, every character.
+          {review.noChecksum && " It was typed in lower case, which carries no checksum, so a typo wouldn't be caught."}
+        </p>
+        {/* while a send is unconfirmed there is no Send and no Back: only Check again, so it can't go out twice (033 M2) */}
         <div className="flex flex-wrap items-center gap-2">
-          <Button onClick={send} aria-disabled={busy || unconfirmed !== null}>
-            {busy ? "Waiting for your wallet…" : "Send with my wallet"}
-          </Button>
-          <Button variant="quiet" onClick={unconfirmed ? reset : () => setReview(null)} aria-disabled={busy}>
-            {unconfirmed ? "Close" : "Back"}
-          </Button>
+          {unconfirmed ? (
+            <Button onClick={checkAgain} aria-disabled={busy}>
+              {busy ? "Checking…" : "Check again"}
+            </Button>
+          ) : (
+            <>
+              <Button onClick={send} aria-disabled={busy}>
+                {busy ? "Waiting for your wallet…" : "Send with my wallet"}
+              </Button>
+              <Button variant="quiet" onClick={() => setReview(null)} aria-disabled={busy}>
+                Back
+              </Button>
+            </>
+          )}
         </div>
         {error && (
           <p role="alert" className="text-sm text-critical">
@@ -173,6 +195,15 @@ function WithdrawForm({ merchant, balance }: { merchant: Address; balance: bigin
       </div>
     );
   }
+
+  if (balance === null) {
+    return (
+      <p role="status" className="text-sm text-warning">
+        Your wallet balance isn&apos;t available right now, so Withdraw is off. Reload the page in a minute.
+      </p>
+    );
+  }
+  if (balance === 0n) return <p className="text-sm text-ink-muted">Nothing to withdraw yet. Each payment lands here the moment it&apos;s paid.</p>;
 
   return (
     <form onSubmit={check} noValidate className="grid gap-4">
