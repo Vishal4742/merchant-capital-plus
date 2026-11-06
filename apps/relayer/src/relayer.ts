@@ -10,8 +10,9 @@ import {
   addresses, KIND_INVOICE, KIND_SALE, merchantPayAbi, MIN_PAYMENT, nonceParams, receiveWithAuthorizationTypes, usdtDomain,
 } from '../../../packages/shared/contracts.ts';
 
-// Whitechain's own op-reth RPC: ~2× faster than Ankr for one pre-check round and a single backend (human 02:44).
-const DEFAULT_RPC = 'https://rpc.testnet.whitechain.io';
+// Ankr: it answers eth_sendRawTransactionSync. Whitechain's own RPC (faster reads, chosen 02:44) refuses it with
+// -32601 "rpc method is not whitelisted", which broke the first G2 sale (06:06). Upgrade: reads on Whitechain, sends via Ankr.
+const DEFAULT_RPC = 'https://rpc.ankr.com/whitechain_testnet';
 // No retries: with viem's default 3, one slow call could hold the send lock for ~33 s. The lock is then held for at most
 // two RPC timeouts (simulate ‖ nonce, then the sync send); a client re-POSTs a 502 that carries no txHash.
 const RPC_TIMEOUT_MS = 8_000;
