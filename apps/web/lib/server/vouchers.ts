@@ -259,9 +259,9 @@ export async function amountDue(sessionId: string, now = Date.now()): Promise<bi
  *      never blocks another checkout);
  *   2. only then freezes the session's live voucher hold and returns its total, so no re-apply can switch the code
  *      while the payment relays; no live hold → the checkout's amount (nothing frozen).
- * Null for a shop's own session. Idempotent: a second claim returns the same amount and keeps the first freeze time
- * while it is inside FREEZE_MS; a claim after it freezes again from now. claimed_at always moves to the latest claim:
- * a later attempt relays a new signature, valid up to 15 min after it. Relay exactly this amount and pass it to
+ * Null for a shop's own session. Idempotent in price: a second claim returns the same amount. Every claim moves both
+ * claimed_at and the hold's frozen_at to now (batch 015 review M1): a later attempt relays a new signature, valid up to
+ * 15 min after it, so the freeze must cover the latest one, not the first. Relay exactly this amount and pass it to
  * `confirmRedemption`; on a 410 relay nothing (and don't call releaseHold: the claim was never made).
  */
 export async function claimAmountDue(sessionId: string, now = Date.now()): Promise<bigint | null> {
@@ -281,7 +281,7 @@ export async function claimAmountDue(sessionId: string, now = Date.now()): Promi
                    AND (o.paid_at IS NOT NULL OR o.claimed_at > $3))
                RETURNING c.session_id
              ), frozen AS (
-               UPDATE app_gw_redemptions r SET frozen_at = CASE WHEN r.frozen_at > $3 THEN r.frozen_at ELSE $2 END
+               UPDATE app_gw_redemptions r SET frozen_at = $2
                FROM claim WHERE r.session_id = claim.session_id AND r.confirmed_at IS NULL AND (r.frozen_at > $3 OR r.created_at > $4)
                RETURNING r.usdt_amount
              )
@@ -304,7 +304,8 @@ export async function claimAmountDue(sessionId: string, now = Date.now()): Promi
  *     connection never opened) or another relayer 4xx ("Nothing was charged");
  *   - `{ ok: false, refused: true }` (the relayer's 422) AND `findPayment` returned exactly null: anyone can call
  *     paySale, so a 422 alone isn't proof the order is unpaid (undefined = the chain read failed: don't release);
- *   - settlePending's "open" branch (the chain shows no payment and the authorization has expired).
+ *   - settlePending's "open" branch (the chain shows no payment and the authorization has expired), and only BEFORE
+ *     this attempt's own claimAmountDue: releasing after it would drop the claim this attempt is about to relay on.
  * NEVER on `{ ok: false, unknown: true }` (timeout, 5xx, dropped connection: it may have been sent), on `{ ok: true }`,
  * on the pay route's 409s (already being paid, STILL_PENDING), or on a paid checkout: the chain decides then, and the
  * claim and the frozen hold must keep counting. A paid checkout is refused here anyway (F1).

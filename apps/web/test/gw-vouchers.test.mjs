@@ -409,7 +409,7 @@ test("S1: an apply racing the claim is refused by the upsert's own guard, and th
   assert.equal((await confirmRedemption(s, claimed, t)).code, "HALF");
 });
 
-test("claimAmountDue is idempotent: a second claim returns the same amount and keeps the first freeze time", async () => {
+test("claimAmountDue: a second claim returns the same amount and moves the freeze to the latest claim (review M1)", async () => {
   const { claimAmountDue } = await import("../lib/server/vouchers.ts");
   const { query } = await import("../lib/server/db.ts");
   await newVoucher({ code: "TEN", value: "10" });
@@ -419,7 +419,25 @@ test("claimAmountDue is idempotent: a second claim returns the same amount and k
   assert.equal(await claimAmountDue(s, t + 1000), USDT(45));
   assert.equal(await claimAmountDue(s, t + 5000), USDT(45));
   const [{ frozen_at }] = await query("SELECT frozen_at::text FROM app_gw_redemptions WHERE session_id = $1", [s]);
-  assert.equal(Number(frozen_at), t + 1000);
+  assert.equal(Number(frozen_at), t + 5000, "the freeze covers the latest attempt's signature");
+});
+
+test("review M1: a re-claim near the end of FREEZE_MS keeps the in-flight payment's code (removeVoucher and switching refused)", async () => {
+  const { claimAmountDue, removeVoucher, FREEZE_MS } = await import("../lib/server/vouchers.ts");
+  await newVoucher({ code: "ONCE", value: "50", max_redemptions: 1 });
+  await newVoucher({ code: "ONE", value: "1", max_redemptions: 1000 });
+  const t = Date.now();
+  const a = await checkout(USDT(100), MERCHANT, t);
+  await applyVoucher(MERCHANT, "ONCE", a, USDT(100), t);
+  assert.equal(await claimAmountDue(a, t), USDT(50)); // attempt 1: outcome unknown, never released
+  const reclaim = t + FREEZE_MS - 1000; // attempt 2 re-claims at 19:59 and relays a fresh signature
+  assert.equal(await claimAmountDue(a, reclaim), USDT(50));
+  const during = t + FREEZE_MS + 500; // attempt 2 is still in flight
+  assert.equal(await removeVoucher(a, during), false, "the code can't be dropped mid-relay");
+  assert.deepEqual(await applyVoucher(MERCHANT, "ONE", a, USDT(100), during), { ok: false, reason: "This checkout is being paid." });
+  assert.equal((await confirmRedemption(a, USDT(50), during + 1000))?.code, "ONCE", "attempt 2 lands at the discount and is counted");
+  const b = await checkout(USDT(100), MERCHANT, during);
+  assert.equal((await applyVoucher(MERCHANT, "ONCE", b, USDT(100), during + 2000)).ok, false, "the 1-use code is spent");
 });
 
 test("claimAmountDue: a shop's own session is null; no hold or a lapsed hold is the checkout's amount, not frozen", async () => {
@@ -517,7 +535,7 @@ test("F2: a claim after FREEZE_MS (the hold still live inside HOLD_MS) freezes a
   await applyVoucher(MERCHANT, "TEN", s, USDT(50), t);
   assert.equal(await claimAmountDue(s, t), USDT(45));
   assert.equal(await claimAmountDue(s, t + FREEZE_MS - 1), USDT(45));
-  assert.equal(Number(await frozenAt(s)), t, "inside the window: the first freeze time stays");
+  assert.equal(Number(await frozenAt(s)), t + FREEZE_MS - 1, "every claim moves the freeze to its own time (review M1)");
   assert.equal(await claimAmountDue(s, t + FREEZE_MS + 1000), USDT(45));
   assert.equal(Number(await frozenAt(s)), t + FREEZE_MS + 1000);
 });
