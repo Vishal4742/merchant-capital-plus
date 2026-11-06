@@ -20,6 +20,7 @@ function world({ o = offer(), eligible = true, reply = { status: 200, json: { tx
   const read = async (req) => {
     if (req.functionName === "offers") return tuple(o);
     if (req.functionName === "canReceive") return eligible;
+    if (req.functionName === "quote") return (req.args[1] * o.price + o.face - 1n) / o.face;
     throw new Error(`unexpected ${req.functionName}`);
   };
   const fetch = async (url, init) => {
@@ -45,6 +46,12 @@ test("the relay secret never goes over plain http to another host", async () => 
   const w = world();
   await fundOffer(body, { ...w.deps, relayerUrl: "http://relayer.test" });
   assert.equal(new Headers(w.posts[0].init.headers).get("x-relay-secret"), null);
+});
+
+test("a funding below the relayer's 1 USDT minimum is refused with the reason, before any relay", async () => {
+  const w = world();
+  await assert.rejects(fundOffer({ ...body, units: "1000" }, w.deps), (e) => e.status === 400 && /1\.00 USDT/.test(e.message));
+  assert.equal(w.posts.length, 0);
 });
 
 test("refused before any relay: not a verified investor (403), offer not open (409), more units than left (400)", async () => {

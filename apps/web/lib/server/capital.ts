@@ -151,6 +151,14 @@ export async function transferCheck(t: { from: Address; to: Address; claimId: bi
   return { allowed: true, reason: null };
 }
 
+/** InvestorRegistry eligibility as ClaimToken reads it (canReceive): only verified investors can hold claim units. */
+export async function isVerifiedInvestor(account: Address, { read = defaultRead }: Deps = {}): Promise<boolean> {
+  return (await token(read, "canReceive", [account])) as boolean;
+}
+
+/** CapitalMarket.quote in USDT base units (quoteCost formats it). */
+export const quoteUnits = async (claimId: bigint, units: bigint, { read = defaultRead }: Deps = {}) => (await market(read, "quote", [claimId, units])) as bigint;
+
 /** The merchant's running advance (FR-ADV-1), or null: what is still owed, the cap and the holdback. */
 export async function merchantAdvance(merchant: Address, { read = defaultRead }: Deps = {}) {
   const claimId = (await market(read, "advanceOf", [merchant])) as bigint;
