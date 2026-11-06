@@ -19,7 +19,7 @@ const DEFAULT_RPC = 'https://rpc.ankr.com/whitechain_testnet';
 const RPC_TIMEOUT_MS = 8_000;
 // NFR-4 (payment ≤ 5 s): Ankr's eth_sendRawTransactionSync waited ~7 s for a 1 s-block chain (G2, 06:16), so send plainly
 // and poll our own receipt. Tests shrink these.
-export const TIMING = { receiptPollMs: 300, receiptTimeoutMs: 8_000 };
+export const TIMING = { receiptPollMs: 250, receiptTimeoutMs: 8_000 }; // 1 s blocks: ~4 polls per block
 const BALANCE_TTL_MS = 5_000; // /health WBT balance may be 5 s old (human 23:27, NFR-14 ≤ 300 ms p95); a send clears it
 // Refresh it every 3 s (human 01:14): stays inside the 5 s rule and keeps the RPC socket warm (Node drops idle ones at ~4 s).
 const BALANCE_REFRESH_MS = 3_000;
