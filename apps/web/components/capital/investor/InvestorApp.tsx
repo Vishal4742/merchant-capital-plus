@@ -28,7 +28,7 @@ export function InvestorApp({ view, header }: InvestorAppProps) {
   return (
     <div className="min-h-dvh pb-16">
       <div className="border-b border-hairline bg-surface">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 md:px-8">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 md:px-8">
           {/* a full load: home runs under its own headers (security review 005 F-N4) */}
           {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
           <a href="/" className="inline-flex min-h-11 items-center text-[17px] font-medium tracking-[-0.02em] whitespace-nowrap md:text-[19px]">
@@ -52,10 +52,16 @@ export function InvestorApp({ view, header }: InvestorAppProps) {
         </div>
       </div>
       {header}
-      <div className="mx-auto grid max-w-6xl gap-6 px-4 py-6 md:px-8 md:py-8">
+      {/* left-aligned with the header's text, as on the dashboard pages */}
+      <div className="grid max-w-6xl gap-6 px-4 py-6 md:px-8 md:py-8">
         {(state.phase === "disconnected" || state.phase === "wrong-network") && state.error && (
           <p role="alert" className="text-sm text-critical">
             {state.error}
+          </p>
+        )}
+        {state.phase === "wrong-network" && !state.error && (
+          <p role="status" className="text-sm text-warning">
+            Your wallet is on another network. Switch it to Whitechain Testnet to buy or to see your claims.
           </p>
         )}
         {view === "book" ? <OfferBook state={state} connect={connect} /> : <Holdings state={state} connect={connect} />}
@@ -89,7 +95,7 @@ function WalletChip({ state, connect }: { state: WalletState; connect: () => voi
       return (
         <>
           <PrivateReads className="shrink-0" />
-          <span className="data text-ink-muted">{short(state.wallet.account)}</span>
+          <span className="data text-ink-muted max-sm:hidden">{short(state.wallet.account)}</span>
         </>
       );
   }

@@ -44,7 +44,8 @@ export function OfferBook({ state, connect }: ScreenProps) {
     };
   }, [reload]);
 
-  const openIds = book.phase === "ready" ? book.offers.filter((o) => o.status === "open").map((o) => o.id).join(",") : "";
+  // holders only for offers Buy could open: chain-open and matching Arkiv
+  const openIds = book.phase === "ready" ? book.offers.filter((o) => buyBlocker(o) === null).map((o) => o.id).join(",") : "";
   useEffect(() => {
     if (!wallet) return;
     let live = true;
