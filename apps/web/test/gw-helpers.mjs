@@ -1,12 +1,15 @@
 // Shared setup for the gateway API tests (batch 007): a real Postgres in-process (PGlite) with every db/NNN_*.sql
 // applied, a signed-in merchant cookie, and a Request builder. Not a test file itself (no .test. in the name).
 import { after } from "node:test";
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { sqlStatements } from "../db/statements.mjs";
 
 export const AUTH_SECRET = "gw-test-auth-secret-0123456789abcdef";
 process.env.AUTH_SECRET = AUTH_SECRET;
+// Batch 051: dashboard mutations check the request's Origin against PUBLIC_ORIGIN (CSRF), so the tests need one.
+export const ORIGIN = (process.env.PUBLIC_ORIGIN ??= "http://localhost");
 
 const { query, setTestDb } = await import("../lib/server/db.ts");
 const { SESSION_COOKIE, signSession } = await import("../lib/auth.ts");
@@ -53,13 +56,18 @@ export async function setupDb() {
     for (const statement of sqlStatements(readFileSync(new URL(file, dir), "utf8"))) await pg.query(statement);
   }
   setTestDb({
-    query: async (text, params) => (await pg.query(text, params)).rows,
-    transaction: (statements) =>
-      pg.transaction(async (tx) => {
+    query: async (text, params) => {
+      await seedWanted();
+      return (await pg.query(text, params)).rows;
+    },
+    transaction: async (statements) => {
+      await seedWanted();
+      return pg.transaction(async (tx) => {
         const results = [];
         for (const s of statements) results.push((await tx.query(s.text, s.params ?? [])).rows);
         return results;
-      }),
+      });
+    },
   });
   return pg;
 }
@@ -67,8 +75,62 @@ export async function setupDb() {
 export async function resetDb() {
   const { rows } = await pg.query("SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'app_gw_%' OR table_name LIKE 'app_web_%' OR table_name LIKE 'wf_%'");
   if (rows.length) await pg.exec(`TRUNCATE ${rows.map((r) => r.table_name).join(", ")} CASCADE`);
+  seeded.clear(); // the workspaces signedIn() named are written again on the next database call
   resetRateLimits(); // the in-memory limiter would otherwise carry counts from one test into the next
   resetRateCache(); // and the FX cache would serve one test's mocked rates to the next
+}
+
+// Batch 051: the dashboard cookie is a WhiteFlow session (wf_session) of an Owner whose workspace is linked to the legacy
+// merchant wallet, the only way to reach the v1 gateway after the cutover. signedIn() stays synchronous: it names the
+// merchant, and that workspace (principal, business, Owner membership, session) is written on the next database call,
+// and again after each resetDb(). Files that never call signedIn() get no extra wf_* rows.
+const wanted = new Set();
+const seeded = new Set();
+const FAR_FUTURE = 9_000_000_000_000_000; // ms: seeded sessions outlive any mocked clock
+const hex = (address) => address.toLowerCase().slice(2);
+const sha256 = (text) => createHash("sha256").update(text).digest("hex");
+async function seedWanted() {
+  for (const merchant of wanted) if (!seeded.has(merchant)) await seedWorkspace(merchant);
+}
+async function seedPrincipal(tag, now) {
+  const id = `pr_seed_${tag}`;
+  await pg.query("INSERT INTO wf_principals (id, privy_did, email, created_at, last_sign_in_at) VALUES ($1, $2, $3, $4, $4) ON CONFLICT (id) DO NOTHING", [
+    id, `did:privy:seed${tag}`, `${tag.slice(0, 20)}@seed.test`, now,
+  ]);
+  return id;
+}
+async function seedSession(tag, principalId, businessId, now) {
+  const token = `seed_${tag}`;
+  await pg.query(
+    "INSERT INTO wf_sessions (id, token_hash, principal_id, active_business_id, created_at, last_auth_at, expires_at) VALUES ($1, $2, $3, $4, $5, $5, $6) ON CONFLICT (id) DO NOTHING",
+    [`ses_seed_${tag}`, sha256(token), principalId, businessId, now, FAR_FUTURE],
+  );
+  return { cookie: `wf_session=${token}`, origin: ORIGIN };
+}
+
+/** The workspace for `merchant` (linked to it unless linked: false) with an Owner signed in; returns its ids and headers. */
+export async function seedWorkspace(merchant = MERCHANT, { linked = true } = {}) {
+  const h = hex(merchant), now = Date.now();
+  if (linked) seeded.add(merchant.toLowerCase());
+  const principalId = await seedPrincipal(`owner${h}`, now);
+  const businessId = `biz_seed_${h}`;
+  await pg.query(
+    `INSERT INTO wf_businesses (id, display_name, timezone, created_by, idem_key, request_hash, owner_count, legacy_merchant, created_at)
+     VALUES ($1, $2, 'UTC', $3, 'seed', 'seed', 1, $4, $5) ON CONFLICT (id) DO NOTHING`,
+    [businessId, `Seed ${h.slice(0, 6)}`, principalId, linked ? merchant.toLowerCase() : null, now],
+  );
+  await pg.query("INSERT INTO wf_memberships (business_id, principal_id, role, created_at) VALUES ($1, $2, 'owner', $3) ON CONFLICT DO NOTHING", [businessId, principalId, now]);
+  return { businessId, principalId, headers: await seedSession(`owner${h}`, principalId, businessId, now) };
+}
+
+/** Another member of `merchant`'s workspace with `role`, signed in. `name` tells several members apart. */
+export async function seedMember(merchant = MERCHANT, role = "viewer", name = role, { linked = true } = {}) {
+  const { businessId } = await seedWorkspace(merchant, { linked });
+  const tag = `${name}${hex(merchant)}`, now = Date.now();
+  const principalId = await seedPrincipal(tag, now);
+  await pg.query("INSERT INTO wf_memberships (business_id, principal_id, role, created_at) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING", [businessId, principalId, role, now]);
+  if (role === "owner") await pg.query("UPDATE wf_businesses SET owner_count = owner_count + 1 WHERE id = $1", [businessId]);
+  return { businessId, principalId, headers: await seedSession(tag, principalId, businessId, now) };
 }
 
 /** The checkout store is the database (batch 023): end a stored checkout at `at` (default: just now). */
@@ -77,8 +139,14 @@ export const expireSession = (id, at = Date.now() - 1) => query("UPDATE app_web_
 /** Sets a checkout's pending attempt's validBefore (default 0: long past, so USDT can no longer settle it). */
 export const agePending = (id, validBefore = 0n) => query("UPDATE app_web_sessions SET pending = jsonb_set(pending, '{validBefore}', to_jsonb($2::text)) WHERE id = $1", [id, validBefore.toString()]);
 
-/** Cookie header for a merchant signed in to the dashboard. */
-export const signedIn = (merchant = MERCHANT) => ({ cookie: `${SESSION_COOKIE}=${encodeURIComponent(signSession(merchant, AUTH_SECRET))}` });
+/** Headers for the Owner of `merchant`'s linked workspace, signed in to WhiteFlow (batch 051). */
+export const signedIn = (merchant = MERCHANT) => {
+  wanted.add(merchant.toLowerCase());
+  return { cookie: `wf_session=seed_owner${hex(merchant)}`, origin: ORIGIN };
+};
+
+/** The retired pre-051 dashboard cookie (self-contained, wallet only): accepted nowhere after the cutover. */
+export const legacyCookie = (merchant = MERCHANT) => ({ cookie: `${SESSION_COOKIE}=${encodeURIComponent(signSession(merchant, AUTH_SECRET))}`, origin: ORIGIN });
 
 /** A Request for a route handler: req("POST", "/api/v1/links", { body: {...}, headers: signedIn() }). */
 export function req(method, path, { body, headers = {} } = {}) {
