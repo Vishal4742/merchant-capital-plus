@@ -1,6 +1,6 @@
 // Capital tab server (P5, batch 023): CapitalMarket + ClaimToken reads behind /api/v1/capital/* (claude-contracts' 08:53
 // API shape). Server-only. The chain is the source of truth; Arkiv only mirrors it (capital-arkiv.ts).
-import { createPublicClient, getAddress, http, isAddress, parseAbi, type Address, type Hex } from "viem";
+import { createPublicClient, encodeAbiParameters, getAddress, http, isAddress, keccak256, parseAbi, parseAbiParameters, type Address, type Hex } from "viem";
 import { whitechainSepolia } from "viem/chains";
 import { plainUsdt } from "../usdt.ts";
 import { HttpError, merchantName } from "./http.ts";
@@ -16,6 +16,7 @@ export const capitalAbi = parseAbi([
   "function quote(uint256 claimId, uint256 units) view returns (uint256)",
   "function advanceOf(address merchant) view returns (uint256)",
   "function outstanding(uint256 claimId) view returns (uint256)",
+  "function fundingNonce(uint256 claimId, address investor, uint256 units, bytes32 salt) view returns (bytes32)",
 ]);
 export const claimAbi = parseAbi([
   "function claimState(uint256 id) view returns (uint64 lockFrom, bool frozen)",
@@ -150,6 +151,12 @@ export async function transferCheck(t: { from: Address; to: Address; claimId: bi
   if (!fitsCap) return no(`This claim already has the maximum of ${maxHolders} holders.`);
   return { allowed: true, reason: null };
 }
+
+const FUNDING_NONCE_PARAMS = parseAbiParameters("uint256 chainId, address market, uint256 claimId, address investor, uint256 units, bytes32 salt");
+
+/** CapitalMarket.fundingNonce, computed locally: keccak256(abi.encode(block.chainid, market, claimId, investor, units, salt)). */
+export const fundingNonce = (claimId: bigint, investor: Address, units: bigint, salt: Hex): Hex =>
+  keccak256(encodeAbiParameters(FUNDING_NONCE_PARAMS, [BigInt(whitechainSepolia.id), CAPITAL_MARKET, claimId, investor, units, salt]));
 
 /** InvestorRegistry eligibility as ClaimToken reads it (canReceive): only verified investors can hold claim units. */
 export async function isVerifiedInvestor(account: Address, { read = defaultRead }: Deps = {}): Promise<boolean> {

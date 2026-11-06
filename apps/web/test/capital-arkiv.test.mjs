@@ -70,7 +70,7 @@ test("publish: only the offer's merchant; creates once with expiry = deadline, t
   await assert.rejects(arkiv.publishOffer(M, 9n, fresh.deps), (e) => e.status === 404);
   assert.deepEqual(await arkiv.publishOffer(M, 1n, fresh.deps), { entity_key: "0xnew" });
   assert.equal(fresh.writes[0].expiresAt, NOW + 3600);
-  const again = fakes({ rows: [rowOf(offer())] });
+  const again = fakes({ rows: [{ entityKey: "0xk1", terms: { ...arkiv.offerTerms(offer()), remainingUsdt: "5" } }] }); // a funding the mirror missed
   assert.deepEqual(await arkiv.publishOffer(M, 1n, again.deps), { entity_key: "0xk1" });
   assert.equal(again.writes[0].patch, "0xk1");
 });

@@ -91,12 +91,13 @@ function sdkValues(t: OfferTerms) {
   };
 }
 
-/** The live store: only entities our publisher key owns count (anyone can write an mcplus.offer.v1 entity). */
+/** The live store: only entities our publisher key created AND owns count. Anyone can write an mcplus.offer.v1 entity,
+ *  and an owner can hand an entity to us without our consent; the creator can't be changed (security 023 F2). */
 function sdkStore(): OfferStore {
   const { reader, writer, address } = arkivClients();
   return {
     async rows() {
-      const res = await reader.select().from(OfferEntity).where(eq("market", addr(CAPITAL_MARKET))).ownedBy(address).limit(MAX_ROWS).fetch();
+      const res = await reader.select().from(OfferEntity).where(eq("market", addr(CAPITAL_MARKET))).ownedBy(address).createdBy(address).limit(MAX_ROWS).fetch();
       return res.entities.map((e) => {
         const cells = e as unknown as Record<string, { value?: unknown } | undefined> & { $key: Hex };
         const terms = Object.fromEntries(Object.keys(COLUMN_KINDS).map((c) => [c, String(cells[c]?.value ?? "").toLowerCase()]));
@@ -116,52 +117,90 @@ function sdkStore(): OfferStore {
 const store = (deps: CapitalDeps) => deps.arkiv ?? sdkStore();
 const redacted = (err: unknown) => redactArkivError(err, process.env.ARKIV_ACCESS_KEY).slice(0, 300);
 
+const ROWS_TTL_MS = 10_000;
+let rowsCache: { at: number; rows: Promise<OfferRow[]> } | undefined;
+
+/** The live rows, single-flight and cached for 10 s, so book reads can't drain the Arkiv quota (security 023 F4). */
+function liveRows(): Promise<OfferRow[]> {
+  if (rowsCache && Date.now() - rowsCache.at < ROWS_TTL_MS) return rowsCache.rows;
+  const entry = { at: Date.now(), rows: sdkStore().rows() };
+  rowsCache = entry;
+  entry.rows.catch(() => {
+    if (rowsCache === entry) rowsCache = undefined; // a failed read is never cached
+  });
+  return entry.rows;
+}
+
 /** Our entities, or none if Arkiv can't be read: the book then shows with Buy disabled, never a blank page. */
 async function offerRows(deps: CapitalDeps): Promise<OfferRow[]> {
   try {
-    return await store(deps).rows();
+    return await (deps.arkiv ? deps.arkiv.rows() : liveRows());
   } catch (err) {
     console.error(`capital: Arkiv offers unreadable, Buy disabled: ${redacted(err)}`);
     return [];
   }
 }
 
+/** The one rule the book and publish share: a row for this claim that matches the chain, else the first one. */
+function rowFor(o: ChainOffer, rows: OfferRow[]): OfferRow | undefined {
+  const mine = rows.filter((r) => r.terms.claimId === o.claimId.toString());
+  return mine.find((r) => matches(o, r.terms)) ?? mine[0];
+}
+
+const sameTerms = (a: Partial<OfferTerms>, b: OfferTerms) => (Object.keys(COLUMN_KINDS) as (keyof OfferTerms)[]).every((k) => a[k] === b[k]);
+
 /** GET /offers: the chain's offers in the book (AT-9 filtering), each with its Arkiv entity and the Buy gate. */
 export async function offerBook(deps: CapitalDeps = {}, now = Math.floor(Date.now() / 1000)): Promise<OfferJson[]> {
   const [offers, rows] = await Promise.all([chainOffers(deps), offerRows(deps)]);
-  const byClaim = new Map(rows.map((r) => [r.terms.claimId, r]));
   return offers
     .filter((o) => offerStatus(o, now) !== null)
     .map((o) => {
-      const row = byClaim.get(o.claimId.toString());
+      const row = rowFor(o, rows);
       return offerJson(o, now, row && { entityKey: row.entityKey, matches: matches(o, row.terms) });
     });
 }
 
-/** Writes the offer's current chain state to Arkiv: patches our entity, or creates it if the offer is still open. */
+/** Writes the offer's current chain state to Arkiv: patches our entity if anything changed (F5), or creates it while
+ *  the offer is open. Clients get fixed messages; the SDK's text goes to the log, redacted (F7). */
 export async function syncOffer(o: ChainOffer, deps: CapitalDeps = {}, now = Math.floor(Date.now() / 1000)): Promise<{ entity_key: string }> {
   let s: OfferStore;
   try {
     s = store(deps);
   } catch (err) {
-    throw new HttpError(503, `Arkiv isn't set up on this server: ${redacted(err)}`);
+    console.error(`capital: Arkiv isn't set up: ${redacted(err)}`);
+    throw new HttpError(503, "Arkiv isn't set up on this server.");
   }
   const terms = offerTerms(o, now);
+  const arkivFailed = (err: unknown) => {
+    console.error(`capital: Arkiv write for claim ${terms.claimId} failed: ${redacted(err)}`);
+    return new HttpError(502, "Arkiv refused or timed out. Try again in a minute.");
+  };
+  let existing: OfferRow | undefined;
   try {
-    const existing = (await s.rows()).find((r) => r.terms.claimId === terms.claimId);
-    if (existing) {
-      await s.patch(existing.entityKey, terms);
-      return { entity_key: existing.entityKey };
-    }
+    existing = rowFor(o, await s.rows());
   } catch (err) {
-    throw new HttpError(502, `Arkiv refused or timed out: ${redacted(err)}`);
+    throw arkivFailed(err);
+  }
+  if (existing) {
+    if (!sameTerms(existing.terms, terms)) {
+      try {
+        await s.patch(existing.entityKey, terms);
+      } catch (err) {
+        throw arkivFailed(err);
+      }
+      rowsCache = undefined;
+    }
+    return { entity_key: existing.entityKey };
   }
   if (offerStatus(o, now) !== "open") throw new HttpError(409, "Only an open offer can be published: this one is cancelled, past its deadline or sold out.");
+  let entityKey: string;
   try {
-    return { entity_key: await s.create(terms, o.offerDeadline) };
+    entityKey = await s.create(terms, o.offerDeadline);
   } catch (err) {
-    throw new HttpError(502, `Arkiv refused or timed out: ${redacted(err)}`);
+    throw arkivFailed(err);
   }
+  rowsCache = undefined;
+  return { entity_key: entityKey };
 }
 
 /** POST /offers/{id}/publish: the signed-in merchant's own offer only (FR-ARK-1, FR-ARK-5). */
