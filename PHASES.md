@@ -88,9 +88,9 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 
 - [ ] `F` Payment Links with QR codes (FR-GW-1, FR-GW-3); Payment Pages (FR-GW-2)
 - [ ] `F` Discount vouchers: codes as Arkiv entities that expire, redemptions counted on our server (FR-GW-12, FR-ARK-1–5 now apply to voucher entities)
-- [ ] `F` Multi-currency prices with a locked FX quote at checkout (FR-GW-11)
+- [ ] `F` Multi-currency prices with a locked FX quote at checkout (FR-GW-11) · *batch 006 (06:20): sessions v2 with FX quotes on checkout; switch to the backend quotes module pending*
 - [ ] `F` Reports with a sales chart and CSV, and a Settlements page (FR-GW-9, FR-GW-10)
-- [ ] `F` API keys, webhooks, a `/docs` page and the test-mode badge (FR-GW-6, 7, 8, 14)
+- [ ] `F` API keys, webhooks, a `/docs` page and the test-mode badge (FR-GW-6, 7, 8, 14) · *batch 006 (06:20): test-mode strip, /docs, dashboard shell, payments API done; keys + webhooks screens pending*
 - [x] `S` *(SDK core verified 03:21, batch 005-P4-sdk-core: Gateway sessions/payments/webhooks, zero deps; pay button batch 007 verified 05:57 incl. a DOM-clobbering fix proven in Chrome; PR #8, #9)* SDK + payment-button script in `packages/sdk` (FR-GW-4, FR-GW-5)
 - [x] `C` Capital on chain: AT-6, AT-7, AT-8 live, the E1 event-ABI snapshot and the NFR-10 coverage report (batch 006); then **contracts freeze** · batch 006 verified 03:13: AT-6 investors paid 58.8393 + 39.2262, AT-7 debtor 100.10 → 60 + 40 in one tx, AT-8 canTransfer(A, non-eligible) = false; contracts FROZEN
 - [ ] `S` Rebuild `apps/shop` on the SDK or button in ≤ 20 lines (FR-PAY-11, AT-14)
