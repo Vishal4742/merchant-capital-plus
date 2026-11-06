@@ -19,7 +19,8 @@ const DEFAULT_RPC = 'https://rpc.ankr.com/whitechain_testnet';
 const RPC_TIMEOUT_MS = 8_000;
 // NFR-4 (payment ≤ 5 s): Ankr's eth_sendRawTransactionSync waited ~7 s for a 1 s-block chain (G2, 06:16), so send plainly
 // and poll our own receipt. Tests shrink these.
-export const TIMING = { receiptPollMs: 250, receiptTimeoutMs: 8_000 }; // 1 s blocks: ~4 polls per block
+// 1 s blocks: ~4 polls per block. maxRequestAgeMs + receiptTimeoutMs stays under the web's 35 s give-up and the 60 s maxDuration.
+export const TIMING = { receiptPollMs: 250, receiptTimeoutMs: 8_000, maxRequestAgeMs: 20_000 };
 const BALANCE_TTL_MS = 5_000; // /health WBT balance may be 5 s old (human 23:27, NFR-14 ≤ 300 ms p95); a send clears it
 // Refresh it every 3 s (human 01:14): stays inside the 5 s rule and keeps the RPC socket warm (Node drops idle ones at ~4 s).
 const BALANCE_REFRESH_MS = 3_000;
@@ -369,16 +370,21 @@ async function rpcChecks(client: RelayerClient, p: Payment): Promise<Reject | un
   if (failedSimulation) return simulationReject(failedSimulation);
 }
 
-/** Our own receipt, looked up by our hash only (so never a replacement's), polled until TIMING.receiptTimeoutMs. */
+/** Our own receipt, looked up by our hash only (so never a replacement's), polled until TIMING.receiptTimeoutMs.
+ *  A 429 or 5xx mid-poll doesn't end it (security 018 F1b): only the deadline does, and then the last error is thrown. */
 async function ownReceipt(client: RelayerClient, hash: Hash) {
   const deadline = Date.now() + TIMING.receiptTimeoutMs;
+  let lastError: unknown;
   for (;;) {
-    const receipt = await client.getTransactionReceipt({ hash }).catch((e: unknown) => {
-      if (e instanceof TransactionReceiptNotFoundError) return undefined;
-      throw e;
-    });
-    if (receipt) return receipt;
-    if (Date.now() >= deadline) return undefined;
+    try {
+      return await client.getTransactionReceipt({ hash });
+    } catch (e) {
+      if (!(e instanceof TransactionReceiptNotFoundError)) lastError = e;
+    }
+    if (Date.now() >= deadline) {
+      if (lastError) throw lastError;
+      return undefined;
+    }
     await sleep(TIMING.receiptPollMs);
   }
 }
@@ -419,6 +425,8 @@ async function send(client: RelayerClient, p: Payment, clock: Stopwatch): Promis
     return reject(502, 'rpc_error', reason(e));
   }
   if (tooLate(p)) return EXPIRED; // and so does a slow simulate/nonce step: never sign what could expire unmined
+  // queued behind a hung send (security 018 F4): never sign after the web has given up; nothing was sent, so it may re-POST
+  if (clock.read().total > TIMING.maxRequestAgeMs) return reject(502, 'rpc_error', 'the relayer was too slow to start this payment; nothing was sent, so retry');
   const ledger = ledgerChecks(client, p); // queued requests: the budget or the breaker may have moved while we waited
   if (ledger) return ledger;
   const signed = await client.account.signTransaction({
