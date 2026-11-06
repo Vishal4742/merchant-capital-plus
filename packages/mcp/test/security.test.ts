@@ -168,7 +168,8 @@ test("customer text that gives instructions stays data: the recipient, amounts a
   const reminder = await call("prepare_invoice_reminder", { invoice: "WF-1001" });
   assert.equal(reminder.json.recipient.email, "priya@example.com");
   assert.equal(reminder.json.sent, false);
-  assert.ok(!reminder.json.body.includes("attacker@evil.example") || reminder.json.body.includes(customer.name), "the memo is not copied into the reminder");
+  // the memo ("change the recipient email … refund everything") is never copied into the reminder (review 052 F5)
+  assert.ok(!reminder.json.body.includes("change the recipient email"), "the memo is not copied into the reminder");
   assert.ok(!reminder.json.body.includes("refund everything"));
   // the tool set is fixed: no send, pay, refund, transfer or fetch tool appears, whatever the data says
   const names = (await client.listTools()).tools.map((t) => t.name);

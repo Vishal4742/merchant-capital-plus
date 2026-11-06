@@ -148,6 +148,11 @@ test("GET /api/v1/links/{id}: the merchant's link with its paid checkouts; anoth
   assert.equal((await read(link.id, otherSk)).status, 404);
   assert.equal((await read("lnk_doesnotexist")).status, 404);
   assert.equal((await read("../../etc")).status, 404);
+  // a publishable key and a revoked secret key can't read it either (review 052 F6)
+  assert.equal((await read(link.id, pk)).status, 403);
+  const [{ id: keyId }] = await query("SELECT id FROM app_gw_keys WHERE merchant = $1 AND kind = 'sk'", [MERCHANT.toLowerCase()]);
+  await revokeKey(MERCHANT, keyId);
+  assert.equal((await read(link.id)).status, 401);
   const listed = await (await listLinksRoute(req("GET", "/api/v1/links", { headers: bearer(otherSk) }))).json();
   assert.deepEqual(listed.links, []);
 });
@@ -177,5 +182,8 @@ test("GET /api/v1/reports works with a secret key, in the asked time zone; pk 40
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.totals.gross, "0");
+  // the zone the connector asks for is the one the report uses (review 052 F6), and a bad one is a 400
+  assert.deepEqual([body.from, body.to, body.tz, body.days.length], ["2026-11-01", "2026-11-07", "Asia/Kolkata", 7]);
+  assert.equal((await reportRoute(req("GET", "/api/v1/reports?tz=Mars/Olympus", { headers: bearer(sk) }))).status, 400);
   assert.equal((await reportRoute(req("GET", "/api/v1/reports", { headers: bearer(pk) }))).status, 403);
 });

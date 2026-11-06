@@ -32,7 +32,7 @@ Delivered or kept, from main's SRS 2.3 and the WhiteFlow SRS v3.1 (on the stage 
 ## Acceptance criteria (each checkable)
 - [ ] `whiteflow.mcpb` exists. `mcpb validate` passes on its manifest, and `mcpb info` reads the archive. A
   `.sha256` file sits next to it.
-- [ ] The packaged archive, unzipped to a temp dir, starts with `node server/index.js` (no repo, no node_modules) and
+- [ ] The packaged archive, unzipped to a temp dir, starts with `node server/index.mjs` (no repo, no node_modules) and
   answers initialize. Its `tools/list` names equal `manifest.json` `tools[].name`, and `prompts/list` equals
   `manifest.prompts`. Nothing is written to stdout except JSON-RPC.
 - [ ] Twelve tools exist with zod schemas: get_business_profile, search_customers, create_customer,

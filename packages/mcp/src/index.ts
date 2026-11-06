@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // The stdio entry (started from Pixa's MIT src/index.ts). stdout carries MCP JSON-RPC only: every console method is
-// pointed at stderr before anything else loads, so no library can print onto the protocol stream.
+// pointed at stderr before the server is created (ESM runs the imports first, and none of them prints at import time),
+// so nothing printed afterwards can reach the protocol stream. test/package.test.ts checks every stdout line.
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createServer } from "./server.ts";
 

@@ -17,7 +17,7 @@ These are the routes the WhiteFlow Merchant MCP calls.
   - A route the server doesn't have answers a non-JSON 404. The client reports it as "not offered yet".
 - **Writes** need `Idempotency-Key` (1 to 255 characters).
   - The slot is (merchant, route, key) and lives 24 h.
-  - The request hash is SHA-256 of the body JSON with sorted keys.
+  - The request hash covers the **path and** the body: SHA-256 of `{path, body}` as JSON with sorted keys. The path matters because finalize's body is always `{}`. A body-only hash would let one key replay invoice A's finalize for invoice B (review 052 M2). On the web, link slots hash the body, and their route-scoped slot name stands in for the path.
   - The same key and hash replay the stored 2xx reply, with the header `Idempotent-Replayed: true`.
   - The same key with a different hash is 422.
   - A refused request (4xx) stores nothing, so a corrected retry can reuse the key.

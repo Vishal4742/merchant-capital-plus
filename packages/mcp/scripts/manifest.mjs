@@ -4,7 +4,7 @@
 // Schema facts (checked 2026-11-07, github.com/modelcontextprotocol/mcpb v2.1.2 schemas and MANIFEST.md): required
 // name/version/description/author/server; tools entries {name, description}; prompts entries {name, text, description?,
 // arguments?: string[]} with ${arguments.x}; user_config entries {type, title, description, required?, default?, sensitive?}.
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,13 +17,15 @@ import { VERSION, createServer } from "../src/server.ts";
 const root = fileURLToPath(new URL("..", import.meta.url));
 
 export async function buildManifest() {
-  const server = createServer({ env: {}, stateDir: mkdtempSync(join(tmpdir(), "wf-manifest-")), log: { info() {}, error() {} } });
+  const stateDir = mkdtempSync(join(tmpdir(), "wf-manifest-"));
+  const server = createServer({ env: {}, stateDir, log: { info() {}, error() {} } });
   const client = new Client({ name: "manifest", version: "0" });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await server.connect(b);
   await client.connect(a);
   const { tools } = await client.listTools();
   await client.close();
+  rmSync(stateDir, { recursive: true, force: true }); // its throwaway sandbox and key (review 052 F11)
   return {
     manifest_version: "0.3",
     name: "whiteflow-merchant",
