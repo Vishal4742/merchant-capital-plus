@@ -48,3 +48,4 @@ Honest notes from building Merchant Capital+ on Whitechain Sepolia (chain 1874).
 | When | Who / where | What they said | What we changed |
 |---|---|---|---|
 | 2026-11-05 16:30 | Workshop (Toma Sadova) | Build what business needs; B2B2C; Tokenize includes lending; judging is a 2–3 min booth pitch | Picked Merchant Capital+ (financing for merchants); pitch trimmed to 3 min |
+| 2026-11-06 11:00 | Whitechain team (Discord sponsor channel) | Sent us 20 test USDT when we asked for demo funds (tx [0xbd16bbc9…7103](https://explorer.testnet.whitechain.io/tx/0xbd16bbc930d1cf01ca2945556bfd086f47f97000c90b7f231a5771b17c277103)); the faucet's 2 WBT a day per wallet, IP and GitHub account wasn't enough for two full demo runs | Funded the G5 rehearsal; we still suggest a testnet USDT faucet or a larger daily WBT drip for teams (Suggestions) |
