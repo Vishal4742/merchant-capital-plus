@@ -24,6 +24,7 @@ jobs:
       web: ${{ steps.f.outputs.web }}
       relayer: ${{ steps.f.outputs.relayer }}
       sdk: ${{ steps.f.outputs.sdk }}
+      mcp: ${{ steps.f.outputs.mcp }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -43,6 +44,7 @@ jobs:
           hit "^apps/web/|^packages/|$wf" && echo web=true >> "$GITHUB_OUTPUT" || echo web=false >> "$GITHUB_OUTPUT"
           hit "^apps/relayer/|^packages/shared/|$wf" && echo relayer=true >> "$GITHUB_OUTPUT" || echo relayer=false >> "$GITHUB_OUTPUT"
           hit "^packages/sdk/|$wf" && echo sdk=true >> "$GITHUB_OUTPUT" || echo sdk=false >> "$GITHUB_OUTPUT"
+          hit "^packages/(mcp|sdk|shared)/|$wf" && echo mcp=true >> "$GITHUB_OUTPUT" || echo mcp=false >> "$GITHUB_OUTPUT"
 
   contracts:
     needs: changes
@@ -113,6 +115,24 @@ jobs:
           node-version: 26
           cache: npm
           cache-dependency-path: packages/sdk/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  mcp:
+    needs: changes
+    if: needs.changes.outputs.mcp == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/mcp
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: packages/mcp/package-lock.json
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
