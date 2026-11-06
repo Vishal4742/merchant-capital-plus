@@ -89,6 +89,7 @@ Test funds: claim WBT at faucet.testnet.whitechain.io, then swap some to the pri
 - A merchant could take sales outside our checkout; default rules, recourse and public sales stats mitigate this, they don't prevent it.
 - **Admin trust (testnet):** one deployer key (`0xb4E7…714D`) is the compliance admin and the contract owner. It can force-transfer claims between eligible investors, freeze claim units and revoke investor eligibility (ERC-7943 rules, simulated KYC), and it can pause MerchantPay. Ownership uses `Ownable2Step`; production would put these roles behind a multisig.
 - Cut for time: default and recourse handling (a claim that is never repaid stays outstanding; no freeze-and-recourse lien).
+- Gasless invoice repayment is relayed for invoices with up to 2 investors: a full repayment costs about 34k gas per holder (387k with 2, 421k with 3, measured on a fork), and the relayer refuses any transaction whose gas estimate exceeds its 400k limit rather than paying for a failing one. The contract itself allows up to 8 holders.
 - Cut for time: the automatic fee-to-WBT swap for the relayer (FR-REL-8; refilled by hand). ⟨any later cuts⟩
 
 ## Team and AI usage
