@@ -101,18 +101,18 @@ cd apps/shop && npm ci && npm run dev
 ```
 Test funds: claim WBT at faucet.testnet.whitechain.io, then swap some to the prize USDT (`0xcedfb56113143d55b2358b8cfbb0deb5ad2f55a7`) on testnet.yetitrade.fi. CI runs the same checks on every push (`.github/workflows/ci.yml`).
 
+### Operations (testnet)
+- Our demo wallets were funded once by a seed script from the team wallet (test USDT swapped from faucet WBT on YetiTrade); the app has no faucet button.
+- **Admin trust (testnet):** one deployer key (`0xb4E7…714D`) is the compliance admin and the contract owner. It can force-transfer claims between eligible investors, freeze claim units and revoke investor eligibility (ERC-7943 rules, simulated KYC), and it can pause MerchantPay. Ownership uses `Ownable2Step`; production would put these roles behind a multisig.
+- The relayer keeps its send lock, daily gas budget and per-payer limits in Postgres (a lease row with a fencing write, FR-REL-10), so they hold across server instances and redeploys. A mined revert bans that payer until the owner lifts it, and 3 reverts in an hour pause all relaying. Its WBT is refilled by hand (the automatic fee-to-WBT swap, FR-REL-8, wasn't built).
+
 ## Limitations (honest)
 - Testnet only (official USD₮ isn't on Whitechain mainnet yet). Maturity lock 60 s and grace 120 s on testnet so the demo can show them; 1 day / 7 days in production.
-- KYC is simulated: our compliance key keeps an investor allowlist (stands in for WhiteBIT KYC). EAS attestations, debtor acknowledgement, pay-on-due-date and default/recourse were cut for time.
-- Demo wallets were funded by a one-off seed script from a team wallet (test USDT swapped from faucet WBT on YetiTrade). The app has no faucet button.
+- KYC is simulated: our compliance key keeps an investor allowlist (standing in for WhiteBIT KYC). Cut for time: EAS attestations, debtor acknowledgement, pay-on-due-date, and default and recourse (a claim that is never repaid stays outstanding).
 - The customer's wallet is a guest key kept in the browser (no email recovery). We tested Privy's email login and dropped it: it always sends analytics with the wallet address to its servers, and we don't ship trackers.
-- A merchant could take sales outside our checkout; default rules, recourse and public sales stats mitigate this, they don't prevent it.
-- **Admin trust (testnet):** one deployer key (`0xb4E7…714D`) is the compliance admin and the contract owner. It can force-transfer claims between eligible investors, freeze claim units and revoke investor eligibility (ERC-7943 rules, simulated KYC), and it can pause MerchantPay. Ownership uses `Ownable2Step`; production would put these roles behind a multisig.
-- Cut for time: default and recourse handling (a claim that is never repaid stays outstanding; no freeze-and-recourse lien).
-- Relayed repayments are capped at 2 investors per invoice and 1 per advance. A full invoice repayment costs about 34k gas per holder (363.7k with 2, 397.6k with 3, measured on a fork), plus 17.1k for each holder or fee recipient that holds 0 USDT, so 3 holders can exceed the relayer's fixed 400k gas limit. The relayer estimates gas before sending and refuses anything above its limit rather than paying for a failing transaction, and the funding route refuses a second advance holder or a third invoice holder. An investor who takes a claim's last free slot must buy all the units left, so a small purchase can't lock the claim. Two first fundings of the same advance sent within a few seconds of each other can still both pass this check (the cap isn't re-checked inside the relayer's lock yet), so the demo funds one investor at a time. The contract itself allows up to 8 holders.
-- Cut for time: the automatic fee-to-WBT swap for the relayer (FR-REL-8; refilled by hand).
-- Invoice repayments have no per-merchant rate limit, only 10 per payer per hour. A merchant who also controls an invoice's investors could spend the relayer's 0.1 WBT daily gas budget in about 40 heavy repayments, paying about 4 USDT in fees to do it. No funds are at risk; relaying pauses until the next day.
-- The relayer's send lock, daily gas budget and per-payer limits live in Postgres (a lease row with a fencing write, FR-REL-10), so they hold across server instances and redeploys. A mined revert bans that payer until the owner lifts it, and 3 reverts in an hour pause all relaying.
+- A merchant could take sales outside our checkout; default rules, recourse and public sales stats would mitigate this, not prevent it.
+- Investor caps (1 per advance, 2 per invoice) and the rule that an invoice buy leaves a fundable remainder are enforced by our server before relaying, not by the contract (which allows 8 holders), so two first fundings sent in the same few seconds can both pass. Each extra holder adds about 34k gas to a repayment, and the relayer refuses anything above its gas limit rather than pay for a failure.
+- Invoice repayments are limited per payer (10 an hour), not per merchant: a merchant who also controls an invoice's investors could spend the relayer's 0.1 WBT daily gas budget in about 40 heavy repayments, paying about 4 USDT in fees. No funds are at risk; relaying pauses until the next day.
 
 ## What's next (after Mumbai)
 - Pay from another chain: one tested corridor (Ethereum Sepolia USDC into Whitechain USDT) with an exact destination amount and a refund path, before any "any chain" claim.
