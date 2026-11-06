@@ -165,6 +165,9 @@ export async function isVerifiedInvestor(account: Address, { read = defaultRead 
   return (await token(read, "canReceive", [account])) as boolean;
 }
 
+/** ClaimToken.holdersOf(claimId): who holds units of this claim now. */
+export const claimHolders = async (claimId: bigint, { read = defaultRead }: Deps = {}) => (await token(read, "holdersOf", [claimId])) as readonly Address[];
+
 /** CapitalMarket.quote in USDT base units (quoteCost formats it). */
 export const quoteUnits = async (claimId: bigint, units: bigint, { read = defaultRead }: Deps = {}) => (await market(read, "quote", [claimId, units])) as bigint;
 
