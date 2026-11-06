@@ -2,7 +2,7 @@
 
 ## Requirements (cite docs/SRS.md IDs)
 - **FR-REL-10:** the send lock, the daily gas budget (0.1 WBT/UTC day) and the per-payer (10/h) and per-merchant (200/h) limits hold across every relayer instance, through shared Postgres state, not per process. This replaces the `ponytail:` notes at relayer.ts:141 and :189.
-- The behaviour of FR-REL-1..9 and AT-10 doesn't change: the same reject codes, in the same order, and nothing is sent on a reject.
+- The behaviour of FR-REL-1..9 and AT-10 doesn't change: the same reject codes, in the same order before the lock, and nothing is sent on a reject. Inside the lock, the shared ledger read now runs **before** the simulate/nonce round (review 037 L3). The lease holds every other instance off from that read until the release, so one read is enough and a refusal there saves an RPC round. A queued request that fails both a ledger check and a simulation now gets the ledger code; nothing is sent either way.
 - Two new tables live in the gateway's Neon database (the same Neon project, aws-us-east-1):
   - `rel_sent`: one row per send attempt. The row is written **before** the broadcast, with the worst-case fee (400k gas × 6 gwei). After the receipt it's updated to the real fee and the reverted flag. The primary key `auth_key` is `payer:nonce`, so a second copy of the same authorization can never be broadcast twice by any instance.
   - `rel_lock`: one lease row per relayer address (holder id, expiry in ms).
@@ -25,7 +25,7 @@
 A session advisory lock needs one connection held across simulate → sign → send → receipt, which the Neon HTTP driver doesn't have. Holding a TCP `pg` transaction open for up to 44 s on Vercel needs a new driver plus pool tuning (the 03:09 plan review: lock_timeout, idle_in_transaction_session_timeout, connectionTimeoutMillis), and it can't be tested on PGlite. The lease row is still a shared Postgres lock: it's one atomic upsert, it gets a fencing check before every broadcast, it expires after a crash, and it can be tested in CI with two relayer instances (two module instances) sharing one PGlite.
 
 ## Acceptance criteria (each must be checkable)
-- [ ] Tests first (RED commit), in test/shared-limits.test.ts, on PGlite with two relayer module instances (`relayer.ts?b`) sharing one database:
+- [ ] Tests first (RED commit), in a new section at the end of test/relayer.test.ts (it reuses the fake node and signers there), on PGlite with two relayer module instances (`relayer.ts?b`) sharing one database:
   - the same signed payment POSTed to both instances at once → exactly one broadcast, and the other gets 422 replay;
   - two different payments on two instances → both sent with distinct relayer nonces (the lease serialises them);
   - rows written by "another instance" count here: budget → 503 budget_exhausted, 10 payer sends → 429, a reverted row → 422 payer_banned, 3 reverts → 503 breaker_open, and none of these makes an RPC call;
@@ -42,8 +42,8 @@ A session advisory lock needs one connection held across simulate → sign → s
   - one live 1.00 USDT sale relayed (NFR-4 time posted) and its `rel_sent` row checked.
 
 ## Files to touch (owner lane: only these)
-- apps/relayer/src/relayer.ts, apps/relayer/src/store.ts (new), apps/relayer/db/001_rel.sql (new), apps/relayer/dev.ts
-- apps/relayer/test/shared-limits.test.ts (new), apps/relayer/test/relayer.test.ts (PGlite setup only), apps/relayer/test/dev.test.ts (if dev start needs it)
+- apps/relayer/src/relayer.ts, apps/relayer/src/store.ts (new), apps/relayer/db/001_rel.sql + 002_relayer_role.sql + pglite.ts (new), apps/relayer/dev.ts
+- apps/relayer/test/relayer.test.ts (PGlite setup + the batch 037 section)
 - apps/relayer/package.json, apps/relayer/package-lock.json
 
 ## Ponytail ladder

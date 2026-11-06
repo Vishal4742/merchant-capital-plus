@@ -1039,6 +1039,7 @@ test('fund: a signature made for another contract (to = MerchantPay) is bad_sign
 // A second relayer module instance (`?b`: its own in-process queue and state) on the same database is a second Vercel
 // instance; ./store.ts resolves to the same module, so both share the database handle.
 const instanceB: typeof import('../src/relayer.ts') = await import(new URL('../src/relayer.ts?b', import.meta.url).href);
+Object.assign(instanceB.TIMING, { receiptPollMs: TIMING.receiptPollMs, receiptTimeoutMs: TIMING.receiptTimeoutMs }); // review 037 L7
 const postB = async (body: unknown, node: ReturnType<typeof fakeNode>) => {
   const res = await instanceB.relay(JSON.stringify(body), node.client);
   return { status: res.status, out: await res.json() };
@@ -1104,6 +1105,7 @@ test('FR-REL-10: a live lease held by another instance means 503 busy after the 
   await sql('INSERT INTO rel_lock (relayer, holder, until_ms) VALUES ($1, $2, $3)', [relayer, 'other-instance', Date.now() + 60_000]);
   const res = await withTiming({ maxRequestAgeMs: 300, leasePollMs: 20 }, async () => post((await signedSale()).body, node));
   assert.deepEqual([res.status, res.out.code], [503, 'busy'], JSON.stringify(res.out));
+  assert.match(res.out.error, /too slow to start/, 'it waited for the lease, not lost it at the fence (review 037 L6)');
   assert.equal(node.sent.length, 0);
   await sql('UPDATE rel_lock SET until_ms = $2 WHERE relayer = $1', [relayer, Date.now() - 1]); // that instance crashed
   assert.equal((await post((await signedSale()).body, node)).status, 200);
@@ -1159,4 +1161,83 @@ test('FR-REL-10: /health counts every instance; after a send the row holds the r
   const h = await (await health(node.client)).json();
   assert.equal(h.gasSpentToday, formatEther(10_000_000_000_000_000n + fee));
   assert.equal(h.budgetLeft, formatEther(90_000_000_000_000_000n - fee));
+});
+
+// A database that fails only on statements matching `pattern` (review 037 M1: a failure in the middle of a request).
+const failingOn = (pattern: RegExp): Db => ({
+  query: async (text, params) => { if (pattern.test(text)) throw new Error('connection reset'); return db.query(text, params); },
+});
+async function withDb<T>(store: Db, run: () => Promise<T>): Promise<T> {
+  setDb(store);
+  try { return await run(); } finally { setDb(db); }
+}
+
+test('FR-REL-10: the database failing at the reserve write: 503 storage_error, no broadcast, the lease released', async () => {
+  const node = fakeNode();
+  const res = await withDb(failingOn(/INSERT INTO rel_sent/), async () => post((await signedSale()).body, node));
+  assert.deepEqual([res.status, res.out.code], [503, 'storage_error'], JSON.stringify(res.out));
+  assert.equal(node.sent.length, 0, 'nothing broadcast after a failed reserve');
+  const [lease] = await sql('SELECT until_ms::text AS until FROM rel_lock WHERE relayer = $1', [lc(node.relayer.address)]);
+  assert.equal(lease.until, '0', 'released in finally');
+  assert.equal((await post((await signedSale()).body, node)).status, 200, 'the next payment goes through');
+});
+
+test('FR-REL-10: the database failing after the broadcast (settle, then release) still answers 200 with the txHash', async () => {
+  const node = fakeNode();
+  const res = await withDb(failingOn(/UPDATE rel_sent|UPDATE rel_lock SET holder = NULL/), async () => post((await signedSale()).body, node));
+  assert.equal(res.status, 200, JSON.stringify(res.out));
+  assert.equal(res.out.txHash, keccak256(node.sent[0]));
+});
+
+test('FR-REL-10: a failed lease acquire still frees the lease, best effort (its answer may have been lost after commit)', async () => {
+  const node = fakeNode();
+  const lostAnswer: Db = {
+    query: async (text, params) => {
+      const rows = await db.query(text, params);
+      if (/INSERT INTO rel_lock/.test(text)) throw new Error('response lost'); // committed, but the caller never hears
+      return rows;
+    },
+  };
+  const res = await withDb(lostAnswer, async () => post((await signedSale()).body, node));
+  assert.deepEqual([res.status, res.out.code], [503, 'storage_error']);
+  const [lease] = await sql('SELECT until_ms::text AS until FROM rel_lock WHERE relayer = $1', [lc(node.relayer.address)]);
+  assert.equal(lease.until, '0', 'no 60 s lockout');
+});
+
+test('FR-REL-10: a malformed DATABASE_URL never reaches a response or a log line (security 037 L5 canary)', async () => {
+  const canary = 'CANARY-PASSWORD-9f3a';
+  const savedUrl = process.env.DATABASE_URL;
+  const logged: string[] = [];
+  const savedError = console.error;
+  console.error = (...args: unknown[]) => { logged.push(args.map(String).join(' ')); };
+  try {
+    setDb(undefined);
+    process.env.DATABASE_URL = `postgres:// user:${canary} @ not a host`;
+    const node = fakeNode();
+    const res = await relay(JSON.stringify((await signedSale()).body), node.client);
+    const h = await health(node.client);
+    const text = `${await res.text()} ${await h.text()} ${logged.join(' ')}`;
+    assert.equal(res.status, 503);
+    assert.ok(!text.includes(canary), 'the password is in the output');
+    assert.ok(logged.length > 0, 'the storage error was logged (by name)');
+  } finally {
+    console.error = savedError;
+    setDb(db);
+    if (savedUrl === undefined) delete process.env.DATABASE_URL; else process.env.DATABASE_URL = savedUrl;
+  }
+});
+
+test('FR-REL-10: as the mcplus_relayer role (db/002_relayer_role.sql) a sale relays end to end, and other tables are refused', async () => {
+  const roleDb = await memoryDb(['001_rel.sql', '002_relayer_role.sql']);
+  await roleDb.query('CREATE TABLE app_gw_keys (id text)'); // stands in for the gateway's tables
+  await roleDb.query('SET ROLE mcplus_relayer');
+  await assert.rejects(roleDb.query('SELECT * FROM app_gw_keys'), /permission denied/);
+  await assert.rejects(roleDb.query('DELETE FROM rel_sent'), /permission denied/);
+  await withDb(roleDb, async () => {
+    const node = fakeNode();
+    const sale = await signedSale();
+    assert.equal((await post(sale.body, node)).status, 200);
+    assert.deepEqual((await post(sale.body, node)).out.code, 'replay');
+    assert.equal((await (await health(node.client)).json()).budgetLeft !== '0.1', true, 'spend read back as the role');
+  });
 });

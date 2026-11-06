@@ -4,8 +4,8 @@ import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 import type { Db, Row } from '../src/store.ts';
 
-export async function memoryDb(): Promise<Db & { pg: PGlite }> {
+export async function memoryDb(files = ['001_rel.sql']): Promise<Db> {
   const pg = new PGlite();
-  await pg.exec(readFileSync(new URL('./001_rel.sql', import.meta.url), 'utf8'));
-  return { pg, query: async (text, params = []) => (await pg.query<Row>(text, params)).rows };
+  for (const file of files) await pg.exec(readFileSync(new URL(`./${file}`, import.meta.url), 'utf8'));
+  return { query: async (text, params = []) => (await pg.query<Row>(text, params)).rows };
 }
