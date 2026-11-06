@@ -24,7 +24,7 @@ const SECTIONS = [
   {
     title: "Developers",
     items: [
-      { key: "keys", label: "API keys" },
+      { key: "keys", label: "API keys", href: "/merchant/developers" },
       { key: "webhooks", label: "Webhooks" },
       { key: "docs", label: "Docs", href: "/docs" },
     ],
