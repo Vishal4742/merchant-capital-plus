@@ -79,3 +79,6 @@ on b999807: conclusion success; pre-push on that push: typecheck, lint, tests, a
   into this worktree was refused (correctly) by the permission system. Run it against the PR's preview, or locally from
   a checkout that has its env: `BASE=<url> SLUG=<link slug> node probes/wallet-walk.mjs out.json`. probes/ is
   git-ignored, so a copy sits at ~/ethglobal/.batches/032-P5-pay-with-wallet/round-1/probes/wallet-walk.mjs.
+
+## UX review fixes (claude-frontend on PR #34: M1, M2, L3-L6), after merging origin/main (5663a14)
+eccfa61: typecheck exit 0; lint exit 0; `npm test` 647 tests, 645 pass, 0 fail, 2 skipped (new test/wallet-pay-sheet.test.mjs, 4 tests); `npm run build` exit 0, 0 "gateway api error" lines. L6: the git-ignored probe now hides `[role="note"]` (the test-mode badge) in the FR-PAY-7 scan.
