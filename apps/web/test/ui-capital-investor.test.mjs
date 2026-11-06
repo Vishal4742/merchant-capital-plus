@@ -193,3 +193,10 @@ test("claimsToShow keeps held claims and the ones this browser funded (a repaid 
 test("aprPercent shows the AT-6 invoice at 12.0% a year over 60 days", () => {
   assert.deepEqual(inv.aprPercent(98_065_556n, 100_000_000n, NOW + 60 * 86400, NOW), { pct: "12.0", days: 60 });
 });
+
+test("arkivNote: a closed offer's expired entity reads as expired; an open offer without one keeps the warning (smoke walk)", () => {
+  const none = { entity_key: null, matches: false, terms: null };
+  assert.equal(inv.arkivNote(book({ status: "closed", arkiv: none })), "Closed · Arkiv entry expired");
+  assert.equal(inv.arkivNote(book({ status: "open", arkiv: none })), "Not on Arkiv");
+  assert.equal(inv.arkivNote(book()), null, "an offer with an entity shows its key instead");
+});

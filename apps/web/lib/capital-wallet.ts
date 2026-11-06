@@ -112,6 +112,11 @@ export function fundHint(kind: Kind, slot: Slot, isNew: boolean, unitsLeft: bigi
   return `${rule}Up to ${formatUsdt(unitsLeft)} USDT. The smallest buy is ${usdt2(minLeft, "up")} USDT, which costs 1.00 USDT.`;
 }
 
+/** What the row says in place of an Arkiv entity key, or null when it has one. A closed offer's entity expired at its
+ *  deadline, as Arkiv intends, so it doesn't read as Arkiv being down; an open offer without one keeps the warning. */
+export const arkivNote = (o: BookOffer): string | null =>
+  o.arkiv.entity_key ? null : o.status === "closed" ? "Closed · Arkiv entry expired" : "Not on Arkiv";
+
 /** Why this amount can't be bought, or null. `cost` and `balance` are null until read. `minLeft` = minUnits(price, face):
  *  a part buy must leave at least that, or the next investor, who must buy everything left, is refused (the server's rule). */
 export function amountBlocker(units: bigint, unitsLeft: bigint, cost: bigint | null, balance: bigint | null, minLeft: bigint): string | null {
