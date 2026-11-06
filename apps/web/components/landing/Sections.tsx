@@ -257,7 +257,7 @@ export function Capital() {
           <div className="lp-bar" aria-hidden="true">
             <i />
           </div>
-          <div className="mono num muted">640.00 of 1,000.00 funded · 3 investors</div>
+          <div className="mono num muted">640.00 of 1,000.00 funded · 2 investors</div>
         </div>
       </div>
     </section>
