@@ -1,11 +1,12 @@
 // Browser-only: the merchant acts with its own wallet (window.ethereum) on chain 1874 and pays its own gas, to create
 // and cancel invoices (FR-PAY-1, FR-PAY-2) and refund payments (FR-PAY-8). Every call is simulated first, so MerchantPay's
 // errors come back as plain merchant copy before the wallet asks for anything.
-// ponytail: the simulation, allowance and receipt reads go through the merchant's own wallet provider (the one sending
-// the transaction), not Anon-RPC; route them with the rest of FR-PRIV-1 in Phase 4.
+// The dry runs, allowance, balance and receipt reads go through Anon-RPC once it has booted (FR-PRIV-1), else at once
+// through the wallet's own RPC, and the privacy meter counts each (FR-PRIV-3). Sending always goes through the wallet.
 import {
   BaseError,
   ContractFunctionRevertedError,
+  TimeoutError,
   UserRejectedRequestError,
   createPublicClient,
   createWalletClient,
@@ -18,6 +19,8 @@ import {
   type EIP1193Provider,
 } from "viem";
 import { whitechainSepolia } from "viem/chains";
+import { getChainClient } from "./anon.ts";
+import { countRead, readMeter, setPrivateStatus } from "./read-meter.ts";
 import { USDT } from "./usdt.ts";
 
 // ponytail: copied from MerchantPay.sol; import packages/shared/contracts.ts once apps/web can (turbopack.root)
@@ -51,8 +54,66 @@ const COPY: Record<string, string> = {
 };
 const UNKNOWN_CHAIN = 4902; // EIP-3085: the wallet doesn't know chain 1874 yet
 const RECEIPT_POLL_MS = 1_000; // about a block
+// a booted Nym read takes about 2 s; one that hangs past this goes to the wallet instead, so a refund never waits on Nym
+const PRIVATE_READ_MS = 10_000;
 
 const short = (a: Address) => `${a.slice(0, 6)}…${a.slice(-4)}`;
+
+let privateReads: Awaited<ReturnType<typeof getChainClient>> | undefined; // the Anon-RPC client, once booted
+
+/** Boots Anon-RPC in the background. Merchant pages call it after first paint (NFR-13); no read ever waits for it, and
+ *  if it fails every read stays on the wallet's RPC, counted plain. */
+export function startPrivateReads(): void {
+  const { status } = readMeter();
+  if (status === "connecting" || status === "ready") return;
+  setPrivateStatus("connecting");
+  getChainClient().then(
+    (client) => {
+      privateReads = client;
+      setPrivateStatus("ready");
+    },
+    () => setPrivateStatus("failed"),
+  );
+}
+
+function withDeadline<T>(read: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new TimeoutError({ body: {}, url: "Anon-RPC" })), PRIVATE_READ_MS);
+  });
+  return Promise.race([read, late]).finally(() => clearTimeout(timer));
+}
+
+const isRevert = (error: unknown): boolean =>
+  (error as { code?: unknown }).code === 3 || /revert/i.test(error instanceof Error ? error.message : String((error as { message?: unknown }).message ?? ""));
+
+/** A read: through Anon-RPC when it has booted, else through the wallet's own RPC at once. A Nym transport failure or
+ *  hang (not a revert, which is an answer) drops to the wallet's RPC for this read and the rest of the page. */
+function readVia(provider: EIP1193Provider) {
+  return custom({
+    async request(args) {
+      const anon = privateReads;
+      if (anon) {
+        try {
+          const result = await withDeadline(anon.request(args as never, { retryCount: 0 }));
+          countRead("private");
+          return result;
+        } catch (error) {
+          // only a revert is an answer; anything else from Nym (a transport failure, a hang, a rate limit or other RPC
+          // error) falls back to the wallet's RPC for this read and the rest of the page (security review 018 F3)
+          if (isRevert(error)) {
+            countRead("private");
+            throw error;
+          }
+          if (privateReads === anon) privateReads = undefined;
+          setPrivateStatus("failed");
+        }
+      }
+      countRead("plain");
+      return provider.request(args as never);
+    },
+  }, { retryCount: 0 }); // a revert is final: don't retry it (viem retries provider errors by default)
+}
 
 /** The merchant's wallet on chain 1874, checked to be the signed-in merchant. */
 export async function connectMerchant(provider: EIP1193Provider | undefined, merchant: Address, merchantPay: Address) {
@@ -66,8 +127,7 @@ export async function connectMerchant(provider: EIP1193Provider | undefined, mer
       await wallet.addChain({ chain: whitechainSepolia }); // adding switches to it
     });
   }
-  // a revert is final: don't retry it (viem retries provider errors by default)
-  const reader = createPublicClient({ chain: whitechainSepolia, transport: custom(provider, { retryCount: 0 }), pollingInterval: RECEIPT_POLL_MS });
+  const reader = createPublicClient({ chain: whitechainSepolia, transport: readVia(provider), pollingInterval: RECEIPT_POLL_MS });
   return { wallet, reader, account, merchantPay };
 }
 

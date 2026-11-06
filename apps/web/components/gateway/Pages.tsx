@@ -10,7 +10,7 @@ import { SectionLabel, card, field, nightGrain, textLink } from "@/components/ga
 import { PageSheet, rangeText } from "@/components/gateway/Hosted";
 import { LinkPill, QrActions } from "@/components/gateway/Share";
 import { PRICE_CURRENCIES, errorText, gatewayClient, type Currency, type Page } from "@/lib/gateway-client";
-import { amountText, pageBody, pageTotal, type PageForm } from "@/lib/gateway-forms";
+import { amountText, pageBody, type PageForm } from "@/lib/gateway-forms";
 
 const MAX_ITEMS = 20;
 const START: PageForm = {
@@ -46,15 +46,6 @@ export function PagesScreen({ pages, origin, merchantName }: { pages: Page[]; or
       </section>
     </div>
   );
-}
-
-/** The total of the preview's items, one of each; "—" while a price isn't a number yet. */
-function previewTotal(items: PageForm["items"]): string {
-  try {
-    return pageTotal(items.filter((item) => item.price.trim()).map((item) => ({ price: item.price.trim(), qty: 1 })));
-  } catch {
-    return "—";
-  }
 }
 
 function NewPage({ origin, merchantName }: { origin: string; merchantName: string }) {
@@ -97,7 +88,7 @@ function NewPage({ origin, merchantName }: { origin: string; merchantName: strin
     currency: form.currency as Currency,
     open_amount: form.mode === "open" ? { min: form.min.trim() || null, max: form.max.trim() || null } : null,
   };
-  const rows = form.mode === "items" ? form.items.map((item) => ({ name: item.name.trim(), priceText: item.price.trim() ? amountText(item.price.trim()) : "0.00", qty: 1 })) : null;
+  const rows = form.mode === "items" ? form.items.map((item) => ({ name: item.name.trim(), price: item.price.trim() || "0", priceText: item.price.trim() ? amountText(item.price.trim()) : "0.00", qty: 1 })) : null;
 
   return (
     <section aria-labelledby="new-page" className={`${card} gap-6`}>
@@ -195,7 +186,7 @@ function NewPage({ origin, merchantName }: { origin: string; merchantName: strin
         <figure className="grid gap-2">
           <figcaption className="eyebrow text-ink-muted">Live preview</figcaption>
           <div className={`grid place-items-center rounded-[20px] px-3 py-8 sm:px-6 ${nightGrain}`}>
-            <PageSheet page={preview} rows={rows} totalText={previewTotal(form.items)} amount={null} error={null} preview />
+            <PageSheet page={preview} rows={rows} amount={null} error={null} preview />
           </div>
         </figure>
       </div>

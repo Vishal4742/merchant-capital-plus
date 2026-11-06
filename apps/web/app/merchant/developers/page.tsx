@@ -28,7 +28,7 @@ export default function DevelopersPage() {
   return (
     <Suspense
       fallback={
-        <Shell active="keys">
+        <Shell active="keys" privateReads={false}>
           {header}
           <p className="px-4 py-6 text-ink-muted md:px-8">Loading your keys and webhooks…</p>
         </Shell>
@@ -71,7 +71,7 @@ async function Developers() {
   if (!merchant) return <SignedOut available={Boolean(authSecret())} />;
   const { keys, webhooks } = await read(merchant);
   return (
-    <Shell active="keys" account={<Account merchant={merchant} />}>
+    <Shell active="keys" privateReads={false} account={<Account merchant={merchant} />}>
       {header}
       <div className="grid gap-10 px-4 py-6 md:px-8 md:py-8">
         {"error" in keys ? <Problem>{keys.error}</Problem> : <ApiKeys keys={keys.rows} />}

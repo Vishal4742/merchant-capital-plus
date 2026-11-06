@@ -2,13 +2,15 @@
 // fields or an open amount. Server component: our server reads the page from the gateway's own module (no browser chain
 // reads, FR-PRIV-1), and the total for the chosen quantities is worked out here ("Update total" reloads it, no JS).
 // The form posts to /p/{slug}/checkout, which answers 303 to the checkout. Still scene only (NFR-12).
+import { payConfig } from "@/lib/config";
+import { warmRelayer } from "@/lib/relay";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { HostedNotice, PageSheet } from "@/components/gateway/Hosted";
 import { StaticScene } from "@/components/StaticScene";
 import { SLUG, type PublicPage } from "@/lib/gateway-client";
-import { amountText, checkoutMessage, pageQuantities, pageTotal } from "@/lib/gateway-forms";
+import { amountText, checkoutMessage, pageQuantities } from "@/lib/gateway-forms";
 import { logFailure, publicPage } from "@/lib/gateway-server";
 
 export default function HostedPage({ params, searchParams }: PageProps<"/p/[slug]">) {
@@ -38,13 +40,13 @@ async function PageLoader({ params, searchParams }: PageProps<"/p/[slug]">) {
     );
   }
   if (!page) notFound();
+  warmRelayer(payConfig()?.relayerUrl); // a real page: its customer may pay in a moment (claude-relayer 09:42, throttled)
   const query = new URLSearchParams(Object.entries(raw).flatMap(([key, value]) => (typeof value === "string" ? [[key, value]] : [])));
   const chosen = page.items && pageQuantities(query, page.items);
   return (
     <PageSheet
       page={page}
-      rows={chosen && chosen.map((item) => ({ name: item.name, priceText: amountText(item.price), qty: item.qty }))}
-      totalText={chosen ? pageTotal(chosen) : ""}
+      rows={chosen && chosen.map((item) => ({ name: item.name, price: item.price, priceText: amountText(item.price), qty: item.qty }))}
       amount={query.get("amount")}
       error={checkoutMessage(query.get("error"))}
     />

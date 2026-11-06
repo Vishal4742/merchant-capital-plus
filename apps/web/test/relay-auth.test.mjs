@@ -65,3 +65,28 @@ test("relay: Vercel's burst mitigation (403 + x-vercel-mitigated) reads as busy,
   assert.equal((await relaySale(sale)).status, 400);
   answer = () => Response.json({ error: "unauthorized", code: "unauthorized" }, { status: 401 });
 });
+
+// claude-relayer 09:42: when a checkout opens, our server warms the relayer with a fire-and-forget GET /health, at most
+// once per 30 s per server instance (security review 020 F1: page loads must never become relayer traffic).
+test("warmRelayer: one GET /health per 30 s, after the response, never awaited, never throws, https or loopback only", async () => {
+  const { warmRelayer } = await import("../lib/relay.ts");
+  const scheduled = [];
+  const urls = [];
+  const saved = globalThis.fetch;
+  globalThis.fetch = async (url) => (urls.push(String(url)), Promise.reject(new TypeError("offline")));
+  const schedule = (task) => void scheduled.push(task);
+  try {
+    const t0 = 1_000_000_000;
+    for (let i = 0; i < 100; i++) warmRelayer("https://relayer.example", schedule, t0 + i * 100);
+    assert.equal(scheduled.length, 1, "100 page loads in 10 s: one ping");
+    assert.equal(urls.length, 0, "nothing runs in the page's own path");
+    await scheduled[0](); // a failing ping is swallowed
+    assert.deepEqual(urls, ["https://relayer.example/health"]);
+    warmRelayer("https://relayer.example", schedule, t0 + 30_001);
+    assert.equal(scheduled.length, 2, "after 30 s, one more");
+    for (const bad of ["http://relayer.example:8787", undefined, "not a url", "mailto:x"]) warmRelayer(bad, schedule, t0 + 120_000);
+    assert.equal(scheduled.length, 2, "plain http to another host, unset, junk or a URL that takes no path: no ping");
+  } finally {
+    globalThis.fetch = saved;
+  }
+});

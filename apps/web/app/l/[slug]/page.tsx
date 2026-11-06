@@ -1,6 +1,8 @@
 // Hosted payment link page (FR-GW-1, FR-PAY-7). Server component: our server reads the link from the gateway's own
 // module, so the browser makes no chain reads (FR-PRIV-1). The form posts to /l/{slug}/checkout (no JS needed), which answers
 // 303 to the checkout. Still scene only: no three.js and no Nym here (NFR-12).
+import { payConfig } from "@/lib/config";
+import { warmRelayer } from "@/lib/relay";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { Suspense } from "react";
@@ -42,12 +44,13 @@ async function LinkLoader({ params, searchParams }: PageProps<"/l/[slug]">) {
   if (!link) notFound();
   if (link.status !== "active") {
     const copy = closedLinkCopy(link.status, link.merchant_name);
-    // ponytail: the public link has no paid time or receipt id yet (asked of claude-contracts), so no receipt link here
+    // a paid link shows when it was paid (paid_at); no receipt link, which would let anyone with the link open it
     return (
       <HostedNotice eyebrow={link.merchant_name} title={copy.title} detail={<LinkSummary link={link} />} action={{ href: "/", label: "About Merchant Capital+" }}>
         {copy.body}
       </HostedNotice>
     );
   }
+  warmRelayer(payConfig()?.relayerUrl); // an open link: its customer may pay in a moment (claude-relayer 09:42, throttled)
   return <LinkSheet link={link} amount={one(query.amount)} error={checkoutMessage(one(query.error))} />;
 }

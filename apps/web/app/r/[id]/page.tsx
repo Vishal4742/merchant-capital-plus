@@ -2,6 +2,7 @@
 // no browser chain reads (FR-PRIV-1). /r/<checkout id> comes from our payment record, its refund line streaming on its
 // own. /r/<payment id> (an invoice payment, or any payment) reads payments(id) and its Paid log on chain, so it
 // survives a server restart.
+import { announcePaid } from "@/lib/announce-paid";
 import { notFound } from "next/navigation";
 import { Suspense, type ReactNode } from "react";
 import { StaticScene } from "@/components/StaticScene";
@@ -50,6 +51,7 @@ async function Receipt({ params }: Pick<PageProps<"/r/[id]">, "params">) {
   const session = getSession(id);
   if (!session?.payment) notFound();
   const payment = session.payment;
+  announcePaid(session, payment.amount ?? session.amount); // idempotent: recovers a lost announcement (G4 code M2)
   return (
     <ReceiptCard
       label={`Receipt${session.reference ? ` · order ${session.reference}` : ""}`}

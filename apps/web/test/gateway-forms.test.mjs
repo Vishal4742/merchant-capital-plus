@@ -3,7 +3,7 @@
 // Run from apps/web: npm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CHECKOUT_ERRORS, checkoutErrorCode, linkBody, pageBody, pageCheckoutBody, pageQuantities, pageTotal } from "../lib/gateway-forms.ts";
+import { CHECKOUT_ERRORS, checkoutErrorCode, linkBody, liveTotal, pageBody, pageCheckoutBody, pageQuantities, pageTotal } from "../lib/gateway-forms.ts";
 
 const NOW = Date.UTC(2026, 10, 6, 6, 0);
 const link = (over = {}) => ({ amount: "25.00", open: false, currency: "USD", description: "Cold brew", expires: "", reusable: false, ...over });
@@ -120,3 +120,15 @@ test("a checkout that fails sends the customer back with a fixed message, never 
   for (const status of [0, 500, 502, 503]) assert.equal(checkoutErrorCode(status, "amount"), "down");
   for (const message of Object.values(CHECKOUT_ERRORS)) assert.doesNotMatch(message, /\b(sign|signature|gas|chain|blockchain|wallet|wbt|nonce|usdt)\b/i);
 });
+
+// G4 UX review M1: the payment page's total updates as quantities change, and 0 keeps "Continue to pay" disabled.
+test("liveTotal: price × quantity per row; blank, fractional, negative and over-100 quantities count as 0", () => {
+  const prices = ["10.00", "5.50"];
+  assert.equal(liveTotal(prices, ["0", "0"]), 0n, "nothing chosen: the button stays disabled");
+  assert.equal(liveTotal(prices, ["1", "2"]), 21_000_000n);
+  assert.equal(liveTotal(prices, ["", "1.5"]), 0n);
+  assert.equal(liveTotal(prices, ["-1", "101"]), 0n);
+  assert.equal(liveTotal(prices, ["100", "0"]), 1_000_000_000n, "100 of one item is the form's limit");
+  assert.equal(liveTotal(["oops", "2.00"], ["3", "1"]), 2_000_000n, "an unreadable price adds nothing");
+});
+
