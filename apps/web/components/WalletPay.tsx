@@ -18,11 +18,13 @@ let signer: Promise<Signer> | undefined;
 export const loadSigner = (): Promise<Signer> => (signer ??= import("@/lib/sign-sale"));
 
 type Funds = "enough" | "short" | "unknown";
+// a hung chain read must not hold the wallet prompt back: past this it's unknown, and the pay route checks (security 032 L3)
+const FUNDS_WAIT_MS = 5_000;
 
 /** Our server's answer to "does `payer` hold enough USDT for this?"; unknown when it can't say (the pay route checks too). */
 async function checkFunds(fundsUrl: string, payer: Address): Promise<Funds> {
   try {
-    const res = await fetch(`${fundsUrl}?payer=${payer}`, { cache: "no-store" });
+    const res = await fetch(`${fundsUrl}?payer=${payer}`, { cache: "no-store", signal: AbortSignal.timeout(FUNDS_WAIT_MS) });
     const data = (await res.json().catch(() => ({}))) as { enough?: unknown };
     if (!res.ok || typeof data.enough !== "boolean") return "unknown";
     return data.enough ? "enough" : "short";
