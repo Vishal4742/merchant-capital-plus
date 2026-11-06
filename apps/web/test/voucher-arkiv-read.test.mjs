@@ -13,9 +13,9 @@ const WRITER = "0x3333333333333333333333333333333333333333";
 const ENTITY_KEY = `0x${"ab".repeat(32)}`;
 const CANT_CHECK = "We couldn't check this code right now. You can pay without it.";
 
-// arkiv.entities answers the read; arkiv.fail makes fetch throw; arkiv.hang makes it never settle; arkiv.reads records
-// each query's filters.
-const arkiv = { entities: [], fail: null, hang: false, reads: [] };
+// arkiv.entities answers the read; arkiv.fail makes fetch throw; arkiv.hang makes it never settle; arkiv.during runs
+// inside the read (someone acting meanwhile); arkiv.reads records each query's filters.
+const arkiv = { entities: [], fail: null, hang: false, during: null, reads: [] };
 const queryChain = () => {
   const q = {};
   const chain = {
@@ -24,11 +24,12 @@ const queryChain = () => {
     ownedBy: (a) => ((q.owner = a), chain),
     createdBy: (a) => ((q.creator = a), chain),
     limit: (n) => ((q.limit = n), chain),
-    fetch: () => {
+    fetch: async () => {
       arkiv.reads.push(q);
       if (arkiv.hang) return new Promise(() => {});
-      if (arkiv.fail) return Promise.reject(arkiv.fail);
-      return Promise.resolve({ entities: arkiv.entities });
+      if (arkiv.during) await arkiv.during();
+      if (arkiv.fail) throw arkiv.fail;
+      return { entities: arkiv.entities };
     },
   };
   return chain;
@@ -69,7 +70,7 @@ const holds = async (sessionId) => (await query("SELECT 1 FROM app_gw_redemption
 before(setupDb);
 beforeEach(async () => {
   await resetDb();
-  Object.assign(arkiv, { entities: [], fail: null, hang: false, reads: [] });
+  Object.assign(arkiv, { entities: [], fail: null, hang: false, during: null, reads: [] });
   process.env.VOUCHER_HASH_SECRET = HASH_SECRET;
   process.env.ARKIV_ACCESS_KEY = ACCESS_KEY;
   process.env.ARKIV_PRIVATE_KEY = "not-a-key-arkivClients-is-mocked";
@@ -156,6 +157,15 @@ test("a voucher never published to Arkiv (no entity key) applies as before, with
   const id = await checkout();
   assert.deepEqual(await applyVoucher(MERCHANT, "LOCAL", id, USDT(25), t), { ok: true, discount: USDT(2.5), usdtAmount: USDT(22.5) });
   assert.equal(arkiv.reads.length, 0);
+});
+
+test("security 034 F2: a code deactivated while Arkiv is read is not held", async () => {
+  await voucher("LATE");
+  arkiv.entities = live();
+  arkiv.during = () => query("UPDATE app_gw_vouchers SET active = FALSE WHERE code = 'LATE'"); // the merchant, mid-read
+  const id = await checkout();
+  assert.deepEqual(await applyVoucher(MERCHANT, "LATE", id, USDT(25), t), { ok: false, reason: "That code has been used up." });
+  assert.equal(await holds(id), 0);
 });
 
 test("a code Postgres already refuses is not read from Arkiv", async () => {

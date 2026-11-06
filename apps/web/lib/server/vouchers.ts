@@ -328,7 +328,7 @@ export async function applyVoucher(merchant: string, code: string, sessionId: st
     {
       text: `INSERT INTO app_gw_redemptions (session_id, voucher_id, discount, usdt_amount, created_at)
              SELECT $1, v.id, $3, $4, $5 FROM app_gw_vouchers v
-             WHERE v.id = $2 AND v.times_redeemed + (
+             WHERE v.id = $2 AND v.active AND v.expires_at > $8 AND v.times_redeemed + (
                SELECT count(*) FROM app_gw_redemptions r
                WHERE r.voucher_id = v.id AND r.confirmed_at IS NULL AND r.session_id <> $1 AND (r.created_at > $6 OR r.frozen_at > $7
                  OR (r.frozen_at IS NOT NULL AND EXISTS (SELECT 1 FROM app_gw_checkouts p WHERE p.session_id = r.session_id AND p.paid_at IS NOT NULL)))
@@ -342,8 +342,9 @@ export async function applyVoucher(merchant: string, code: string, sessionId: st
       // NOT EXISTS (… paid_at …) in both places (batch 012 review N2): the read above can be stale if the payment was
       // recorded in between, so the statement itself refuses a paid checkout.
       // the hold starts when the checkout did ($5), so re-applying can't keep a code locked (R2-M2); a re-apply after
-      // the freeze lapsed starts an unfrozen hold (its claimed payment can no longer land)
-      params: [sessionId, voucher.id, discount.toString(), total.toString(), checkout.createdAt, now - HOLD_MS, now - FREEZE_MS],
+      // the freeze lapsed starts an unfrozen hold (its claimed payment can no longer land). active + expiry again here
+      // (security 034 F2): the Arkiv read gives a deactivation up to 2 s to land after refusal() read the row.
+      params: [sessionId, voucher.id, discount.toString(), total.toString(), checkout.createdAt, now - HOLD_MS, now - FREEZE_MS, now],
     },
   ]);
   if (reserved.length !== 1) return { ok: false, reason: "That code has been used up." }; // (a paid checkout returned above)
