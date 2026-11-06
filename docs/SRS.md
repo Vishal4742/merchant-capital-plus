@@ -145,6 +145,7 @@ Priority: **M** = must (never cut), **S** = should, **C** = could (first to cut)
 | FR-INV-5 | From the maturity lock until settlement, claim transfers are blocked | S | 4 |
 | FR-INV-6 | After the due date + grace with money owed, the claim freezes and a recourse share of the merchant's future sales repays holders | C | 5 |
 | FR-INV-7 | A merchant can repay a claim directly | C | 5 |
+| FR-INV-8 | **Debtor acknowledgement:** the invoice payer can acknowledge an open invoice with a signed EIP-712 message (no transaction, no funds); the server rebuilds the terms from chain and verifies the signer; investors and the merchant see "Debtor acknowledged" with a short address and time. The debtor's address and signature never go to Arkiv (FR-ARK-4) | S | 5 |
 
 ### 3.5 Claim token rules (Whitechain Tokenize)
 | ID | Requirement | Pri | Phase |
