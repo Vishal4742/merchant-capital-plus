@@ -1,7 +1,7 @@
 // Batch 047 (FR-INV-8, FR-ARK-4): the debtor acknowledges an invoice with an EIP-712 message (no transaction, no money),
 // POST /api/v1/invoices/:id/acknowledge checks it against the invoice our server reads on chain and keeps each key's
-// first ack, and the offer book shows it honestly: "Debtor acknowledged ✓" only when the invoice names that customer
-// wallet on chain (security review 047 H1), otherwise a pay-link holder's ack with the identity not checked.
+// first ack (at most 5 unchecked ones), and the offer book shows it honestly: "Named customer wallet acknowledged ✓"
+// only when the invoice names that wallet on chain (security review 047 H1), otherwise an unchecked wallet's ack.
 // A real Postgres in-process (PGlite); the chain read is faked. Run from apps/web: npm test
 import { test, before, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
@@ -33,7 +33,7 @@ mock.module("../lib/onchain.ts", {
 
 const { POST: acknowledge } = await import("../app/api/v1/invoices/[id]/acknowledge/route.ts");
 const { ackDomain, ackTypedData, ackTypes } = await import("../lib/invoice-ack.ts");
-const { acksFor, ackView } = await import("../lib/server/invoice-acks.ts");
+const { MAX_UNBOUND_ACKS, acksFor, ackView } = await import("../lib/server/invoice-acks.ts");
 const { offerBook, offerTerms } = await import("../lib/server/capital-arkiv.ts");
 const { query } = await import("../lib/server/db.ts");
 const shared = await import("../../../packages/shared/contracts.ts");
@@ -190,6 +190,23 @@ test("a part-paid invoice can still be acknowledged: the debtor signs the whole 
   assert.equal((await call(await signed())).status, 200);
 });
 
+test("cap: an invoice keeps at most 5 unchecked acks; a 6th key gets 409, a key already in still gets its own", async () => {
+  const keys = Array.from({ length: MAX_UNBOUND_ACKS }, () => privateKeyToAccount(generatePrivateKey()));
+  for (const key of keys) assert.equal((await call(await signed({ signer: key }))).status, 200);
+  const sixth = await call(await signed({ signer: debtor }));
+  assert.equal(sixth.status, 409);
+  assert.match((await sixth.json()).error, /already has 5 acknowledgements, the most we keep/);
+  assert.equal((await call(await signed({ signer: keys[0] }))).status, 200, "a no-op for a key already in");
+  assert.equal((await rows()).length, MAX_UNBOUND_ACKS);
+});
+
+test("acksFor reads a bounded number of rows (LIMIT: the cap per invoice, plus one for a race)", async () => {
+  for (let i = 0; i < 9; i++) {
+    await query("INSERT INTO app_gw_invoice_acks VALUES ($1, '7', $2, $3, 25000000, 1900000000, false, '0x', $4)", [MERCHANT_PAY.toLowerCase(), `0x${String(i).repeat(40)}`, shop.address, i]);
+  }
+  assert.equal((await acksFor(MERCHANT_PAY, [7n])).get("7").length, MAX_UNBOUND_ACKS + 1);
+});
+
 test("rate limited per IP: the 11th call in a minute is a 429, another IP still gets through", async () => {
   const body = await signed();
   for (let i = 0; i < 10; i++) assert.equal((await call(body)).status, 200, `call ${i + 1}`);
@@ -300,20 +317,21 @@ test("pay page M1: this key's own ack vs another key's, the count, and the named
   assert.match(ack, /guest && acks\.find\(\(a\) => same\(a\.debtor, short\(guest\)\)\)/, "the stored short debtor against this browser's key");
   assert.match(ack, /You acknowledged this invoice/);
   assert.match(ack, /Acknowledged by another key \(\{others\[0\]\.debtor\}\)/);
-  assert.match(ack, /\$\{count\} acknowledgements/);
+  assert.match(ack, /\$\{ackCount\(count\)\} acknowledgements/, "the count, shown up to 5+");
   assert.match(ack, /Only the customer wallet this invoice names \(\{customer\}\) can acknowledge it\./);
 });
 
-test("investor and merchant views: ✓ only for the named customer's ack; a pay-link holder's says identity not checked", () => {
+test("investor and merchant views: ✓ only for the named customer wallet's ack; any other is an unchecked wallet's", () => {
   const view = source("components/DebtorAck.tsx");
-  assert.match(view, /if \(ack\.verified\) \{\s*return \(\s*<span[^>]*>\s*Debtor acknowledged ✓/);
+  assert.match(view, /if \(ack\.verified\) \{\s*return \(\s*<span[^>]*>\s*Named customer wallet acknowledged ✓/);
   assert.equal(view.split("✓").length, 2, "one ✓, in the verified branch only");
-  assert.match(view, /Acknowledged by a pay-link holder · <span className="data">\{ack\.debtor\}<\/span> \(identity not checked\)/);
-  assert.match(view, /acknowledgements/);
+  assert.doesNotMatch(view, /Debtor acknowledged/, "re-review copy: the shop chooses the wallet, so not 'Debtor'");
+  assert.match(view, /Acknowledged by an unchecked wallet · <span className="data">\{ack\.debtor\}<\/span>/);
+  assert.match(view, /\$\{ackCount\(ack\.count\)\} acknowledgements/);
   assert.match(view, /Not acknowledged yet/);
   const offerBookUi = source("components/capital/investor/OfferBook.tsx");
   assert.match(offerBookUi, /\{o\.kind === "invoice" && <DebtorAck ack=\{o\.debtor_ack\} \/>\}/);
-  assert.match(offerBookUi, /A pay-link holder&apos;s acknowledgement doesn&apos;t check who they are\./, "one line explains the two labels");
+  assert.match(offerBookUi, /the shop chooses this wallet; it is not an identity check\./, "one line explains the two labels");
   assert.match(source("components/capital/merchant/MyOffers.tsx"), /\{!advance && <DebtorAck ack=\{o\.debtor_ack\} \/>\}/);
   assert.match(source("components/merchant/Invoices.tsx"), /\{invoice\.status === "open" && <DebtorAck ack=\{invoice\.ack\} \/>\}/);
 });
@@ -323,4 +341,13 @@ test("the merchant's invoice form: an optional customer wallet, checked, sent to
   assert.match(form, /Customer wallet \(optional\)/);
   assert.match(form, /createInvoice\(w, amount, BigInt\(Math\.floor\(dueMs \/ 1000\)\), customer\)/);
   assert.match(form, /!isAddress\(wallet\)/, "a typo is caught before the wallet opens");
+  assert.match(form, /wallet !== getAddress\(wallet\)\) return setError\("Paste the checksummed address/, "all lowercase has no checksum: a typo would bind the wrong wallet");
+  assert.doesNotMatch(form, /Debtor acknowledged/);
+});
+
+test("the count shows up to 5+, the same cap the route keeps (re-review LOW)", () => {
+  const view = source("components/DebtorAck.tsx");
+  const cap = Number(/export const ACK_CAP = (\d+);/.exec(view)?.[1]);
+  assert.equal(cap, MAX_UNBOUND_ACKS);
+  assert.match(view, /export const ackCount = \(n: number\) => \(n >= ACK_CAP \? `\$\{ACK_CAP\}\+` : String\(n\)\);/);
 });
