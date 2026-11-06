@@ -39,5 +39,8 @@ Production after-numbers wait for the next deploy (this batch doesn't deploy).
 ## softNav ? Link : a for every item; Webhooks → /merchant/developers#webhooks stays a full load)
 - `npm run typecheck` exit 0 · `npm run lint` exit 0 · `npm test` exit 0, `tests 676 · pass 674 · fail 0 · skipped 2`
   (nav-links 2 of 2 and dashboard-soft-nav 4 of 4) · `npm run build` exit 0 (only the two baseline `shop key check` lines)
+- Settlements (freed by the coordinator after #30): its per-row fee read now uses `cachedTxFee` (history and balance were
+  already read in parallel; fees need the history). typecheck 0 · lint 0 · tests 676, 674 pass, 0 fail, 2 skipped ·
+  build 0, `/merchant/settlements` still ◐, only the two baseline `shop key check` lines.
 - Phone check re-run on that build: `{"softKeptDocument":true,"menuOpenAfterReturn":false,"pagesIsFullLoad":true,
   "developersIsFullLoad":true,"developersCspHasNoNym":true}`
