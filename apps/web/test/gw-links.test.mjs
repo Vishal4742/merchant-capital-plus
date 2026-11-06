@@ -12,8 +12,10 @@ const { POST: create, GET: list } = await import("../app/api/v1/links/route.ts")
 const { POST: cancel } = await import("../app/api/v1/links/[id]/cancel/route.ts");
 const { GET: publicLink } = await import("../app/api/v1/public/links/[slug]/route.ts");
 const { POST: checkout } = await import("../app/api/v1/public/links/[slug]/checkout/route.ts");
-const { getSession } = await import("../lib/sessions.ts");
+const { getSession, currencyFields, SESSION_TTL_MS } = await import("../lib/sessions.ts");
 const { checkoutOf, markCheckoutPaid } = await import("../lib/server/checkouts.ts");
+const { QUOTE_TTL_MS } = await import("../lib/server/quotes.ts");
+const today = () => new Date().toISOString().slice(0, 10);
 
 let pg;
 const fetchCalls = [];
@@ -210,7 +212,7 @@ test("a fiat link converts at checkout with the live rate (EUR 20.00 at 0.8 per 
   assert.equal(fetchCalls.length, 0); // no rate needed to create it
   const session = sessionOf(await pay(data.slug));
   assert.equal(session.amount, 25_000_000n);
-  assert.deepEqual(session.items, [{ name: "Cold brew", qty: 1, price: 25_000_000n }]);
+  assert.deepEqual(session.items, [{ name: "Cold brew", qty: 1, price: 20_000_000n }], "a priced session's items are in its currency");
   const row = await checkoutOf(session.id);
   assert.equal(row.usdtAmount, 25_000_000n);
   // AT-13: the checkout can show the EUR price, the rate (per 1 USD, the SDK's convention), its date and source
@@ -223,6 +225,32 @@ test("a fiat link converts at checkout with the live rate (EUR 20.00 at 0.8 per 
   assert.match(fetchCalls[0], /\/v2\/rates\?base=usd&quotes=/);
   const big = (await newLink({ amount: "1000.00", currency: "EUR" })).data; // 1,250 USDT: over the cap at checkout
   assert.equal((await pay(big.slug)).status, 400);
+});
+
+test("AT-13: an EUR link's session is priced and lives as long as the 10-min quote lock", async () => {
+  const { data } = await newLink({ amount: "20.00", currency: "EUR" });
+  const session = sessionOf(await pay(data.slug));
+  const { fetchedAt, ...priced } = session.priced;
+  assert.deepEqual(priced, { currency: "EUR", amount: 20_000_000n, rate: "0.8", rateDate: today(), source: priced.source });
+  assert.match(priced.source, /Frankfurter/);
+  assert.ok(fetchedAt > 0);
+  assert.deepEqual(currencyFields(session), { currency: "EUR", priced: { currency: "EUR", amount: "20.00", rate: "0.8", rateAt: today(), source: priced.source } });
+  assert.equal(session.expiresAt - session.createdAt, QUOTE_TTL_MS);
+  assert.equal(QUOTE_TTL_MS, 600_000);
+});
+
+test("a USD link is priced at rate 1 and keeps the 30-min session; a USDT link has no priced", async () => {
+  const usd = sessionOf(await pay((await newLink({ amount: "12.50", currency: "USD" })).data.slug));
+  assert.equal(usd.priced.currency, "USD");
+  assert.equal(usd.priced.amount, 12_500_000n);
+  assert.equal(usd.priced.rate, "1");
+  assert.equal(usd.expiresAt - usd.createdAt, SESSION_TTL_MS);
+  const usdt = sessionOf(await pay((await newLink({ amount: "12.50" })).data.slug));
+  assert.equal(usdt.priced, undefined);
+  assert.deepEqual(currencyFields(usdt), { currency: "USDT" });
+  assert.equal(usdt.expiresAt - usdt.createdAt, SESSION_TTL_MS);
+  assert.equal(SESSION_TTL_MS, 1_800_000);
+  assert.equal(fetchCalls.length, 0); // USD and USDT need no rate source
 });
 
 test("checkout is rate-limited to 20 a minute per IP", async () => {
