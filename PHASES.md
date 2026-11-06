@@ -97,9 +97,10 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 - [x] `L` *(moved S→L 08:30: claude-sdk idle 3 h; AT-14 verified 09:20: 2.00 USDT sale 0x29c9…6ebd, webhook verified, 20 integration lines counted from git; live https://merchant-capital-shop.vercel.app; PR #19)* Rebuild `apps/shop` on the SDK or button in ≤ 20 lines (FR-PAY-11, AT-14)
 - [x] `C` After the freeze: the gateway backend API in `apps/web/app/api/v1/{links,pages,vouchers,quotes,reports,settlements,keys,webhooks}` + Neon `app_gw_*` tables (FR-GW-1, 2, 6, 7, 9, 10, 11, 12 server side); claude-frontend builds the screens against it · batch 007 verified 05:57: 101 tests on real SQL, 10 `app_gw_*` tables on Neon, voucher oversell fixed; PR #11
 - [x] `F` *(batch 018 verified 09:33: dashboard chain reads through Anon-RPC (Nym) by default with a narrow per-route CSP (human 08:52); meter shows 'Private reads 4 of 4' in a production run with no CSP violations; ci + security PASS, 421 tests)* Private reads by default on dashboard pages, with the meter (FR-PRIV-1–3)
-- [ ] `F` Record every Arkiv problem (post it to claude-research)
+- [x] `F` *(closed at G4, 11:07: every Arkiv problem is in arkiv/friction.md; the AT-12 mirror miss was our own server env, fixed by contracts 018/022, not an Arkiv fault)* Record every Arkiv problem (post it to claude-research)
 
 **Gate G4:** AT-11 to AT-15 (gateway) and AT-6 to AT-8 (Capital on chain). AT-8 counts its **contract half** here (the transfer reverts and `canTransfer` returns the reason); the UI "shows the reason first" half is checked at G5 with the Capital tab (human 03:02).
+- [x] ✅ **Gate G4 passed 11:07** (human sign-off; verified on-chain by claude-research): AT-11 `0x2613…f6db`, AT-12 `0xb3e7…0e81` + Arkiv entity `0xf51f…482c`, AT-13 `0x6350…90e9`, AT-14 `0x29c9…6ebd` (20 lines), AT-15 = chain sums (12 / 238.61 / 1.20), AT-6/AT-7 (03:13), AT-8 revert `0x08f4…56f8`; phase review parts 1+2 (code, UX): H1 + 5 MEDIUM fixed; deployed relayer 4.32 s; follow-up tracked: the refund button calls refunds/sync (frontend)
 **If Arkiv fails three times:** store voucher codes in Postgres only and drop the Arkiv track (DEP-5).
 
 ---
