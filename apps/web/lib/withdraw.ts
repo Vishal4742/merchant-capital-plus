@@ -2,7 +2,7 @@
 // (MerchantPay._settle), so a withdraw is just that wallet sending its USDT on: an ERC-20 transfer the merchant signs
 // and pays the WBT gas for, as with refunds. Nothing goes through our server or the relayer. The checks are pure, so the
 // form refuses a bad address or amount before the wallet is even asked.
-import { BaseError, ChainMismatchError, InsufficientFundsError, SwitchChainError, getAddress, isAddress, parseAbi, zeroAddress, type Address, type Hex } from "viem";
+import { BaseError, ChainMismatchError, InsufficientFundsError, SwitchChainError, getAddress, isAddress, parseAbi, parseEventLogs, zeroAddress, type Address, type Hex, type Log } from "viem";
 import { whitechainSepolia } from "viem/chains";
 import { estimateContractTotalFee } from "viem/op-stack";
 import type { Checked } from "./gateway-forms.ts";
@@ -27,10 +27,12 @@ export const NOT_ENOUGH_WBT = "Your wallet needs a little WBT to pay the network
 export const WRONG_NETWORK = "Your wallet is on another network. Switch it to Whitechain Testnet (chain 1874), then try again.";
 export const UNCONFIRMED = "It was sent, but it isn't confirmed yet. Open the transaction and check it before you send again.";
 export const NOT_THROUGH = "That didn't go through, and nothing moved. Try again.";
+export const CANCELLED = "This transfer was cancelled in your wallet. Nothing was sent.";
+export const REPLACED = "Your wallet replaced this transfer with a different transaction, so the USDT wasn't sent.";
 const NOT_ENOUGH_USDT = "Your wallet doesn't have that much USDT now. Reload the page to see what's there.";
 const REFUSED = "USDT refused this transfer, so nothing was sent.";
 
-const erc20 = parseAbi(["function transfer(address to, uint256 amount) returns (bool)"]);
+const erc20 = parseAbi(["function transfer(address to, uint256 amount) returns (bool)", "event Transfer(address indexed from, address indexed to, uint256 value)"]);
 const ok = <T>(value: T) => ({ ok: true, value }) as const;
 const no = (error: string) => ({ ok: false, error }) as const;
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
@@ -75,7 +77,8 @@ export async function quoteWithdraw(w: MerchantWallet, to: Address, amount: bigi
 
 /** Simulate, send from the merchant's wallet, wait for the receipt (merchant-wallet's send(), for a USDT transfer).
  *  `onSent` gets the hash the moment the wallet returns it, so the page can link it during the receipt wait (042).
- *  A receipt that can't be read throws SENT_UNCONFIRMED with the hash, so the page links it instead of inviting a resend. */
+ *  A receipt that can't be read throws SENT_UNCONFIRMED with the hash, so the page links it instead of inviting a resend.
+ *  Sent means a success receipt holding USDT's Transfer(merchant → to, amount); returns that transaction's hash. */
 export async function withdraw(w: MerchantWallet, to: Address, amount: bigint, onSent?: (hash: Hex) => void): Promise<Hex> {
   // the wallet may have moved networks since Review; the dry run would then read another chain's state
   if ((await w.wallet.getChainId()) !== whitechainSepolia.id) throw new Error(WRONG_NETWORK);
@@ -83,11 +86,24 @@ export async function withdraw(w: MerchantWallet, to: Address, amount: bigint, o
   if (result !== true) throw new Error(REFUSED); // a token that returns false instead of reverting (security 033 L2)
   const hash = await w.wallet.writeContract(request as Parameters<MerchantWallet["wallet"]["writeContract"]>[0]);
   onSent?.(hash);
-  const receipt = await w.reader.waitForTransactionReceipt({ hash }).catch(() => {
-    throw Object.assign(new Error(SENT_UNCONFIRMED), { hash });
-  });
-  if (receipt.status !== "success") throw new Error(NOT_THROUGH);
-  return hash;
+  // viem resolves with the REPLACEMENT's receipt when the wallet replaces the tx (Cancel or Speed up in MetaMask) and
+  // calls onReplaced first (security review of #35). Only a reprice (same call, higher fee) is still this transfer.
+  const replaced: { reason?: string; hash?: Hex } = {};
+  const receipt = await w.reader
+    .waitForTransactionReceipt({ hash, onReplaced: (r) => Object.assign(replaced, { reason: r.reason, hash: r.transaction.hash }) })
+    .catch(() => {
+      throw Object.assign(new Error(SENT_UNCONFIRMED), { hash });
+    });
+  if (replaced.reason === "cancelled") throw new Error(CANCELLED);
+  if (replaced.reason && replaced.reason !== "repriced") throw new Error(REPLACED);
+  if (receipt.status !== "success" || !moved(receipt.logs, w.account, to, amount)) throw new Error(NOT_THROUGH);
+  return replaced.hash ?? hash;
+}
+
+/** True if the logs hold USDT's own Transfer(from → to, amount): what a confirmed withdraw must show. */
+function moved(logs: Log[], from: Address, to: Address, amount: bigint): boolean {
+  const ours = logs.filter((log) => same(log.address, USDT));
+  return parseEventLogs({ abi: erc20, eventName: "Transfer", logs: ours }).some(({ args }) => same(args.from, from) && same(args.to, to) && args.value === amount);
 }
 
 /** After an unconfirmed send: "sent" once its receipt reads success, "failed" if it reverted, "pending" while there is
