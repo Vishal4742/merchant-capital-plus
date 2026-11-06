@@ -364,6 +364,31 @@ test("releaseHold after a definitely refused relay: the payer can change the cod
   assert.equal(await releaseHold("ses_no_hold"), false);
 });
 
+test("F1: releaseHold never unfreezes a paid checkout's hold", async () => {
+  const { claimAmountDue, releaseHold } = await import("../lib/server/vouchers.ts");
+  await newVoucher({ code: "HALF", value: "50", max_redemptions: 1 });
+  const t = Date.now();
+  const s = await checkout(USDT(100), MERCHANT, t);
+  await applyVoucher(MERCHANT, "HALF", s, USDT(100), t);
+  assert.equal(await claimAmountDue(s, t), USDT(50));
+  await markCheckoutPaid(s, t + 1000); // the payment landed (e.g. someone else submitted the signed authorization)
+  assert.equal(await releaseHold(s), false, "a paid checkout keeps its hold");
+  const other = await checkout(USDT(100), MERCHANT, t);
+  assert.equal((await applyVoucher(MERCHANT, "HALF", other, USDT(100), t + 2000)).ok, false, "HALF stays held");
+});
+
+test("F4: a fiat checkout (10-min lock) can't take a code after 10 minutes; USD keeps 30", async () => {
+  const { QUOTE_TTL_MS } = await import("../lib/server/quotes.ts");
+  await newVoucher();
+  const t = Date.now();
+  const fx = (currency) => ({ currency, amount: USDT(20), rate: currency === "USD" ? "1" : "0.8", rateAt: new Date(t).toISOString().slice(0, 10), source: "test", fetchedAt: t });
+  await recordCheckout("ses_eur", "link", "lnk_1", MERCHANT, USDT(25), { fx: fx("EUR"), now: t });
+  await recordCheckout("ses_usd", "link", "lnk_1", MERCHANT, USDT(20), { fx: fx("USD"), now: t });
+  assert.deepEqual(await applyVoucher(MERCHANT, "SAVE10", "ses_eur", USDT(25), t + QUOTE_TTL_MS), { ok: false, reason: "This checkout has expired." });
+  assert.equal((await applyVoucher(MERCHANT, "SAVE10", "ses_eur", USDT(25), t + QUOTE_TTL_MS - 1)).ok, true);
+  assert.equal((await applyVoucher(MERCHANT, "SAVE10", "ses_usd", USDT(20), t + QUOTE_TTL_MS + 60_000)).ok, true, "USD checkouts live 30 minutes");
+});
+
 test("S1: an apply racing the claim is refused by the upsert's own guard, and the claimed price stands", async () => {
   const { claimAmountDue, amountDue } = await import("../lib/server/vouchers.ts");
   await newVoucher({ code: "HALF", value: "50", max_redemptions: 1 });

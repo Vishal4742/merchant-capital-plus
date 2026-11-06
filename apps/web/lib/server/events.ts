@@ -13,12 +13,12 @@ type EventType = "payment.succeeded" | "payment.refunded";
 const plain = (units: bigint) => formatUsdt(units).replaceAll(",", ""); // "1000.00": machine-readable, no separators
 
 /** The webhook `data`: claude-sdk's `Session` (packages/sdk GatewayEvent.data) plus where the session came from. */
-async function eventData(session: Session) {
+async function eventData(session: Session, paidAmount = session.amount) {
   const checkout = await checkoutOf(session.id);
   return {
     id: session.id,
     status: "paid",
-    amount: plain(session.amount), // what the payer paid, in USDT (after any voucher)
+    amount: plain(paidAmount), // what the payer paid, in USDT (after any voucher)
     currency: "USDT",
     reference: session.reference,
     paymentId: session.payment?.paymentId ?? null,
@@ -40,10 +40,11 @@ async function sendOnce(key: string, merchant: Address, type: EventType, data: R
   }
 }
 
-export async function onSessionPaid(session: Session, now = Date.now()): Promise<void> {
+/** `paidAmount` = the price the pay route claimed (claimAmountDue) and relayed; defaults to the session's amount. */
+export async function onSessionPaid(session: Session, paidAmount: bigint = session.amount, now = Date.now()): Promise<void> {
   await markCheckoutPaid(session.id, now); // idempotent: single-use links read their status from this
-  await confirmRedemption(session.id, session.amount); // idempotent per session; counts only if the discounted total was paid
-  await sendOnce(`paid:${session.id}`, session.merchant, "payment.succeeded", await eventData(session), now);
+  await confirmRedemption(session.id, paidAmount); // idempotent per session; counts only if the discounted total was paid
+  await sendOnce(`paid:${session.id}`, session.merchant, "payment.succeeded", await eventData(session, paidAmount), now);
 }
 
 export async function onRefund(session: Session, amount: bigint, totalRefunded: bigint, now = Date.now()): Promise<void> {

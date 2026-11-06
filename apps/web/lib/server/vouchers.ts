@@ -10,6 +10,7 @@ import { SESSION_TTL_MS } from "../sessions.ts";
 import { parseUsdt } from "../usdt.ts";
 import { checkoutOf } from "./checkouts.ts";
 import { query, transaction } from "./db.ts";
+import { QUOTE_TTL_MS } from "./quotes.ts";
 import { HttpError, MAX_PAYMENT, MIN_PAYMENT, futureTime, newId, usdtField } from "./http.ts";
 
 export type VoucherKind = "percent" | "fixed";
@@ -185,7 +186,9 @@ export async function applyVoucher(merchant: string, code: string, sessionId: st
   // S1: the pay route claimed the price; the upsert below re-checks this, so a claim racing this read still wins
   const frozen = await query("SELECT 1 FROM app_gw_redemptions WHERE session_id = $1 AND frozen_at IS NOT NULL", [sessionId]);
   if (frozen.length) return { ok: false, reason: BEING_PAID };
-  if (now - checkout.createdAt >= SESSION_TTL_MS) return { ok: false, reason: "This checkout has expired." }; // R2-M2
+  // R2-M2 + F4: a fiat checkout lives as long as its 10-min quote lock, USD/USDT as long as the 30-min session
+  const ttl = checkout.fx && checkout.fx.currency !== "USD" && checkout.fx.currency !== "USDT" ? QUOTE_TTL_MS : SESSION_TTL_MS;
+  if (now - checkout.createdAt >= ttl) return { ok: false, reason: "This checkout has expired." };
   if (usdtAmount !== checkout.usdtAmount) return { ok: false, reason: "The amount doesn't match this checkout." };
   const normalized = code.trim().toUpperCase();
   if (!CODE_RE.test(normalized)) return { ok: false, reason: "That code isn't valid." };
@@ -261,8 +264,11 @@ export async function claimAmountDue(sessionId: string, now = Date.now()): Promi
  * dropped connection): the chain decides then, and the frozen hold must keep counting. True if a hold was unfrozen.
  */
 export async function releaseHold(sessionId: string): Promise<boolean> {
+  // never on a paid checkout (batch-009 review F1): a late or mistaken release would free a use that was paid for
   const rows = await query(
-    "UPDATE app_gw_redemptions SET frozen_at = NULL WHERE session_id = $1 AND confirmed_at IS NULL AND frozen_at IS NOT NULL RETURNING session_id",
+    `UPDATE app_gw_redemptions r SET frozen_at = NULL FROM app_gw_checkouts c
+     WHERE r.session_id = $1 AND c.session_id = r.session_id AND c.paid_at IS NULL AND r.confirmed_at IS NULL AND r.frozen_at IS NOT NULL
+     RETURNING r.session_id`,
     [sessionId],
   );
   return rows.length === 1;
