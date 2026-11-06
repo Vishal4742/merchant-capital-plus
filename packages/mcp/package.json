@@ -1,16 +1,21 @@
 {
-  "name": "@merchant-capital/mcp",
-  "version": "0.1.0",
+  "name": "@whiteflow/merchant-mcp",
+  "version": "0.2.0",
   "private": true,
-  "description": "Merchant Capital+ MCP connector (stdio): merchant tools on the gateway API, and an optional capped payer. Adapted from Pixa (MIT).",
+  "description": "WhiteFlow Merchant MCP: payment links, customers, invoices, payments and collection summaries from an MCP client (stdio). Testnet or a labelled local sandbox.",
   "type": "module",
   "bin": {
-    "merchant-capital-mcp": "./src/index.ts"
+    "whiteflow-mcp": "./src/index.ts",
+    "whiteflow-sandbox": "./src/sandbox/cli.ts"
   },
   "scripts": {
     "start": "node src/index.ts",
+    "sandbox": "node src/sandbox/cli.ts",
     "test": "node --test test/",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "manifest": "node scripts/manifest.mjs",
+    "build": "node scripts/build.mjs",
+    "pack": "node scripts/pack.mjs"
   },
   "engines": {
     "node": ">=22.18"
@@ -18,11 +23,12 @@
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",
-    "viem": "2.57.13",
     "zod": "4.6.7"
   },
   "devDependencies": {
+    "@anthropic-ai/mcpb": "2.1.2",
     "@types/node": "20.19.43",
+    "esbuild": "0.28.2",
     "typescript": "5.9.3"
   }
 }

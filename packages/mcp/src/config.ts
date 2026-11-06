@@ -17,7 +17,15 @@ export interface Config {
   warnings: string[];
 }
 
-export function parseConfig(env: Record<string, string | undefined>): Config {
+/** An .mcpb host fills env from user_config; an optional field left empty may arrive as "" or, depending on the
+ *  host, as the literal "${user_config.x}" placeholder. Both mean "not set". */
+const setting = (value: string | undefined): string | undefined => {
+  const text = value?.trim();
+  return text && !/^\$\{user_config\.[A-Za-z0-9_]+\}$/.test(text) ? text : undefined;
+};
+
+export function parseConfig(rawEnv: Record<string, string | undefined>): Config {
+  const env = Object.fromEntries(Object.entries(rawEnv).map(([name, value]) => [name, setting(value)]));
   const warnings: string[] = [];
   const modeText = (env.WHITEFLOW_MODE || "sandbox").trim().toLowerCase();
   if (modeText !== "sandbox" && modeText !== "testnet") throw new Error('WHITEFLOW_MODE must be "sandbox" (simulated, the default) or "testnet" (the real WhiteFlow gateway on Whitechain Testnet).');
@@ -37,6 +45,6 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
   if (key && !SANDBOX_KEY.test(key)) {
     throw new Error(key.startsWith("sk_") ? "That's a testnet key (sk_…): set WHITEFLOW_MODE=testnet to use it. Sandbox mode needs no key." : "In sandbox mode leave WHITEFLOW_API_KEY empty (a local sandbox key is made for you), or give a wf_sbx_ key.");
   }
-  if (env.WHITEFLOW_BASE_URL) warnings.push("WHITEFLOW_BASE_URL is ignored in sandbox mode.");
+  if (env.WHITEFLOW_BASE_URL && env.WHITEFLOW_BASE_URL !== DEFAULT_BASE_URL) warnings.push("WHITEFLOW_BASE_URL is ignored in sandbox mode.");
   return { mode, apiKey: key, baseUrl: null, timezone: zone, warnings };
 }
