@@ -35,3 +35,9 @@
 
 ## Out of scope
 - Postgres lock / rel_sent (post-deadline follow-up).
+
+## Step 2 addendum (09:40, from the probe + claude-research 09:38)
+- **One function:** `api/relay.ts` also exports `GET` (the existing `health`). `vercel.json` rewrites `/health` → `/api/relay`, and `api/health.ts` is deleted. Then a `/health` ping warms the same instance and the same RPC socket that `/relay` uses. claude-frontend adds a fire-and-forget server-side `GET /health` when a checkout opens (their file).
+- **`"fluid": true`** in `vercel.json`. The schema says Fluid compute is on by default for new projects; pinning it means a project setting can't drift.
+- **Receipt poll 300 → 250 ms** (it already starts right after the send).
+- Test first: `test/deploy-config.test.ts` checks that `/relay` and `/health` go to the same function and that `fluid` is true. dev.ts serves `/health` from `api/relay.ts`, so the existing dev tests cover the route.
