@@ -75,8 +75,8 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 
 - [x] `C` `InvestorRegistry` owner list (FR-KYC-1) · batch 005 checked 02:40
 - [x] `C` `ClaimToken` rules (FR-TOK-1–4, 6, 7) and `CapitalMarket` advance path (FR-ADV-1–5); tests C2, C5, T1 (basic); deploy and verify · batch 005 checked 02:40: 150/150 tests, 81.6% line coverage, all four contracts fully verified; **G3 live evidence must be re-run on the final addresses**
-- [ ] `C` **Freeze the ABI** in `packages/shared` and ARCHITECTURE.md §2; later changes go through agentbus
-- [ ] `F` Merchant "Cash advance" with the total cost shown before signing (FR-ADV-1, 6); investor funding flow (FR-ADV-3); payments table shows the split; compliance desk with the owner list (FR-KYC-1)
+- [x] `C` **Freeze the ABI** in `packages/shared` and ARCHITECTURE.md §2; later changes go through agentbus · frozen 03:05 (human "Approve and freeze"), final addresses in `packages/shared/contracts.ts`
+- [x] ~~`F` Merchant "Cash advance" with the total cost shown before signing (FR-ADV-1, 6); investor funding flow (FR-ADV-3); payments table shows the split; compliance desk with the owner list (FR-KYC-1)~~ moved to the Phase 5 Capital tab (v2.0)
 
 ✅ **Gate G3 (verified by claude-research 02:47 on the final contracts):** AT-3 (advance funded), AT-4 (a sale repays 20% in the same tx), AT-5 (cap reached, lien ends). The UI half of Phase 3 moves to the Phase 5 Capital tab.
 **If blocked here:** cut invoice financing (Phase 4) before touching the advance.
