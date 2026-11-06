@@ -1,0 +1,77 @@
+// Server-only API keys (SRS FR-GW-6): pk_test_ (publishable) and sk_test_ (secret), test mode only (FR-GW-14).
+// Only a SHA-256 of each key is stored and the key is shown once. authenticateKey() is the check claude-frontend's
+// POST /api/v1/sessions uses for Bearer keys (FR-PAY-4).
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { getAddress, type Address } from "viem";
+import { query } from "./db.ts";
+import { HttpError, newId } from "./http.ts";
+
+export type KeyKind = "pk" | "sk";
+export const MAX_KEYS = 20; // live keys per merchant
+const KEY_PATTERN = /^(pk|sk)_test_[A-Za-z0-9_-]{32}$/;
+const sha256 = (key: string) => createHash("sha256").update(key).digest("hex");
+
+export interface ApiKey {
+  id: string;
+  label: string;
+  kind: KeyKind;
+  prefix: string;
+  createdAt: number;
+  lastUsedAt: number | null;
+}
+
+type KeyRow = { id: string; label: string; kind: KeyKind; prefix: string; created_at: string; last_used_at: string | null };
+const fromRow = (r: KeyRow): ApiKey => ({ id: r.id, label: r.label, kind: r.kind, prefix: r.prefix, createdAt: Number(r.created_at), lastUsedAt: r.last_used_at === null ? null : Number(r.last_used_at) });
+
+/** A new key; `key` is returned here only, never again. */
+export async function createKey(merchant: Address, label: string, kind: KeyKind, now = Date.now()): Promise<{ key: string; record: ApiKey }> {
+  const owner = merchant.toLowerCase();
+  const [{ n }] = await query<{ n: string }>("SELECT count(*)::text AS n FROM app_gw_keys WHERE merchant = $1 AND revoked_at IS NULL", [owner]);
+  if (Number(n) >= MAX_KEYS) throw new HttpError(409, `You can have at most ${MAX_KEYS} keys. Revoke one first.`);
+  const key = `${kind}_test_${randomBytes(24).toString("base64url")}`; // 24 bytes → 32 base64url chars
+  const record: ApiKey = { id: newId("key"), label, kind, prefix: key.slice(0, 12), createdAt: now, lastUsedAt: null };
+  await query(
+    "INSERT INTO app_gw_keys (id, merchant, kind, label, prefix, key_hash, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    [record.id, owner, kind, label, record.prefix, sha256(key), now],
+  );
+  return { key, record };
+}
+
+export async function listKeys(merchant: Address): Promise<ApiKey[]> {
+  const rows = await query<KeyRow>(
+    "SELECT id, label, kind, prefix, created_at::text, last_used_at::text FROM app_gw_keys WHERE merchant = $1 AND revoked_at IS NULL ORDER BY created_at DESC, id",
+    [merchant.toLowerCase()],
+  );
+  return rows.map(fromRow);
+}
+
+/** True if this merchant had that live key. */
+export async function revokeKey(merchant: Address, id: string, now = Date.now()): Promise<boolean> {
+  const rows = await query("UPDATE app_gw_keys SET revoked_at = $3 WHERE id = $1 AND merchant = $2 AND revoked_at IS NULL RETURNING id", [id, merchant.toLowerCase(), now]);
+  return rows.length === 1;
+}
+
+/** The merchant behind a request's `Authorization: Bearer <pk_test_|sk_test_…>`, or null (missing, malformed, unknown, revoked). */
+export async function authenticateKey(request: Request, now = Date.now()): Promise<{ merchant: Address; kind: KeyKind; keyId: string } | null> {
+  const auth = request.headers.get("authorization") ?? "";
+  const key = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+  if (!KEY_PATTERN.test(key)) return null;
+  const hash = sha256(key);
+  const rows = await query<{ id: string; merchant: string; kind: KeyKind; key_hash: string }>(
+    "SELECT id, merchant, kind, key_hash FROM app_gw_keys WHERE key_hash = $1 AND revoked_at IS NULL",
+    [hash],
+  );
+  const row = rows[0];
+  if (!row || !timingSafeEqual(Buffer.from(row.key_hash, "hex"), Buffer.from(hash, "hex"))) return null;
+  await query("UPDATE app_gw_keys SET last_used_at = $2 WHERE id = $1", [row.id, now]);
+  return { merchant: getAddress(row.merchant), kind: row.kind, keyId: row.id };
+}
+
+export const keyJson = (k: ApiKey) => ({
+  id: k.id,
+  label: k.label,
+  kind: k.kind,
+  prefix: k.prefix,
+  created_at: new Date(k.createdAt).toISOString(),
+  last_used_at: k.lastUsedAt === null ? null : new Date(k.lastUsedAt).toISOString(),
+});
