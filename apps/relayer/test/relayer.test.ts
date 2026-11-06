@@ -6,7 +6,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import {
   custom, decodeFunctionData, domainSeparator, encodeAbiParameters, encodeErrorResult, encodeEventTopics,
   encodeFunctionResult, http, keccak256, parseAbi, parseAbiParameters, parseSignature, parseTransaction,
-  serializeSignature, toHex, zeroHash, type Address, type Hex,
+  serializeSignature, formatEther, toHex, zeroHash, type Address, type Hex,
 } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { addresses, merchantPayAbi } from '../../../packages/shared/contracts.ts';
@@ -18,9 +18,10 @@ const RELAY_FEE = 100_000n; // MerchantPay.relayFee() on chain: 0.10 USDT
 const HALF_WBT = '0x6f05b59d3b20000'; // 0.5e18 wei
 const GAS_USED = 217_194n; // a live paySale (claude-contracts smoke test)
 const GAS_PRICE = 5_001_000_000n;
+const L1_FEE = 8_960n; // OP Stack L1 data fee on a live paySale receipt (drain review chain facts)
 const ABI = [...USDT_ABI, ...merchantPayAbi];
 const REVERT_DATA = encodeErrorResult({ abi: parseAbi(['error Error(string)']), errorName: 'Error', args: ['TetherToken: auth invalid'] });
-const customRevert = (errorName: 'OrderPaid' | 'InvoiceNotOpen' | 'WrongAmount' | 'InvalidOrder') =>
+const customRevert = (errorName: 'OrderPaid' | 'InvoiceNotOpen' | 'WrongAmount' | 'InvalidOrder' | 'EnforcedPause') =>
   () => { throw rpcError(3, 'execution reverted', encodeErrorResult({ abi: merchantPayAbi, errorName })); };
 const now = () => BigInt(Math.floor(Date.now() / 1000));
 const cut = (s: string) => s.slice(0, 70);
@@ -40,6 +41,8 @@ interface NodeOptions {
   gasPrice?: bigint;
   used?: Hex[];
   sendDelayMs?: number;
+  gasUsed?: bigint; // receipt override (budget tests)
+  minedRevert?: boolean; // the sync receipt says status 0 (breaker tests)
   on?: Record<string, (params: unknown[]) => unknown>; // override one method; simulations are 'eth_call:paySale' / 'eth_call:payInvoice'
 }
 
@@ -90,7 +93,8 @@ function fakeNode(opts: NodeOptions = {}) {
         nonce += 1;
         paymentId += 1n;
         calls.push('eth_sendRawTransactionSync:done');
-        return receipt(keccak256(raw), '0x1', [paidLog(keccak256(raw), paymentId, call)]);
+        if (opts.minedRevert) return receipt(keccak256(raw), '0x0', [], opts.gasUsed);
+        return receipt(keccak256(raw), '0x1', [paidLog(keccak256(raw), paymentId, call)], opts.gasUsed);
       }
     }
     throw new Error(`fake node: unexpected ${method}`);
@@ -123,10 +127,10 @@ function paidLog(txHash: Hex, paymentId: bigint, call: ReturnType<typeof decodeF
   };
 }
 
-function receipt(hash: Hex, status = '0x1', logs: unknown[] = []) {
+function receipt(hash: Hex, status = '0x1', logs: unknown[] = [], gasUsed = GAS_USED) {
   return {
     transactionHash: hash, status, blockNumber: '0x10', blockHash: `0x${'ab'.repeat(32)}`, transactionIndex: '0x0',
-    from: '0x0', to: MP, gasUsed: toHex(GAS_USED), cumulativeGasUsed: toHex(GAS_USED), effectiveGasPrice: toHex(GAS_PRICE), logs,
+    from: '0x0', to: MP, gasUsed: toHex(gasUsed), cumulativeGasUsed: toHex(gasUsed), effectiveGasPrice: toHex(GAS_PRICE), logs, l1Fee: toHex(L1_FEE),
     logsBloom: `0x${'00'.repeat(256)}`, type: '0x2', contractAddress: null,
   };
 }
@@ -154,6 +158,19 @@ async function signedSale(o: Overrides = {}) {
     validAfter: String(message.validAfter), validBefore: String(message.validBefore), salt: sale.salt,
   };
   return { body: { action: 'paySale', args, sig }, message, sig, sale };
+}
+
+// A sale signed by a given payer key (rate-limit tests need the same payer for many sales).
+async function signedSaleFrom(payerKey: Hex) {
+  const payer = privateKeyToAccount(payerKey);
+  const sale = { merchant: privateKeyToAccount(generatePrivateKey()).address, orderRef: random32(), salt: random32(), amount: 1_000_000n };
+  const message = {
+    from: payer.address, to: MP, value: sale.amount, validAfter: 0n, validBefore: now() + 600n,
+    nonce: saleNonceOf(sale.merchant, sale.orderRef, sale.amount, sale.salt),
+  } as const;
+  const sig = await payer.signTypedData({ domain: USDT_DOMAIN, types: TYPES, primaryType: 'ReceiveWithAuthorization', message });
+  const args = { ...sale, from: payer.address, amount: '1000000', validAfter: '0', validBefore: String(message.validBefore) };
+  return { body: { action: 'paySale', args, sig } };
 }
 
 // An invoice payment: `amount` is credited; the payer signs value = amount + relayFee (fee on top, MerchantPay.payInvoice).
@@ -733,7 +750,7 @@ test('paySale returns the paymentId from our own Paid event, gasUsed and the gas
   assert.equal(status, 200, JSON.stringify(out));
   assert.equal(out.paymentId, '42');
   assert.equal(out.gasUsed, String(GAS_USED));
-  assert.equal(out.gasCostWei, String(GAS_USED * GAS_PRICE));
+  assert.equal(out.gasCostWei, String(GAS_USED * GAS_PRICE + L1_FEE), 'includes the OP-Stack L1 data fee');
 });
 
 test('payInvoice: value = amount + relayFee is checked, the call carries the credited amount, and returns the paymentId', async () => {
@@ -784,4 +801,72 @@ test('MerchantPay reverts map to codes: OrderPaid and InvoiceNotOpen are order_p
     assert.deepEqual([status, out.code], [422, code], `${errorName}: ${JSON.stringify(out)}`);
     assert.equal(node.sent.length, 0);
   }
+});
+
+// ---- batch 006 (lean, human 05:51): breaker, budget, rate limits, L1 fee, zero orderRef, contract pause ----
+
+const CAP_FEE = 400_000n * 6_000_000_000n; // the worst case one send can cost: 0.0024 WBT
+
+test('an all-zero orderRef is a bad request with no RPC', async () => {
+  const { body } = await signedSale();
+  const node = fakeNode();
+  const { status, out } = await post({ ...body, args: { ...body.args, orderRef: zeroHash } }, node);
+  assert.deepEqual([status, out.code], [400, 'bad_request']);
+  assert.deepEqual(node.calls, []);
+});
+
+test('breaker: a mined revert bans that payer; three mined reverts in an hour stop every relay with 503', async () => {
+  const node = fakeNode({ minedRevert: true });
+  const payerKey = generatePrivateKey();
+  assert.deepEqual([(await post((await signedSaleFrom(payerKey)).body, node)).out.code], ['reverted']);
+  const banned = await post((await signedSaleFrom(payerKey)).body, node); // the same payer, a new authorization
+  assert.deepEqual([banned.status, banned.out.code], [422, 'payer_banned'], JSON.stringify(banned.out));
+  for (let i = 0; i < 2; i++) assert.equal((await post((await signedSale()).body, node)).out.code, 'reverted');
+  const sendsBefore = node.sent.length;
+  const open = await post((await signedSale()).body, node);
+  assert.deepEqual([open.status, open.out.code], [503, 'breaker_open']);
+  assert.equal(node.sent.length, sendsBefore, 'nothing sent once the breaker is open');
+});
+
+test('budget: a send that would pass 0.1 WBT today is refused before any RPC, and queued requests are re-checked in the lock', async () => {
+  const big = fakeNode({ gasUsed: 20_000_000n, sendDelayMs: 30 }); // one send costs 0.10002 WBT
+  const results = await Promise.all([1, 2, 3].map(async () => post((await signedSale()).body, big)));
+  assert.deepEqual(results.map((r) => r.status).sort(), [200, 503, 503], JSON.stringify(results.map((r) => r.out)));
+  assert.ok(results.filter((r) => r.status === 503).every((r) => r.out.code === 'budget_exhausted'));
+  assert.equal(big.sent.length, 1, 'the queued copies never reached the node');
+  const calls = big.calls.length;
+  assert.equal((await post((await signedSale()).body, big)).out.code, 'budget_exhausted');
+  assert.equal(big.calls.length, calls, 'refused with no RPC once the budget is spent');
+});
+
+test('budget accounting: a receipt adds gasUsed × price + L1 fee; a timeout adds the capped fee; /health reports both fields', async () => {
+  const node = fakeNode();
+  assert.equal((await post((await signedSale()).body, node)).status, 200);
+  const spent = GAS_USED * GAS_PRICE + L1_FEE;
+  const h = await (await health(node.client)).json();
+  assert.equal(h.gasSpentToday, formatEther(spent));
+  assert.equal(h.budgetLeft, formatEther(100_000_000_000_000_000n - spent));
+  const slow = fakeNode({ on: { eth_sendRawTransactionSync: (params) => { slow.sent.push(params[0] as Hex); throw rpcError(4, 'not included in time'); } } });
+  assert.equal((await post((await signedSale()).body, slow)).status, 502);
+  assert.equal((await (await health(slow.client)).json()).gasSpentToday, formatEther(CAP_FEE), 'a timeout counts the worst case');
+});
+
+test('rate limit: the 11th send from one payer within an hour is 429 rate_limited', async () => {
+  const node = fakeNode();
+  const payerKey = generatePrivateKey();
+  const one = async () => {
+    const p = await signedSaleFrom(payerKey);
+    return post(p.body, node);
+  };
+  for (let i = 0; i < 10; i++) assert.equal((await one()).status, 200, `send ${i + 1}`);
+  const eleventh = await one();
+  assert.deepEqual([eleventh.status, eleventh.out.code], [429, 'rate_limited']);
+  assert.equal(node.sent.length, 10);
+});
+
+test('MerchantPay paused (EnforcedPause) is 503 paused', async () => {
+  const node = fakeNode({ on: { 'eth_call:paySale': customRevert('EnforcedPause') } });
+  const { status, out } = await post((await signedSale()).body, node);
+  assert.deepEqual([status, out.code], [503, 'paused']);
+  assert.equal(node.sent.length, 0);
 });
