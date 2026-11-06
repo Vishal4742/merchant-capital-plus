@@ -373,8 +373,13 @@ test("F1: releaseHold never unfreezes a paid checkout's hold", async () => {
   assert.equal(await claimAmountDue(s, t), USDT(50));
   await markCheckoutPaid(s, t + 1000); // the payment landed (e.g. someone else submitted the signed authorization)
   assert.equal(await releaseHold(s), false, "a paid checkout keeps its hold");
-  const other = await checkout(USDT(100), MERCHANT, t);
-  assert.equal((await applyVoucher(MERCHANT, "HALF", other, USDT(100), t + 2000)).ok, false, "HALF stays held");
+  // N5 + F2: checked after HOLD_MS and FREEZE_MS, where an unpaid hold would no longer count: a paid checkout's frozen
+  // hold keeps counting until confirmRedemption counts it (nothing retries a failed confirm)
+  const { HOLD_MS, FREEZE_MS } = await import("../lib/server/vouchers.ts");
+  const later = t + HOLD_MS + 60_000;
+  assert.ok(later > t + FREEZE_MS);
+  const other = await checkout(USDT(100), MERCHANT, later);
+  assert.equal((await applyVoucher(MERCHANT, "HALF", other, USDT(100), later + 1)).ok, false, "HALF stays held after HOLD_MS");
 });
 
 test("F4: a fiat checkout (10-min lock) can't take a code after 10 minutes; USD keeps 30", async () => {
@@ -404,7 +409,7 @@ test("S1: an apply racing the claim is refused by the upsert's own guard, and th
   assert.equal((await confirmRedemption(s, claimed, t)).code, "HALF");
 });
 
-test("claimAmountDue is idempotent: a second claim returns the same amount and keeps the first freeze time", async () => {
+test("claimAmountDue: a second claim returns the same amount and moves the freeze to the latest claim (review M1)", async () => {
   const { claimAmountDue } = await import("../lib/server/vouchers.ts");
   const { query } = await import("../lib/server/db.ts");
   await newVoucher({ code: "TEN", value: "10" });
@@ -414,7 +419,25 @@ test("claimAmountDue is idempotent: a second claim returns the same amount and k
   assert.equal(await claimAmountDue(s, t + 1000), USDT(45));
   assert.equal(await claimAmountDue(s, t + 5000), USDT(45));
   const [{ frozen_at }] = await query("SELECT frozen_at::text FROM app_gw_redemptions WHERE session_id = $1", [s]);
-  assert.equal(Number(frozen_at), t + 1000);
+  assert.equal(Number(frozen_at), t + 5000, "the freeze covers the latest attempt's signature");
+});
+
+test("review M1: a re-claim near the end of FREEZE_MS keeps the in-flight payment's code (removeVoucher and switching refused)", async () => {
+  const { claimAmountDue, removeVoucher, FREEZE_MS } = await import("../lib/server/vouchers.ts");
+  await newVoucher({ code: "ONCE", value: "50", max_redemptions: 1 });
+  await newVoucher({ code: "ONE", value: "1", max_redemptions: 1000 });
+  const t = Date.now();
+  const a = await checkout(USDT(100), MERCHANT, t);
+  await applyVoucher(MERCHANT, "ONCE", a, USDT(100), t);
+  assert.equal(await claimAmountDue(a, t), USDT(50)); // attempt 1: outcome unknown, never released
+  const reclaim = t + FREEZE_MS - 1000; // attempt 2 re-claims at 19:59 and relays a fresh signature
+  assert.equal(await claimAmountDue(a, reclaim), USDT(50));
+  const during = t + FREEZE_MS + 500; // attempt 2 is still in flight
+  assert.equal(await removeVoucher(a, during), false, "the code can't be dropped mid-relay");
+  assert.deepEqual(await applyVoucher(MERCHANT, "ONE", a, USDT(100), during), { ok: false, reason: "This checkout is being paid." });
+  assert.equal((await confirmRedemption(a, USDT(50), during + 1000))?.code, "ONCE", "attempt 2 lands at the discount and is counted");
+  const b = await checkout(USDT(100), MERCHANT, during);
+  assert.equal((await applyVoucher(MERCHANT, "ONCE", b, USDT(100), during + 2000)).ok, false, "the 1-use code is spent");
 });
 
 test("claimAmountDue: a shop's own session is null; no hold or a lapsed hold is the checkout's amount, not frozen", async () => {
@@ -432,7 +455,7 @@ test("claimAmountDue: a shop's own session is null; no hold or a lapsed hold is 
   assert.equal(frozen_at, null);
 });
 
-test("a frozen hold keeps counting after HOLD_MS (its payment may still settle), and amountDue reports it", async () => {
+test("a frozen hold keeps counting after HOLD_MS while inside FREEZE_MS (its payment may still settle), and amountDue reports it", async () => {
   const { SESSION_TTL_MS } = await import("../lib/sessions.ts");
   const { claimAmountDue, amountDue, HOLD_MS } = await import("../lib/server/vouchers.ts");
   await newVoucher({ code: "HALF", value: "50", max_redemptions: 1 });
@@ -447,4 +470,94 @@ test("a frozen hold keeps counting after HOLD_MS (its payment may still settle),
   assert.match(r.reason, /used up/);
   assert.equal(await amountDue(a, late), USDT(50));
   assert.equal(await claimAmountDue(a, late), USDT(50), "a retried claim still gets the frozen price");
+});
+
+// Batch 015 Builder Y, F2 (security 009): a frozen hold counts and blocks only for FREEZE_MS after its claim (the
+// relayer's 15-min signature window + 5 min), so a claim whose payment never lands can't lock a use forever.
+const frozenAt = async (s) => {
+  const { query } = await import("../lib/server/db.ts");
+  return (await query("SELECT frozen_at::text FROM app_gw_redemptions WHERE session_id = $1", [s]))[0].frozen_at;
+};
+
+test("F2 (probe P4): a week after a claim that never landed, another checkout can use the 1-use code", async () => {
+  const { claimAmountDue, amountDue } = await import("../lib/server/vouchers.ts");
+  await newVoucher({ code: "ONCE", value: "50", max_redemptions: 1 });
+  const t = Date.now();
+  const a = await checkout(USDT(100), MERCHANT, t);
+  assert.equal((await applyVoucher(MERCHANT, "ONCE", a, USDT(100), t)).ok, true);
+  assert.equal(await claimAmountDue(a, t), USDT(50)); // relay times out, never lands; nobody calls releaseHold
+  const later = t + 7 * DAY;
+  const b = await checkout(USDT(100), MERCHANT, later);
+  assert.deepEqual(await applyVoucher(MERCHANT, "ONCE", b, USDT(100), later), { ok: true, discount: USDT(50), usdtAmount: USDT(50) });
+  assert.equal(await amountDue(a, later), USDT(100), "a's lapsed hold no longer discounts");
+});
+
+test("F2: past HOLD_MS a frozen hold blocks until FREEZE_MS after its claim, then it's free", async () => {
+  const { SESSION_TTL_MS } = await import("../lib/sessions.ts");
+  const { claimAmountDue, amountDue, HOLD_MS, FREEZE_MS } = await import("../lib/server/vouchers.ts");
+  await newVoucher({ code: "HALF", value: "50", max_redemptions: 1 });
+  const t = Date.now();
+  const a = await checkout(USDT(100), MERCHANT, t);
+  await applyVoucher(MERCHANT, "HALF", a, USDT(100), t);
+  const claim = t + SESSION_TTL_MS - 1;
+  assert.equal(await claimAmountDue(a, claim), USDT(50));
+  const inside = claim + FREEZE_MS - 1;
+  assert.ok(inside > t + HOLD_MS, "only the freeze holds it here");
+  const b = await checkout(USDT(100), MERCHANT, inside);
+  assert.match((await applyVoucher(MERCHANT, "HALF", b, USDT(100), inside)).reason, /used up/);
+  assert.equal(await amountDue(a, inside), USDT(50));
+  const lapsed = claim + FREEZE_MS;
+  assert.equal(await amountDue(a, lapsed), USDT(100));
+  assert.equal((await applyVoucher(MERCHANT, "HALF", b, USDT(100), lapsed)).ok, true, "HALF is free again");
+});
+
+test("F2: the holder can't switch codes inside FREEZE_MS; after it the switch is allowed and unfreezes", async () => {
+  const { claimAmountDue, FREEZE_MS } = await import("../lib/server/vouchers.ts");
+  await newVoucher({ code: "HALF", value: "50", max_redemptions: 1 });
+  await newVoucher({ code: "ONE", value: "1", max_redemptions: 1000 });
+  const t = Date.now();
+  const a = await checkout(USDT(100), MERCHANT, t);
+  await applyVoucher(MERCHANT, "HALF", a, USDT(100), t);
+  assert.equal(await claimAmountDue(a, t), USDT(50));
+  assert.deepEqual(await applyVoucher(MERCHANT, "ONE", a, USDT(100), t + FREEZE_MS - 1), { ok: false, reason: "This checkout is being paid." });
+  // the pre-check and the upsert's own guard both let a lapsed freeze be replaced
+  assert.equal((await applyVoucher(MERCHANT, "ONE", a, USDT(100), t + FREEZE_MS)).ok, true);
+  assert.equal(await frozenAt(a), null, "the new hold isn't being paid");
+  const b = await checkout(USDT(100), MERCHANT, t + FREEZE_MS);
+  assert.equal((await applyVoucher(MERCHANT, "HALF", b, USDT(100), t + FREEZE_MS)).ok, true, "HALF's use was freed by the switch");
+});
+
+test("F2: a claim after FREEZE_MS (the hold still live inside HOLD_MS) freezes again from the new time", async () => {
+  const { claimAmountDue, FREEZE_MS } = await import("../lib/server/vouchers.ts");
+  await newVoucher({ code: "TEN", value: "10" });
+  const t = Date.now();
+  const s = await checkout(USDT(50), MERCHANT, t);
+  await applyVoucher(MERCHANT, "TEN", s, USDT(50), t);
+  assert.equal(await claimAmountDue(s, t), USDT(45));
+  assert.equal(await claimAmountDue(s, t + FREEZE_MS - 1), USDT(45));
+  assert.equal(Number(await frozenAt(s)), t + FREEZE_MS - 1, "every claim moves the freeze to its own time (review M1)");
+  assert.equal(await claimAmountDue(s, t + FREEZE_MS + 1000), USDT(45));
+  assert.equal(Number(await frozenAt(s)), t + FREEZE_MS + 1000);
+});
+
+test("removeVoucher: the payer drops the code from an open checkout, never while it's being paid or once paid", async () => {
+  const { removeVoucher, claimAmountDue, amountDue, FREEZE_MS } = await import("../lib/server/vouchers.ts");
+  await newVoucher({ code: "HALF", value: "50", max_redemptions: 1 });
+  const t = Date.now();
+  const open = await checkout(USDT(100), MERCHANT, t);
+  await applyVoucher(MERCHANT, "HALF", open, USDT(100), t);
+  assert.equal(await removeVoucher(open, t), true);
+  assert.equal(await amountDue(open, t), USDT(100), "back to the full price");
+  assert.equal(await removeVoucher(open, t), false, "nothing left to remove");
+  const other = await checkout(USDT(100), MERCHANT, t);
+  assert.equal((await applyVoucher(MERCHANT, "HALF", other, USDT(100), t)).ok, true, "HALF's use was freed");
+  assert.equal(await claimAmountDue(other, t), USDT(50));
+  assert.equal(await removeVoucher(other, t + 1000), false, "being paid: the claimed price stands");
+  assert.equal(await removeVoucher(other, t + FREEZE_MS), true, "an abandoned claim's code can be dropped after FREEZE_MS");
+  const paid = await checkout(USDT(100), MERCHANT, t);
+  await newVoucher({ code: "TEN", value: "10" });
+  await applyVoucher(MERCHANT, "TEN", paid, USDT(100), t);
+  await markCheckoutPaid(paid, t + 1000);
+  assert.equal(await removeVoucher(paid, t + 2000), false, "a paid checkout keeps its code");
+  assert.equal(await removeVoucher("ses_no_hold", t), false);
 });

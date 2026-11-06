@@ -1,0 +1,61 @@
+VERDICT: PASS
+
+# Security review: 015-P4-g4-review-fixes, round 1 (phase mode, Money: yes, one pass)
+
+Scope: `git diff 87a48b6^..HEAD -- apps/web` (4 commits, 11 files). I read all of `lib/server/vouchers.ts`, `checkouts.ts`, `quotes.ts` and `db.ts` at HEAD, plus `links.ts` (openCheckout, payablePrices, createLink, payLink, withPayments, publicLinkJson), `pages.ts` (createPage, payPage), `app/api/v1/sessions/[id]/pay/route.ts`, `lib/{pay,relay,settle,sessions,announce-paid,usdt}.ts`, `lib/server/events.ts`, and `db/{005,010,020,047,048}_*.sql`. For the relayer's 502 mapping I read `apps/relayer/src/relayer.ts:395-425` at origin/main. I also read the G4 code review and the security reviews for batches 009 (F1-F3, F6) and 013 (P1-P4).
+
+What I ran:
+- The batch's tests: `node --experimental-test-module-mocks --test test/gw-{single-use,vouchers,quotes,links,pages}.test.mjs` gave **89 tests, 89 pass, 0 fail**.
+- `npx tsc --noEmit`: the only real error is outside the diff (see "Outside the diff"). The route errors come from stale `.next/types`.
+- A probe against the real SQL on PGlite, asserting the current behaviour: `/private/tmp/claude-501/-Users-vg890-ethglobal-contracts/c6b19a0f-dc4e-4bc4-b19c-2f27badbf70b/scratchpad/probe015/zz-sec015-probe.test.mjs` (4/4 pass, output quoted below).
+
+No HIGH or CRITICAL. Nothing in this tree calls `claimAmountDue`, `releaseHold` or `removeVoucher` yet: the pay route still charges `session.amount` (`pay/route.ts:35,54`). Every finding below is a contract that claude-frontend's integration batch will rely on.
+
+## The five questions
+
+**(1) H1, convert the total once.** Verified.
+- `links.ts:82-85` sums `price × qty` in the shop currency, converts it once with `toUsdtUnits(formatUnits(total, 6), rate)`, then applies the 1-1,000 USDT check to the result.
+- `formatUnits` always yields `\d+(\.\d{1,6})?`, so `toUsdtUnits`'s regex never rejects it, and `parseUnits("20") == parseUnits("20.00")`. At the same rate the charge equals `createQuote` for the same total, to the unit.
+- A payer controls only quantities, item picks and an open amount. Prices and the rate come from the server, and the single ceiling to the cent always rounds toward the merchant: at most 1 cent minus 1 unit over the exact value, never under. The old per-line overcharge (P1) and the trick of lifting a sub-1-USDT cart over the minimum are both gone. 0.001 × 100 now totals 0.12 USDT, which gets a 400.
+- `quotes.ts:125`: `num === den` holds exactly when the rate is 1, whatever the representation. USD and USDT (`usdRate` returns 1/1, `:114`) are exact, and so is a fiat rate printed as exactly "1". That is still exact, so nobody is short-changed.
+- `formatUsdt` (`usdt.ts:30-33`) never truncates decimals, so a 10.123456 charge displays as 10.123456.
+
+**(2) M3, single-use link paid twice.** Not through our pay route.
+- **Concurrent claims.** `pg_advisory_xact_lock(hashtext('link:'||ref))` runs first in a pinned READ COMMITTED transaction (`db.ts:41`). The claim CTE takes its snapshot after the lock, so it sees the other checkout's committed `claimed_at` or `paid_at`, and one of two concurrent claims wins. The CTE claims and freezes in one statement, so a refused claim freezes nothing (tested). Locks don't form a cycle with `applyVoucher`'s voucher lock: neither path takes the other's advisory lock, and both take their advisory lock before any row lock.
+- **Paid checkout re-claim.** `c.paid_at IS NULL` refuses it with 410. For other checkouts of the link, `paid_at IS NOT NULL` blocks for good.
+- **Release races.** `releaseHold` clears only its own unpaid row. Done after a legitimate release point it is safe. The one ordering hazard is L1 below.
+- **Residual (INFO).** M3 relies on our server seeing every payment. A payer who sends their own signed authorization straight to `MerchantPay.paySale` (permissionless) can still pay a second checkout. That only hurts the payer (the merchant refunds), so no change is needed.
+
+**(3) F2, freezes that expire.** FREEZE_MS = 1,200 s, against the 900 s that `parseApproval` and the relayer allow, plus settle's 60 s CLOCK_MARGIN, which leaves 240 s of margin. The bound is right only if it is measured from the latest claim. It is measured from the first, so a freeze can lapse while a later claim's relay is in flight (M1). Apart from that, the expiry swaps batch 009 F2's permanent lock for the rare +1 oversell that 009 F2 predicted (L2).
+
+**(4) removeVoucher.**
+- It can't drop a hold that is confirmed or frozen inside FREEZE_MS. Under READ COMMITTED the DELETE re-checks `frozen_at` against the newest row version, so it can't beat a committed claim.
+- It can't drop a hold on a checkout whose `paid_at` is committed.
+- It can drop a hold whose payment is in flight when that hold carries a stale first-claim `frozen_at` (M1, probe S1).
+
+**(5) Creation checks and the F6 back-off.**
+- `payablePrices` (`links.ts:50-57`) uses the same `usdRate` + `toUsdtUnits` call as checkout. An FX outage at creation gives `usdRate`'s 503, with no bypass. It is a UX check anyway: checkout re-checks 1-1,000.
+- F6 (`quotes.ts:84-99`): for 60 s after a failed fetch, the instance serves the cache or a 503 straight away and makes no request. The stale cache is still date-checked: `usdRate` calls `freshDate` on every use (`:117`), so a cached rate older than 7 days is refused even during the back-off.
+
+## FINDINGS (none blocks; only HIGH/CRITICAL block in phase mode)
+
+| # | Severity | Where | Exploit sketch | Fix | Owner |
+|---|---|---|---|---|---|
+| M1 | **MEDIUM** (a regression this batch introduced, in the voucher-count invariant; latent until the pay route claims) | `vouchers.ts:284` (`CASE WHEN r.frozen_at > $3 THEN r.frozen_at ELSE $2 END`), with `:225-226` (upsert guard), `:192`, `:332-341` (removeVoucher), docstrings `:47`, `:262-264`; the test pinning it is `gw-vouchers.test.mjs:412,520` | **A re-claim inside FREEZE_MS keeps the first claim's freeze time, while `claimed_at` and the new signature both start at the re-claim.** The new signature can be valid until re-claim + 900 s, but the freeze ends at first claim + 1,200 s, which can be up to about 20 minutes earlier.<br>Sequence (USD/USDT checkout, 30-min session):<br>1. Apply a 1-use code.<br>2. Claim at T (attempt 1). It ends without a release and without paying. Paths that do this: a relayer 502 `reverted` maps to `unknown` (`relay.ts:90`). A payer can trigger that by moving their USDT away between the relayer's simulation and inclusion. Other paths: 422 + `findPayment` undefined, or a route that drops the settle-"open" release now that F2 expires claims.<br>3. Re-claim at T + 19:59 and relay (up to 35 s).<br>4. At T + 20:00.5, `removeVoucher` (or a re-apply of another code) succeeds.<br>5. The payment lands at the discounted price, `confirmRedemption` returns null, and the code is free again. Repeat with a fresh wallet.<br>Probe S1: `frozen_at after re-claim - first claim (ms): 0`, `removeVoucher during in-flight relay: true`, `confirmRedemption: null`, `1-use code applies again on B: { ok: true … }`. With a switch instead (S1b), the second code is counted instead of the first. Before this batch a frozen hold never lapsed, so this could not happen. | Freeze from the latest claim, the same as `claimed_at`: `SET frozen_at = $2` (drop the CASE).<br>This is safe: a re-claim only happens inside the session's life (the pay route refuses an expired session, `:51`), so a hold is locked for at most session expiry + 20 min.<br>Update the docstrings at `:47` and `:262-264` and the test at `:412`/`:520`.<br>Add: claim at t, re-claim at t + FREEZE_MS − 1 s, then at t + FREEZE_MS + 1 s `removeVoucher` must return false and `applyVoucher` must return BEING_PAID. | claude-contracts |
+| L1 | LOW (docstring; latent) | `vouchers.ts:297-311` (`releaseHold`, the bullet at `:307`), `:262-265` | **The settle-"open" release has to come before this attempt's claim, and the docstring doesn't say so.** `releaseHold` clears the session's claim and freeze whichever attempt made them.<br>If a route claims first (it needs the price for `verifyTypedData`, which the current route runs at `:37`, before `settlePending`) and then releases on settle's "open" branch, it relays with no claim and no freeze. A second checkout of the single-use link can then claim, and the payer can remove the code mid-flight.<br>Probe S2: `B's claim while A's attempt 2 relays: 25000000n`.<br>The order in batch-009 F1 (1) (claimPayment → settlePending "open" → claimAmountDue → verify against the claimed amount → relay) is safe. | Add one sentence to the docstring: "in settlePending's open branch, release before this attempt's claimAmountDue, never after it; after a claim, release only if this attempt then stops". With M1 fixed and F2 in place, the settle-open release is optional, so dropping that bullet also works. | claude-contracts (docstring), claude-frontend (route order) |
+| L2 | LOW (accepted F2 trade-off; batch 009 F2 predicted it) | `vouchers.ts:220-221`, `:249`, `:284-285` | **A payment can land and only be recorded more than FREEZE_MS after its claim.** For example: the outcome is unknown, the tx lands, the payer comes back after 20 minutes, and `settlePending` records it. By then the hold has stopped counting, and another checkout may have taken the last use. `confirmRedemption`'s `times_redeemed < max` keeps the count right, but two payers got the discount.<br>The bound is one discount per event, and an attacker can't push a landing past `validBefore`. Note that batch 009 F3 is still open: `findPayment` matches `session.amount`, so a discounted pending payment isn't recognized at all until the route carries the claimed price. | No change is required. Optionally log a "voucher over-redeemed" line when `confirmRedemption` returns null although a hold row with `usdt_amount = paidAmount` exists. | claude-contracts |
+| L3 | LOW (defence in depth) | `vouchers.ts:332-341`; `lib/announce-paid.ts:16-19` | **`removeVoucher`'s paid guard reads `paid_at`, which `onSessionPaid` writes after the response (`after()`).** Between relay success and `markCheckoutPaid`, only the freeze protects the hold. That is fine once M1 is fixed. If `markCheckoutPaid` fails and nothing retries it, the freeze lapses after 20 min and the hold can be deleted. | The DELETE route refuses when `getSession(id)?.payment` is set or `isInFlight(id)` is true (both in memory, so immediate), then calls `removeVoucher`. | claude-frontend |
+| I1 | INFO | `quotes.ts:100-110` | A 200 with a row missing replaces a good cache and clears `failedAt`, so that currency gives 503 until the cache expires (15 min). This was already the case; it fails closed and affects availability only. | None now. | claude-contracts |
+
+The probe's S3 (a lapsed frozen hold on a checkout paid at full price counting forever) can't be reached through the pay route: a hold lapses only after HOLD_MS (45 min), and sessions expire at 30 min. I dropped it.
+
+## Outside the diff (known, not this review's verdict)
+- `lib/announce-paid.ts:11` gives TS2322. `onSessionPaid` now requires `paidAmount` (backend e77dcf4), but `announcePaid` calls `send(session)`. At runtime, `confirmRedemption(id, undefined)` throws inside `onSessionPaid` after `markCheckoutPaid`, so `sendOnce` never runs. On this branch's HEAD that means no `payment.succeeded` webhook and no voucher count.
+- This batch's `npm run typecheck` will fail until claude-frontend's batch 015 lands its fix (claude-research, 08:50). claude-contracts merges origin/main afterwards and does not edit that file. The ci lane verifies.
+
+## Secret grep
+`git diff --name-only 87a48b6^..HEAD | grep -v '\.env' | xargs grep -nE '(PRIVATE_KEY|SECRET|0x[0-9a-fA-F]{64})'` found 7 hits, none of them on a line this diff adds (the same grep on `+` lines finds nothing):
+- `vouchers.ts:133,135`: the env var name `VOUCHER_HASH_SECRET`, not a value.
+- `gw-vouchers.test.mjs:10,56,78,140,141`: a test fixture string, `"voucher-hash-secret-for-tests"`.
+
+The diff adds no new log lines. `paid_at` on the public link is a timestamp, not personal data, and nothing new goes on-chain or to Arkiv. I did not read any `.env*` file.
