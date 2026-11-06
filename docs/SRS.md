@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Version | 2.0 (2026-11-06 02:35: pivot to a stablecoin payment gateway for international merchants; financing kept as the Capital tab) |
-| Changes | 2.1 (human 2026-11-06 16:09: 'i want the mcp … and fix the other things'): FR-MCP-1..4 + AT-16 (assistant connector), FR-ARK-7 (checkout reads the voucher's Arkiv entity), FR-REL-10 (relayer limits across instances). 1.1 (human approved 2026-11-05 19:50): FR-TOK-8 → M, Phase 4 (AT-8 needs it at G4); FR-PRIV-1 and FR-PRIV-4 reworded (pay and checkout pages make no browser chain reads); CON-8 added (demo funding by seed script); DEP-3 pass criteria (Privy then failed them, guest wallet); demo amounts divided by 10 in AT-3–AT-7 to fit the test USDT we can collect; FR-PRIV-4 lists the Nym worker's own traffic (human 21:18); NFR-12–14 speed budgets for web and relayer (human 22:28: "the system should be fast"); FR-PAY-15 merchant wallet sign-in (human asked in the frontend session, 22:5x); FR-PAY-16 owner sweep of stray USDT (human 23:40, contracts gate); demo amounts ÷100 in AT-3–AT-7 (human 23:58: ~110 test USDT available); FR-ADV-7 and FR-INV-6 cut (human 00:34); FR-KYC-2/3, FR-PAY-13/14 and FR-INV-7 cut, contracts freeze after G4 (human 02:02); FR-GW-10 network-fee column (claude-research, delegated by the human 06:43); FR-ARK-4 debtor left out, FR-PRIV-4 lists the Capital server reads, AT-8 pass by dry run + the recorded revert (claude-research from the Capital build pack, delegated, 10:42) |
+| Changes | 2.2 (human 2026-11-06 16:16: 'there is no option to pay, there is no wallet connect … no option to settle'): FR-PAY-16 (pay with your own wallet), FR-GW-15 (settlement balance + withdraw), FR-MCP-5 (agent pays a checkout under a cap; Pixa read as a reference only, no code copied: Start Fresh), AT-17/18. 2.1 (human 2026-11-06 16:09: 'i want the mcp … and fix the other things'): FR-MCP-1..4 + AT-16 (assistant connector), FR-ARK-7 (checkout reads the voucher's Arkiv entity), FR-REL-10 (relayer limits across instances). 1.1 (human approved 2026-11-05 19:50): FR-TOK-8 → M, Phase 4 (AT-8 needs it at G4); FR-PRIV-1 and FR-PRIV-4 reworded (pay and checkout pages make no browser chain reads); CON-8 added (demo funding by seed script); DEP-3 pass criteria (Privy then failed them, guest wallet); demo amounts divided by 10 in AT-3–AT-7 to fit the test USDT we can collect; FR-PRIV-4 lists the Nym worker's own traffic (human 21:18); NFR-12–14 speed budgets for web and relayer (human 22:28: "the system should be fast"); FR-PAY-15 merchant wallet sign-in (human asked in the frontend session, 22:5x); FR-PAY-16 owner sweep of stray USDT (human 23:40, contracts gate); demo amounts ÷100 in AT-3–AT-7 (human 23:58: ~110 test USDT available); FR-ADV-7 and FR-INV-6 cut (human 00:34); FR-KYC-2/3, FR-PAY-13/14 and FR-INV-7 cut, contracts freeze after G4 (human 02:02); FR-GW-10 network-fee column (claude-research, delegated by the human 06:43); FR-ARK-4 debtor left out, FR-PRIV-4 lists the Capital server reads, AT-8 pass by dry run + the recorded revert (claude-research from the Capital build pack, delegated, 10:42) |
 | Status | Approved scope, locked by the human 2026-11-05 |
 | Related | ARCHITECTURE.md (design and ABI), PHASES.md (delivery plan), `research_notes/Mumbai hackathon idea validation/build_H1_merchant_capital.md` (design detail and sources), HANDOFF.md (decisions, event facts) |
 | Change control | Requirements change only through HANDOFF.md + an agentbus message; IDs are never reused |
@@ -107,6 +107,7 @@ Priority: **M** = must (never cut), **S** = should, **C** = could (first to cut)
 | FR-PAY-13 | A debtor can confirm (acknowledge) an invoice with one gasless signature | C | 5 |
 | FR-PAY-14 | A debtor can pre-authorize payment on the due date; the system submits it when due | C | 5 |
 | FR-PAY-15 | A merchant signs in with its own wallet (EIP-4361 / Sign-In with Ethereum, signed HttpOnly session); the dashboard, API keys and refunds show only that wallet's data | M | 2 |
+| FR-PAY-16 | **Pay with your own wallet:** the checkout and invoice page offer "Pay with your wallet" next to the default: connect an injected wallet (MetaMask or similar), add or switch to Whitechain Testnet, and sign the same EIP-3009 authorization (a message, no transaction, no gas); the server path is unchanged. Before the hold, the default path checks the browser wallet's USDT and, if it's short, says so and offers the wallet option instead of failing after the hold. This option may use the word "wallet" (FR-PAY-7 still holds for the default path) | M | 5 |
 | FR-PAY-16 | The owner can sweep USDT sent to MerchantPay by plain transfer (MerchantPay never holds funds between transactions) | S | 3 |
 
 ### 3.2 Relayer and gas (Whitechain Scale)
@@ -202,6 +203,7 @@ Priority: **M** = must (never cut), **S** = should, **C** = could (first to cut)
 | FR-GW-12 | **Discount vouchers:** the merchant creates codes (percent or fixed off, expiry, usage limit); the customer applies one at checkout; each code is an Arkiv entity that expires with the code, and redemptions are counted on our server | M | 4 |
 | FR-GW-13 | **Gift vouchers:** a customer buys a prepaid USDT voucher that someone else redeems at that merchant | C | 5 |
 | FR-GW-14 | **Test mode everywhere:** every page shows a "Test mode · Whitechain testnet" badge; no mainnet path exists | M | 4 |
+| FR-GW-15 | **Settlement balance and withdraw:** Settlements shows the USDT already in the merchant's own wallet (settled in the payment's transaction, nothing pending with us) and a Withdraw action: the merchant's wallet sends USDT to an address it enters (for example an exchange deposit address), with the amount, address and network fee shown before signing | M | 5 |
 
 ### 3.10 Assistant connector (MCP, v2.1)
 | ID | Requirement | Pri | Phase |
@@ -210,6 +212,7 @@ Priority: **M** = must (never cut), **S** = should, **C** = could (first to cut)
 | FR-MCP-2 | Tools: `create_checkout` (amount, currency, description → hosted checkout URL; creates no payment), `get_checkout` (status, amount, and once paid the tx hash with its explorer link), `list_payments` (recent payments with amount, refunded and tx link), `sales_summary` (gross, refunded and count for a date range, computed from `list_payments`) | M | 5 |
 | FR-MCP-3 | No tool moves money, signs, refunds or changes keys, wallets or webhooks. The key never appears in tool output or logs. Inputs are validated (amount format, currency list, limits) and API errors come back as a plain reason | M | 5 |
 | FR-MCP-4 | The README gives one `claude mcp add` command and a Claude Desktop config block | S | 5 |
+| FR-MCP-5 | **Agent pays a checkout** (only when `MCP_PAYER_KEY` is set): `pay_checkout` signs the EIP-3009 authorization for a checkout URL with that key and posts it to the pay route (gasless); it refuses a payment above a per-payment cap and a daily cap (defaults 10 and 25 USDT), and `spending_report` lists every payment it made. The merchant tools never move money | S | 5 |
 
 ## 4. Non-functional requirements
 | ID | Category | Requirement | How it's verified |
@@ -274,6 +277,8 @@ Priority: **M** = must (never cut), **S** = should, **C** = could (first to cut)
 | AT-14 | The demo shop adds the gateway with the payment button or the SDK | Integration code ≤ 20 lines; a sale completes; the webhook arrives and its signature verifies |
 | AT-15 | The merchant opens Reports for today after AT-11–AT-14 and one refund | Gross, fees, refunds and count match the chain; the CSV has the same rows |
 | AT-16 | In Claude Code with the MCP server added, the merchant asks for a 5 USD checkout, a 0-WBT customer pays the URL, and the merchant asks whether it was paid | `get_checkout` returns Paid with the same tx hash the explorer shows; `list_payments` includes it; no tool output contains the key |
+| AT-17 | A visitor with MetaMask holding test USDT and 0 WBT opens a 5 USD link and chooses Pay with your wallet | One signature prompt (no transaction); the payment lands in one tx with the usual split; the visitor still has 0 WBT spent. A browser with an empty guest wallet sees the short-balance notice before the hold |
+| AT-18 | The merchant opens Settlements and withdraws 1 USDT to a second address | The balance matches the chain; the withdraw tx moves exactly 1 USDT to that address |
 
 ---
 
