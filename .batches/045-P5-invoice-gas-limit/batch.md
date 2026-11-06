@@ -8,3 +8,4 @@ Log:
 - 19:3x RED 3ea2291 (3 fail, guard passes), GREEN 61699e1: 78/78, tsc 0.
 - 19:3x review-code PASS (LOW: clamp to [400k, max], one gasOf helper, test gaps, ARCHITECTURE:94 doc) · review-security PASS (L1 claim-split front-run → OOG bans an honest payer: ALERT added; L2 <20% headroom 500-600k accepted by the spec; L3 invoices have no merchant rate limit: ~40 heavy relays can spend the 0.1 WBT day → human decision; INFO-2 spec wording fixed; INFO-5 test added).
 - Fixes: gasLimit clamps to [GAS_MIN, maxGas(p)]; gasOf(p) feeds simulate, sign and reserve; ALERT out of gas when gasUsed ≥ limit; tests: 450k→540k (pins the ceil), funding at 400k, failed estimate simulates at 600k twice, exact budget boundary (0.1 − 0.0036 fits, +1 wei refused), mined invoice revert above 400k (ban + full fee + alert). 79/79, tsc 0.
+- 19:3x ci round 1 PASS (npm ci, 79/79, tsc 0, secret scan 0). Human gate next.
