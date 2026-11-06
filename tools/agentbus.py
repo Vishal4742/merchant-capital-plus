@@ -13,7 +13,7 @@
 
 Bus dir: $AGENTBUS_DIR or ~/.agentbus (machine-wide, any folder, any agent of this user).
 """
-import argparse, fcntl, json, os, re, sys, time
+import argparse, fcntl, json, os, re, subprocess, sys, time
 from datetime import datetime
 
 BUS = os.environ.get("AGENTBUS_DIR", os.path.expanduser("~/.agentbus"))
