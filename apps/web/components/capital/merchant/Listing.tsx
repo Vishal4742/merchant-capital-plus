@@ -8,6 +8,7 @@ import type { Address } from "viem";
 import { Button } from "@/components/Button";
 import { CopyButton } from "@/components/CopyButton";
 import { EXPLORER } from "@/lib/usdt";
+import { settlePublish, startPublish } from "./publishing";
 import { publishOffer } from "./terms";
 import { SENT_UNCONFIRMED, cancelOffer, capitalError, connectCapital, type Listed, type MerchantWallet } from "./wallet";
 
@@ -39,10 +40,13 @@ export function useListing(merchant: Address) {
       return;
     }
     setState({ phase: "publishing", listed: done });
+    startPublish(done.claimId); // no Publish again on this offer until this settles and the book is read again
     try {
       setState({ phase: "done", listed: done, entityKey: await publishOffer(done.claimId) });
     } catch (err) {
-      setState({ phase: "unpublished", listed: done, message: err instanceof Error ? err.message : "Try again in a minute." });
+      setState({ phase: "unpublished", listed: done, message: err instanceof Error ? err.message : "The offer book didn't answer." });
+    } finally {
+      settlePublish(done.claimId);
     }
     router.refresh(); // the advance, the offers and the book are read on the server
   }
@@ -89,12 +93,10 @@ export function ListingStatus({ state }: { state: ListingState }) {
       );
     case "unpublished":
       return (
-        <div role="alert" className={`${box} text-warning`}>
-          <p>
-            Offer {state.listed.claimId} is listed on chain ({txLink(state.listed)}), but it isn&apos;t in the offer book yet: {state.message}
-          </p>
-          <p className="text-ink">Use Publish again on it under My live offers. Don&apos;t list it a second time.</p>
-        </div>
+        // said once (UX 036 F4): the state, the reason, what to do
+        <p role="alert" className={`${box} text-warning`}>
+          Offer {state.listed.claimId} is listed on chain ({txLink(state.listed)}) but isn&apos;t in the offer book yet. {state.message} Use Publish again on it under My live offers instead of listing it again.
+        </p>
       );
     case "unconfirmed":
       return (

@@ -7,11 +7,16 @@ import type { Address } from "viem";
 import { Button } from "@/components/Button";
 import { card, field } from "@/components/gateway/Frame";
 import { WBT_HINT } from "@/lib/dashboard";
-import { formatUsdt } from "@/lib/usdt";
+import { formatUsdt, parseUsdt } from "@/lib/usdt";
 import { CancelOffer, DEADLINES, DEFAULT_DEADLINE, ListingStatus, busy, useListing } from "./Listing";
-import { advanceCostLine, advanceState, advanceTerms, type MerchantAdvance, type OfferRow } from "./terms";
+import { advanceCostLine, advanceState, advanceTerms, usdtAmounts, type MerchantAdvance, type MerchantOffer, type OfferRow } from "./terms";
 import { listAdvance } from "./wallet";
 
+
+function offerTerms(o: MerchantOffer): string {
+  const [get, repay] = usdtAmounts(parseUsdt(o.price), parseUsdt(o.face));
+  return `You get ${get} USDT and repay ${repay} USDT from ${o.holdback_pct}% of each sale.`;
+}
 
 interface AdvancePanelProps {
   merchant: Address;
@@ -43,7 +48,7 @@ export function AdvancePanel({ merchant, advance, offers }: AdvancePanelProps) {
           </p>
           {state.offer && (
             <p className="text-ink-muted">
-              You get {state.offer.price} USDT and repay {state.offer.face} USDT from {state.offer.holdback_pct}% of each sale.
+              {offerTerms(state.offer)}
             </p>
           )}
           <CancelOffer merchant={merchant} claimId={state.claimId} />
