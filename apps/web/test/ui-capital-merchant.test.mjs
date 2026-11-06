@@ -62,6 +62,8 @@ test("advanceTerms mirrors BadTerms and the offer-book limits, one sentence each
   assert.match(error({ principal: "0" }), /principal as an amount/i);
   assert.match(error({ principal: "0.5" }), /1\.00 to 1,000\.00/);
   assert.match(error({ principal: "1000.01" }), /1\.00 to 1,000\.00/);
+  assert.match(error({ principal: "10.123" }), /at most 2 decimals/, "UX 036 F2: amounts in cents, like the rest of the dashboard");
+  assert.match(error({ cap: "11.001" }), /at most 2 decimals/);
   assert.match(error({ cap: "abc" }), /cap as an amount/i);
   assert.match(error({ cap: "9.99" }), /at least the principal/i);
   assert.match(error({ cap: "1000.01" }), /at least the principal/i);
@@ -101,8 +103,20 @@ test("invoiceTerms: AT-6 prices 98.065556 for 60 days at 12% and lists with reco
   const r = m.invoiceTerms({ face: 100_000_000n, dueDate: due, apr: "12", deadline: NOW + DAY }, NOW);
   assert.equal(r.ok, true, r.error);
   assert.deepEqual(r.value, { price: 98_065_556n, offerDeadline: BigInt(NOW + DAY), days: 60, aprBps: 1200 });
-  assert.equal(m.invoicePriceLine(98_065_556n, 100_000_000n, 60, 1200), "Investors pay 98.065556 USDT now for 100.00 USDT due in 60 days (12.00% APR).");
-  assert.equal(m.invoicePriceLine(99_967_134n, 100_000_000n, 1, 1200), "Investors pay 99.967134 USDT now for 100.00 USDT due in 1 day (12.00% APR).");
+  // UX 036 F2: one decimal style per line; the price is the exact on-chain value, so the line goes to 6 decimals
+  assert.equal(m.invoicePriceLine(98_065_556n, 100_000_000n, 60, 1200), "Investors pay 98.065556 USDT now for 100.000000 USDT due in 60 days (12.00% APR).");
+  assert.equal(m.invoicePriceLine(99_967_134n, 100_000_000n, 1, 1200), "Investors pay 99.967134 USDT now for 100.000000 USDT due in 1 day (12.00% APR).");
+  assert.match(error12345(), /at most 2 decimals/, "UX 036 L8: not 'above 0%'");
+});
+
+const error12345 = () => m.invoiceTerms({ face: 100_000_000n, dueDate: NOW + 60 * DAY, apr: "12.345", deadline: NOW + DAY }, NOW).error;
+
+test("usdtAmounts: one decimal style per line, with the dashboard's separators (UX 036 F1, F2)", () => {
+  assert.deepEqual(m.usdtAmounts(10_000_000n, 11_000_000n), ["10.00", "11.00"]);
+  assert.deepEqual(m.usdtAmounts(1_234_560_000n), ["1,234.56"]);
+  assert.deepEqual(m.usdtAmounts(98_065_556n, 100_000_000n), ["98.065556", "100.000000"]);
+  assert.deepEqual(m.usdtAmounts(1_234_500_001n, 2_000_000n), ["1,234.500001", "2.000000"]);
+  assert.equal(m.usdtText("1234.56"), "1,234.56", "an API amount (plainUsdt) as the dashboard shows it");
 });
 
 test("invoiceTerms mirrors listInvoice's rules: price below face, deadline a minute before the due date", () => {
@@ -159,10 +173,33 @@ test("publishOffer: POSTs the claim id, returns the entity key, and passes the s
   const refused = async () => new Response(JSON.stringify({ error: "Arkiv refused or timed out. Try again in a minute." }), { status: 502 });
   await assert.rejects(m.publishOffer("7", refused), /Arkiv refused or timed out/);
   const garbled = async () => new Response("<html>", { status: 500 });
-  await assert.rejects(m.publishOffer("7", garbled), /isn't in the offer book yet/);
+  // UX 036 F4: the reason only; the status line around it says "isn't in the offer book yet" once
+  await assert.rejects(m.publishOffer("7", garbled), (e) => e.message === "The offer book didn't answer.");
   const offline = async () => {
     throw new TypeError("fetch failed: https://internal.example");
   };
   await assert.rejects(m.publishOffer("7", offline), (e) => !/internal\.example/.test(e.message) && /offer book/.test(e.message));
   await assert.rejects(m.publishOffer("7/../x", ok), /claim/i, "only a decimal claim id goes in the path");
+});
+
+test("publish waits longer than the Arkiv SDK's 180 s receipt wait, as vouchers do (UX 036 F5)", () => {
+  assert.ok(m.PUBLISH_TIMEOUT_MS >= 200_000, `${m.PUBLISH_TIMEOUT_MS}`);
+});
+
+test("Publish again stays off while a publish is in flight and until the book is re-read (UX 036 F5)", async () => {
+  const p = await import("../components/capital/merchant/publishing.ts");
+  const seen = [];
+  const stop = p.subscribe(() => seen.push(p.snapshot()));
+  assert.equal(p.publishBlocked("7"), false);
+  p.startPublish("7");
+  assert.equal(p.publishBlocked("7"), true, "in flight");
+  assert.equal(p.publishBlocked("8"), false, "only that offer");
+  p.bookRead();
+  assert.equal(p.publishBlocked("7"), true, "a re-read while in flight doesn't count");
+  p.settlePublish("7");
+  assert.equal(p.publishBlocked("7"), true, "settled, but the book hasn't been read since");
+  p.bookRead();
+  assert.equal(p.publishBlocked("7"), false, "re-read after it settled");
+  assert.ok(seen.length >= 4, "listeners hear every change");
+  stop();
 });
