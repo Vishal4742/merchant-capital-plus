@@ -829,15 +829,15 @@ test('a health read in flight across a send does not re-cache the pre-send balan
 test('the background refresh keeps re-reading the balance, so health is served from the cache', async () => {
   const node = balanceNode(10n ** 18n);
   const stop = startBalanceRefresh(node.client, 20);
-  try {
-    await sleep(75);
-    const refreshed = node.reads();
-    assert.ok(refreshed >= 3, `only ${refreshed} background reads in 75 ms at a 20 ms interval`);
-    assert.equal(await wbtOf(node), '1');
-    assert.equal(node.reads(), refreshed, 'health waited on the node instead of the refreshed cache');
-  } finally {
-    stop();
-  }
+  // Batch 049: wait for the reads instead of a fixed 75 ms (Windows timers tick at ~15.6 ms, so a 20 ms interval can fire
+  // only twice in 75 ms), then stop the timer before the health call so a late tick can't be mistaken for health reading.
+  const deadline = Date.now() + 2_000;
+  while (node.reads() < 3 && Date.now() < deadline) await sleep(5);
+  stop();
+  const refreshed = node.reads();
+  assert.ok(refreshed >= 3, `only ${refreshed} background reads in 2 s at a 20 ms interval`);
+  assert.equal(await wbtOf(node), '1');
+  assert.equal(node.reads(), refreshed, 'health waited on the node instead of the refreshed cache');
   const stopped = node.reads();
   await sleep(50);
   assert.equal(node.reads(), stopped, 'the refresh kept running after stop()');
