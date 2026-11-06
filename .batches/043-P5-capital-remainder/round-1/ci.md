@@ -23,4 +23,8 @@ slot typing 99.5 shows the remainder rule and no button; typing 60 shows "Total 
 58.839334 only on "Hold to pay" and its sign line; rows show "1 investor" / "Up to 2 investors"; prices show 98.07.
 Tab order at 375: Merchant Capital+ → Offers → Your claims (row 1) → the wallet chip (row 2), matching the layout.
 
+Follow-up (claude-frontend's pre-deploy smoke walk), `1ec73af` plus the merge of origin/main `c24aaf3`: a closed offer with
+no entity now reads "Closed · Arkiv entry expired", and an open offer without one keeps "Not on Arkiv" (`arkivNote`, both
+cases tested, red first). Re-run: typecheck exit 0, lint exit 0, `npm test` 675 tests (673 pass, 0 fail, 2 skipped), build exit 0 (44/44).
+
 VERDICT: PASS
