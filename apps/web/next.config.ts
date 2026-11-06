@@ -34,7 +34,8 @@ const nextConfig: NextConfig = {
   async headers() {
     const csp = [{ key: "Content-Security-Policy", value: PAY_PAGE_CSP }];
     // a payment page shows the merchant's logo from its own https URL (human 06:30): images only, scripts and calls stay 'self'
-    const logoCsp = [{ key: "Content-Security-Policy", value: withPrivy(PAY_PAGE_CSP.replace("img-src 'self' data:", "img-src 'self' data: https:")) }];
+    const logoCsp = [{ key: "Content-Security-Policy", value: PAY_PAGE_CSP.replace("img-src 'self' data:", "img-src 'self' data: https:") }];
+    // only the pages that render the pay sheet; /l and /p post to /checkout and never show it (security 046 L1)
     const paySheetCsp = [{ key: "Content-Security-Policy", value: withPrivy(PAY_PAGE_CSP) }];
     const merchantPolicy =
       PAY_PAGE_CSP.replace("script-src 'self' 'unsafe-inline'", "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:").replace(
@@ -55,7 +56,7 @@ const nextConfig: NextConfig = {
       { source: "/checkout/:path*", headers: paySheetCsp },
       { source: "/pay/:path*", headers: paySheetCsp },
       { source: "/r/:path*", headers: csp },
-      { source: "/l/:path*", headers: paySheetCsp },
+      { source: "/l/:path*", headers: csp },
       { source: "/counter/:path*", headers: csp },
       // the dashboard sends invoices, approvals and refunds; its scripts stay 'self' (security review 005 F8). Its chain
       // reads go through Anon-RPC (FR-PRIV-1), so it may call the Nym bootstrap, bundle CDNs, directory and gateways
