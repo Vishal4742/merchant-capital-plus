@@ -10,6 +10,7 @@ Gateway API (claude-contracts). Phase mode, Money: yes. The G4 phase review's fi
 - **FR-GW-11** (F6): after a failed FX fetch, wait 60 s before fetching again (serve the checked cache or 503 at once).
 - **FR-GW-1** (claude-frontend 08:19): `GET /api/v1/public/links/{slug}` adds `paid_at` (ISO) when status is paid, else null.
 - **FR-GW-12** (batch-013 P1): `releaseHold`'s docstring states the rules in `relaySale`'s result shape (`refused`, `unknown`, other).
+- **FR-GW-12** (claude-frontend 08:32): `removeVoucher(sessionId)`: the payer removes the code from an open checkout; removes the hold only while it isn't frozen, confirmed or on a paid checkout, in one statement (so claude-frontend's route stops running SQL on `app_gw_redemptions`, ARCHITECTURE §4b "lanes never read each other's tables").
 
 ## Acceptance criteria
 - [ ] H1: tests: 2 × 10 EUR page at 0.88875 → 22.51 (= `createQuote("20.00","EUR")`); gw-pages' cart test 20.96 → 20.94; a 10.123456 USDT link charges 10.123456; USD 1:1 exact.

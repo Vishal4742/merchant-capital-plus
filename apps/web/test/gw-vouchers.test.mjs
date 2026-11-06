@@ -521,3 +521,25 @@ test("F2: a claim after FREEZE_MS (the hold still live inside HOLD_MS) freezes a
   assert.equal(await claimAmountDue(s, t + FREEZE_MS + 1000), USDT(45));
   assert.equal(Number(await frozenAt(s)), t + FREEZE_MS + 1000);
 });
+
+test("removeVoucher: the payer drops the code from an open checkout, never while it's being paid or once paid", async () => {
+  const { removeVoucher, claimAmountDue, amountDue, FREEZE_MS } = await import("../lib/server/vouchers.ts");
+  await newVoucher({ code: "HALF", value: "50", max_redemptions: 1 });
+  const t = Date.now();
+  const open = await checkout(USDT(100), MERCHANT, t);
+  await applyVoucher(MERCHANT, "HALF", open, USDT(100), t);
+  assert.equal(await removeVoucher(open, t), true);
+  assert.equal(await amountDue(open, t), USDT(100), "back to the full price");
+  assert.equal(await removeVoucher(open, t), false, "nothing left to remove");
+  const other = await checkout(USDT(100), MERCHANT, t);
+  assert.equal((await applyVoucher(MERCHANT, "HALF", other, USDT(100), t)).ok, true, "HALF's use was freed");
+  assert.equal(await claimAmountDue(other, t), USDT(50));
+  assert.equal(await removeVoucher(other, t + 1000), false, "being paid: the claimed price stands");
+  assert.equal(await removeVoucher(other, t + FREEZE_MS), true, "an abandoned claim's code can be dropped after FREEZE_MS");
+  const paid = await checkout(USDT(100), MERCHANT, t);
+  await newVoucher({ code: "TEN", value: "10" });
+  await applyVoucher(MERCHANT, "TEN", paid, USDT(100), t);
+  await markCheckoutPaid(paid, t + 1000);
+  assert.equal(await removeVoucher(paid, t + 2000), false, "a paid checkout keeps its code");
+  assert.equal(await removeVoucher("ses_no_hold", t), false);
+});

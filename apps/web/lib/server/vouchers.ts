@@ -325,6 +325,22 @@ export async function releaseHold(sessionId: string): Promise<boolean> {
 }
 
 /**
+ * The payer removes the code from an open checkout (claude-frontend's DELETE /api/v1/sessions/:id/voucher). One
+ * statement: removes the hold only while it isn't being paid (frozen within FREEZE_MS), confirmed, or on a paid
+ * checkout, so a claimed price always stands. True if a hold was removed.
+ */
+export async function removeVoucher(sessionId: string, now = Date.now()): Promise<boolean> {
+  const rows = await query(
+    `DELETE FROM app_gw_redemptions r
+     WHERE r.session_id = $1 AND r.confirmed_at IS NULL AND (r.frozen_at IS NULL OR r.frozen_at <= $2)
+       AND NOT EXISTS (SELECT 1 FROM app_gw_checkouts c WHERE c.session_id = $1 AND c.paid_at IS NOT NULL)
+     RETURNING r.session_id`,
+    [sessionId, now - FREEZE_MS],
+  );
+  return rows.length === 1;
+}
+
+/**
  * Called once the session is paid: confirms its reservation and counts one use, in one statement. The redemption row is
  * claimed first (so the same session never counts twice), then the use is counted only while uses remain (so two
  * sessions racing for the last use: one wins). Returns the counted voucher, or null (no reservation, already
