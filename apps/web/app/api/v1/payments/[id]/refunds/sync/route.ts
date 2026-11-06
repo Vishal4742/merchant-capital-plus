@@ -2,7 +2,7 @@
 // the gateway fires payment.refunded (FR-GW-7, FR-PAY-10, AT-15). The tx is only a pointer: lib/server/refunds.ts reads
 // its receipt and trusts nothing but MerchantPay's own Refunded log for this payment. Another merchant's id is a 404.
 import { isHash } from "viem";
-import { HttpError, handle, ok, rateLimit, readJson, signedInMerchant } from "../../../../../../../lib/server/http.ts";
+import { HttpError, handle, ok, sharedRateLimit, readJson, signedInMerchant } from "../../../../../../../lib/server/http.ts";
 import { syncRefund } from "../../../../../../../lib/server/refunds.ts";
 
 const SYNCS_PER_MINUTE = 30;
@@ -10,7 +10,7 @@ const SYNCS_PER_MINUTE = 30;
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   return handle(async () => {
     const merchant = signedInMerchant(request);
-    rateLimit(`refunds:${merchant.toLowerCase()}`, SYNCS_PER_MINUTE, 60_000);
+    await sharedRateLimit(`refunds:${merchant.toLowerCase()}`, SYNCS_PER_MINUTE, 60_000, "closed");
     const { id } = await params;
     if (!/^[1-9]\d{0,77}$/.test(id)) throw new HttpError(400, "The payment id must be a MerchantPay payment number.");
     const { tx_hash: txHash } = await readJson(request);

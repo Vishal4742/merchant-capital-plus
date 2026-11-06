@@ -145,7 +145,7 @@ function openAmount(page: Page, value: unknown): bigint {
 
 /** A payer opens a checkout from a page: `{items: [{name, qty}]}` for an items page, `{amount}` for an open one. */
 export async function payPage(request: Request, slug: string): Promise<Response> {
-  limitCheckouts(request);
+  await limitCheckouts(request);
   const page = await pageBySlug(slug);
   if (!page) throw new HttpError(404, "No such payment page.");
   const body = await readCheckoutBody(request);

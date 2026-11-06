@@ -16,8 +16,8 @@ import {
   newId,
   newSlug,
   ok,
-  rateLimit,
   readJson,
+  sharedRateLimit,
   textField,
   usdtField,
   type Currency,
@@ -64,8 +64,8 @@ export async function payablePrices(prices: bigint[], currency: Currency, atLeas
   }
 }
 
-/** Public checkouts: at most 20 a minute per IP (links and pages together). */
-export const limitCheckouts = (request: Request) => rateLimit(`checkout:${clientIp(request)}`, CHECKOUTS_PER_MINUTE, 60_000);
+/** Public checkouts: at most 20 a minute per IP (links and pages together), shared across instances; fails closed. */
+export const limitCheckouts = (request: Request): Promise<void> => sharedRateLimit(`checkout:${clientIp(request)}`, CHECKOUTS_PER_MINUTE, 60_000, "closed");
 
 /** A public checkout's body: a JSON object, or an HTML form (application/x-www-form-urlencoded). */
 export async function readCheckoutBody(request: Request): Promise<Record<string, unknown>> {
@@ -233,7 +233,7 @@ export async function linkBySlug(slug: string): Promise<Link | null> {
 
 /** A payer opens a checkout from a link. A fixed link's stored price always wins; only an open link reads `amount`. */
 export async function payLink(request: Request, slug: string): Promise<Response> {
-  limitCheckouts(request);
+  await limitCheckouts(request);
   const link = await linkBySlug(slug);
   if (!link) throw new HttpError(404, "No such payment link.");
   const status = linkStatus(link);
