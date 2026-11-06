@@ -38,6 +38,7 @@ test('checkout: creates a 2.00 USDT session with the secret key and sends the cu
   const sent = JSON.parse(String(calls[0].init.body));
   assert.equal(sent.amount, '2.00');
   assert.equal(sent.returnUrl, 'http://127.0.0.1:4100/');
+  assert.match(sent.reference, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, 'a unique order reference per checkout');
 });
 
 test('checkout: a gateway failure shows the customer a 502, never the error text', async (t) => {
