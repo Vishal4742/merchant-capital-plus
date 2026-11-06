@@ -23,7 +23,10 @@ beforeEach(async () => {
   fetchCalls.length = 0;
   mock.method(globalThis, "fetch", async (url) => {
     fetchCalls.push(String(url));
-    if (String(url).startsWith("https://api.frankfurter.dev/v1/latest?base=EUR")) return Response.json({ date: "2026-11-05", rates: { USD: 1.08 } });
+    if (String(url).startsWith("https://api.frankfurter.dev/v2/rates?base=usd")) {
+      const date = new Date().toISOString().slice(0, 10); // fresh: the 7-day rule would refuse a fixed date
+      return Response.json([{ date, base: "USD", quote: "EUR", rate: 0.8 }]); // 0.8 EUR per USD
+    }
     throw new Error(`unexpected fetch ${url}`);
   });
 });
@@ -171,9 +174,9 @@ test("open-amount page: the payer's amount within the page's min and max; JSON c
 test("a fiat page converts each line at the live rate, so the lines add up to the charge", async () => {
   const { data } = await newPage({ currency: "EUR" });
   const session = sessionOf(await pay(data.slug, { items: [{ name: "Cold brew", qty: 3 }, { name: "Banana bread", qty: 1 }] }));
-  // 4.50 EUR × 1.08 = 4.86, 3.25 EUR × 1.08 = 3.51
-  assert.deepEqual(session.items, [{ name: "Cold brew", qty: 3, price: 4_860_000n }, { name: "Banana bread", qty: 1, price: 3_510_000n }]);
-  assert.equal(session.amount, 18_090_000n);
+  // at 0.8 EUR per USD, up to the cent: 4.50 EUR → 5.625 → 5.63, 3.25 EUR → 4.0625 → 4.07
+  assert.deepEqual(session.items, [{ name: "Cold brew", qty: 3, price: 5_630_000n }, { name: "Banana bread", qty: 1, price: 4_070_000n }]);
+  assert.equal(session.amount, 20_960_000n);
   assert.equal(fetchCalls.length, 1);
 });
 

@@ -78,7 +78,7 @@ export async function openCheckout(
   const merchant = getAddress(from.merchant);
   const session = createSession({ merchant, merchantName: merchantName(merchant), amount, reference: from.reference, items });
   const fiatTotal = priced.reduce((sum, item) => sum + item.price * BigInt(item.qty), 0n);
-  const fx = { currency, amount: fiatTotal, rate: rate.rate, source: rate.source, fetchedAt: rate.fetchedAt };
+  const fx = { currency, amount: fiatTotal, rate: rate.rate, rateAt: rate.rateAt, source: rate.source, fetchedAt: rate.fetchedAt };
   await recordCheckout(session.id, from.kind, from.refId, merchant, amount, { fx });
   const url = new URL(`/checkout/${session.id}`, request.url).toString();
   if ((request.headers.get("accept") ?? "").includes("application/json")) return ok({ checkout_url: url, session_id: session.id });

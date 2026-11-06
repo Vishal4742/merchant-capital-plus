@@ -23,10 +23,12 @@ before(async () => {
 beforeEach(async () => {
   await resetDb();
   fetchCalls.length = 0;
-  // Frankfurter's answer for EUR → USD; any other URL fails the test (never the network).
+  // Frankfurter v2's answer (0.8 EUR per USD, dated today); any other URL fails the test (never the network).
   mock.method(globalThis, "fetch", async (url) => {
     fetchCalls.push(String(url));
-    if (String(url).startsWith("https://api.frankfurter.dev/v1/latest?base=EUR")) return Response.json({ date: "2026-11-05", rates: { USD: 1.08 } });
+    if (String(url).startsWith("https://api.frankfurter.dev/v2/rates?base=usd")) {
+      return Response.json([{ date: new Date().toISOString().slice(0, 10), base: "USD", quote: "EUR", rate: 0.8 }]);
+    }
     throw new Error(`unexpected fetch ${url}`);
   });
 });
@@ -49,14 +51,15 @@ test("dashboard routes need the signed-in merchant", async () => {
 
 test("creates a fixed USDT link and lists it newest first with its payments", async () => {
   assert.equal((await newLink({ amount: "25.00", expires_at: "2099-01-01T00:00:00Z" })).res.status, 400, "expiries over 5 years out are refused");
-  const { res, data } = await newLink({ amount: "25.00", reference_id: "INV-7", single_use: true, expires_at: "2030-01-01T00:00:00Z" });
+  const inAYear = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(); // relative: never goes stale (code review N3)
+  const { res, data } = await newLink({ amount: "25.00", reference_id: "INV-7", single_use: true, expires_at: inAYear });
   assert.equal(res.status, 201);
   assert.match(data.id, /^lnk_/);
   assert.match(data.slug, /^[0-9A-Za-z]{10}$/);
   assert.equal(data.url, `/l/${data.slug}`);
   assert.deepEqual(
     { amount: data.amount, currency: data.currency, description: data.description, reference_id: data.reference_id, single_use: data.single_use, status: data.status, expires_at: data.expires_at },
-    { amount: "25", currency: "USDT", description: "Cold brew", reference_id: "INV-7", single_use: true, status: "active", expires_at: "2030-01-01T00:00:00.000Z" },
+    { amount: "25", currency: "USDT", description: "Cold brew", reference_id: "INV-7", single_use: true, status: "active", expires_at: inAYear },
   );
   assert.ok(!Number.isNaN(Date.parse(data.created_at)));
   await pg.query("UPDATE app_gw_links SET created_at = created_at - 1000");
@@ -201,23 +204,24 @@ test("an expired link shows expired and refuses checkout; paid outranks expired"
   assert.equal((await pay(a.slug)).status, 410);
 });
 
-test("a fiat link converts at checkout with the live rate (EUR 20.00 at 1.08 → 21.6 USDT)", async () => {
+test("a fiat link converts at checkout with the live rate (EUR 20.00 at 0.8 per USD → 25.00 USDT)", async () => {
   const { data } = await newLink({ amount: "20.00", currency: "EUR" });
   assert.equal(data.amount, "20");
   assert.equal(fetchCalls.length, 0); // no rate needed to create it
   const session = sessionOf(await pay(data.slug));
-  assert.equal(session.amount, 21_600_000n);
-  assert.deepEqual(session.items, [{ name: "Cold brew", qty: 1, price: 21_600_000n }]);
+  assert.equal(session.amount, 25_000_000n);
+  assert.deepEqual(session.items, [{ name: "Cold brew", qty: 1, price: 25_000_000n }]);
   const row = await checkoutOf(session.id);
-  assert.equal(row.usdtAmount, 21_600_000n);
-  // AT-13: the checkout can show the EUR price, the rate and its source/time that fixed the session's amount
+  assert.equal(row.usdtAmount, 25_000_000n);
+  // AT-13: the checkout can show the EUR price, the rate (per 1 USD, the SDK's convention), its date and source
   assert.equal(row.fx.currency, "EUR");
   assert.equal(row.fx.amount, 20_000_000n);
-  assert.equal(row.fx.rate, "1.08");
-  assert.match(row.fx.source, /ECB reference rate .* via Frankfurter/);
+  assert.equal(row.fx.rate, "0.8");
+  assert.equal(row.fx.rateAt, new Date().toISOString().slice(0, 10));
+  assert.match(row.fx.source, /Frankfurter/);
   assert.ok(row.fx.fetchedAt > 0);
-  assert.match(fetchCalls[0], /base=EUR&symbols=USD/);
-  const big = (await newLink({ amount: "1000.00", currency: "EUR" })).data; // 1,080 USDT: over the cap at checkout
+  assert.match(fetchCalls[0], /\/v2\/rates\?base=usd&quotes=/);
+  const big = (await newLink({ amount: "1000.00", currency: "EUR" })).data; // 1,250 USDT: over the cap at checkout
   assert.equal((await pay(big.slug)).status, 400);
 });
 
