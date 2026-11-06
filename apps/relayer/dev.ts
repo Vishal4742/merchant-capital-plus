@@ -3,6 +3,10 @@
 import { createServer } from 'node:http';
 import { GET as health, POST as relay } from './api/relay.ts';
 import { MAX_BODY_BYTES } from './src/relayer.ts';
+import { setDb } from './src/store.ts';
+
+// No DATABASE_URL: the shared relayer state (FR-REL-10) lives in an in-process PGlite with the production schema.
+if (!process.env.DATABASE_URL) setDb(await (await import('./db/pglite.ts')).memoryDb());
 
 const PORT = Number(process.env.PORT ?? 8787);
 const HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]); // anything else is DNS rebinding

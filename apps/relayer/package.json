@@ -11,9 +11,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@neondatabase/serverless": "1.2.0",
     "viem": "2.57.13"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.11",
     "@types/node": "26.6.6",
     "typescript": "7.0.2"
   }
