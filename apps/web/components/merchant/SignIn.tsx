@@ -1,15 +1,16 @@
 "use client";
 
-// "Sign in with your wallet" for merchants (SIWE): connect the browser wallet, sign one message (free, moves no
-// money), and the server sets a session cookie. Customers never see this; they pay with the guest wallet.
+// The merchant's three setup steps on a signed-out dashboard page, each with a live status: (1) a wallet in this
+// browser, (2) Whitechain Testnet added to it (optional for sign-in, needed for invoices and refunds), (3) "Sign in
+// with your wallet" (SIWE): sign one message (free, moves no money) and the server sets a session cookie. Customers
+// never see this; they pay with the guest wallet. Nothing here asks the wallet for anything until a button is pressed.
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createWalletClient, custom, type EIP1193Provider } from "viem";
 import { whitechainSepolia } from "viem/chains";
 import { createSiweMessage } from "viem/siwe";
 import { Button } from "@/components/Button";
-
-const SIGN_IN_WINDOW_MS = 5 * 60_000;
+import { SIGN_IN_WINDOW_MS, WHITECHAIN_TESTNET, signInProblem, walletProblem } from "@/lib/onboarding";
 
 declare global {
   interface Window {
@@ -17,24 +18,116 @@ declare global {
   }
 }
 
+const NO_ACCOUNT = "Your wallet didn't share an account. Unlock it, pick an account, then try again.";
+const OFFLINE = "We couldn't reach our server. Check your connection, then try again.";
+
+/** A sign-in failure already worded for the merchant. */
+class Problem extends Error {}
+
+// Whether this browser has a wallet: null on the server and during hydration (not checked yet). MetaMask's mobile
+// browser can inject window.ethereum after the page loads and says so with this event.
+const subscribeWallet = (onChange: () => void) => {
+  window.addEventListener("ethereum#initialized", onChange);
+  return () => window.removeEventListener("ethereum#initialized", onChange);
+};
+const useHasWallet = () =>
+  useSyncExternalStore(
+    subscribeWallet,
+    () => Boolean(window.ethereum),
+    () => null,
+  );
+
+/** The wallet's current chain id (eth_chainId asks the user nothing), kept current by chainChanged. */
+function useChainId(found: boolean | null): [number | null, (id: number | null) => void] {
+  const [chainId, setChainId] = useState<number | null>(null);
+  useEffect(() => {
+    const provider = window.ethereum;
+    if (!found || !provider) return;
+    let live = true;
+    const update = (id: unknown) => live && setChainId(typeof id === "string" || typeof id === "number" ? Number(id) : null);
+    provider.request({ method: "eth_chainId" }).then(update, () => update(null));
+    provider.on?.("chainChanged", update);
+    return () => {
+      live = false;
+      provider.removeListener?.("chainChanged", update);
+    };
+  }, [found]);
+  return [chainId, setChainId];
+}
+
+type Tone = "done" | "todo" | "busy";
+const TONE: Record<Tone, string> = { done: "text-positive", todo: "text-ink-muted", busy: "text-accent" };
+
+function Step({ n, title, status, tone, children }: { n: number; title: string; status: string; tone: Tone; children: ReactNode }) {
+  return (
+    <li className="grid grid-cols-[32px_minmax(0,1fr)] gap-x-4 py-5 first:pt-1">
+      <span aria-hidden="true" className={`data grid size-8 place-items-center rounded-full border ${tone === "done" ? "border-current text-positive" : "border-hairline text-ink-muted"}`}>
+        {tone === "done" ? "✓" : n}
+      </span>
+      <div className="grid min-w-0 gap-2.5">
+        <div className="flex min-h-8 flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <h3 className="text-[17px] font-medium tracking-[-0.01em]">{title}</h3>
+          <span role="status" className={`eyebrow rounded-pill border border-current px-2.5 py-0.5 ${TONE[tone]}`}>
+            <span className="sr-only">{title}: </span>
+            {status}
+          </span>
+        </div>
+        {children}
+      </div>
+    </li>
+  );
+}
+
+const secondary = "h-11 cursor-pointer justify-self-start rounded-pill border border-current px-5 text-sm font-medium text-accent hover:bg-accent-soft aria-disabled:cursor-not-allowed aria-disabled:opacity-45";
+const help = "text-sm text-ink-muted";
+const alert = (message: string | null) =>
+  message && (
+    <p role="alert" className="text-sm text-critical">
+      {message}
+    </p>
+  );
+
 export function SignIn({ available }: { available: boolean }) {
   const router = useRouter();
-  const [busy, setBusy] = useState(false);
+  const found = useHasWallet();
+  const [chainId, setChainId] = useChainId(found);
+  const [busy, setBusy] = useState<"network" | "sign" | null>(null);
+  const [networkError, setNetworkError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [signedIn, setSignedIn] = useState(false);
+  const onWhitechain = chainId === whitechainSepolia.id;
+
+  async function addNetwork() {
+    const provider = window.ethereum;
+    if (!provider) return;
+    setNetworkError(null);
+    setBusy("network");
+    try {
+      await provider.request({ method: "wallet_addEthereumChain", params: [WHITECHAIN_TESTNET] });
+      await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: WHITECHAIN_TESTNET.chainId }] });
+      setChainId(Number(await provider.request({ method: "eth_chainId" })));
+    } catch (e) {
+      setNetworkError(walletProblem(e, "network"));
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function signIn() {
+    const provider = window.ethereum;
     setError(null);
-    if (!window.ethereum) {
-      setError("No wallet found in this browser. On a phone, open this page in your wallet app's browser (MetaMask, Rabby). On a computer, add a wallet extension.");
-      return;
-    }
-    setBusy(true);
+    if (!provider) return;
+    setBusy("sign");
     try {
-      const wallet = createWalletClient({ chain: whitechainSepolia, transport: custom(window.ethereum) });
+      const wallet = createWalletClient({ chain: whitechainSepolia, transport: custom(provider) });
       const [address] = await wallet.requestAddresses();
-      const nonceRes = await fetch("/api/auth/nonce", { cache: "no-store" });
-      const { nonce, error: nonceError } = (await nonceRes.json()) as { nonce?: string; error?: string };
-      if (!nonce) throw new Error(nonceError ?? "Sign-in isn't available right now.");
+      if (!address) throw new Problem(NO_ACCOUNT);
+      const asked = Date.now();
+      const nonceRes = await fetch("/api/auth/nonce", { cache: "no-store" }).catch(() => {
+        throw new Problem(OFFLINE);
+      });
+      const { nonce, error: nonceError } = (await nonceRes.json().catch(() => ({}))) as { nonce?: string; error?: string };
+      if (!nonceRes.ok || !nonce) throw new Problem(signInProblem(nonceRes.status, nonceError, Date.now() - asked));
       const message = createSiweMessage({
         address,
         chainId: whitechainSepolia.id,
@@ -46,34 +139,67 @@ export function SignIn({ available }: { available: boolean }) {
         statement: "Sign in to your Merchant Capital+ dashboard. This is free and moves no money.",
       });
       const signature = await wallet.signMessage({ account: address, message });
-      const res = await fetch("/api/auth/verify", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message, signature }) });
-      if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? "Sign-in failed. Try again.");
+      const res = await fetch("/api/auth/verify", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message, signature }) }).catch(() => {
+        throw new Problem(OFFLINE);
+      });
+      if (!res.ok) throw new Problem(signInProblem(res.status, ((await res.json().catch(() => ({}))) as { error?: string }).error, Date.now() - asked));
+      setSignedIn(true);
       router.refresh();
     } catch (e) {
-      const rejected = typeof e === "object" && e !== null && "code" in e && (e as { code?: number }).code === 4001;
-      setError(rejected ? "You cancelled the request in your wallet." : e instanceof Error ? e.message : "Sign-in failed. Try again.");
+      setError(e instanceof Problem ? e.message : walletProblem(e, "sign"));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   }
 
   return (
-    <section className="mt-12 grid max-w-md gap-4 rounded-md border border-hairline bg-surface p-8 shadow-card">
-      <h1 className="title">Sign in to your dashboard</h1>
-      <p className="text-ink-muted">Use the wallet your shop gets paid to. You&apos;ll sign one message; it&apos;s free and moves no money.</p>
-      {available ? (
-        <Button onClick={signIn} aria-disabled={busy} className="justify-self-start">
-          {busy ? "Waiting for your wallet…" : "Sign in with your wallet"}
-        </Button>
-      ) : (
-        <p className="text-sm text-warning">Sign-in isn&apos;t set up on this server yet.</p>
-      )}
-      {error && (
-        <p role="alert" className="text-sm text-critical">
-          {error}
-        </p>
-      )}
-    </section>
+    <ol className="grid divide-y divide-hairline">
+      <Step n={1} title="A wallet" status={found === null ? "Checking" : found ? "Found" : "Not found"} tone={found ? "done" : "todo"}>
+        {found === null ? (
+          <p className={help}>Looking for a wallet in this browser…</p>
+        ) : found ? (
+          <p className={help}>There&apos;s a wallet in this browser. Use the account you want your shop paid to.</p>
+        ) : (
+          <>
+            <p className={help}>No wallet in this browser yet. On a computer, install MetaMask, then reload this page.</p>
+            <a href="https://metamask.io/download/" target="_blank" rel="noreferrer" className={`${secondary} inline-flex items-center gap-1.5`}>
+              Install MetaMask <span aria-hidden="true">↗</span>
+              <span className="sr-only">(opens in a new tab)</span>
+            </a>
+            <p className={help}>On a phone, open this page in your wallet app&apos;s own browser.</p>
+          </>
+        )}
+      </Step>
+
+      <Step n={2} title="Add Whitechain Testnet" status={onWhitechain ? "Added" : busy === "network" ? "Waiting" : "Not yet"} tone={onWhitechain ? "done" : busy === "network" ? "busy" : "todo"}>
+        <p className={help}>Optional for sign-in. You need it later to send invoices and refunds.</p>
+        {onWhitechain ? (
+          <p className="text-sm">Your wallet is on Whitechain Testnet (chain 1874).</p>
+        ) : (
+          <button type="button" className={secondary} aria-disabled={!found || busy !== null} onClick={found && busy === null ? addNetwork : undefined}>
+            {busy === "network" ? "Check your wallet…" : "Add Whitechain Testnet"}
+          </button>
+        )}
+        {alert(networkError)}
+      </Step>
+
+      <Step
+        n={3}
+        title="Sign in"
+        status={signedIn ? "Signed in" : busy === "sign" ? "Waiting" : "Signed out"}
+        tone={signedIn ? "done" : busy === "sign" ? "busy" : "todo"}
+      >
+        <p className={help}>Use the wallet your shop gets paid to. You sign one message. It&apos;s free and moves no money.</p>
+        {available ? (
+          <Button onClick={signIn} aria-disabled={!found || busy !== null || signedIn} className="justify-self-start">
+            {busy === "sign" ? "Check your wallet…" : signedIn ? "Opening your dashboard…" : "Sign in with your wallet"}
+          </Button>
+        ) : (
+          <p className="text-sm text-warning">Sign-in isn&apos;t set up on this server yet.</p>
+        )}
+        {alert(error)}
+      </Step>
+    </ol>
   );
 }
 
