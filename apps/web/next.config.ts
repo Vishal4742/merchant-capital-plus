@@ -82,6 +82,10 @@ const nextConfig: NextConfig = {
         as: "*.css",
       },
     },
+    // Privy imports Solana and Stripe packages for features we don't turn on; their versions clash (lib/privy-unused.cjs)
+    resolveAlias: Object.fromEntries(
+      ["@solana/kit", "@solana-program/system", "@solana-program/token", "@solana-program/memo", "@stripe/crypto", "@stripe/stripe-js"].map((name) => [name, "./lib/privy-unused.cjs"]),
+    ),
   },
 };
 
