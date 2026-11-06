@@ -96,7 +96,8 @@ export interface ArkivMatch { entityKey: string; matches: boolean; terms: Record
 
 /** claude-contracts' 08:53 offer shape with the 10:49 decisions: face and price always (an advance's face is its cap),
  *  principal and cap for advances only, holdback_pct 0 for invoices (Q12); arkiv.terms is the entity's values (D3).
- *  debtor_ack (batch 047, FR-INV-8): the invoice's debtor acknowledgement, from our database, never from Arkiv. */
+ *  debtor_ack (batch 047, FR-INV-8): the invoice's acks, from our database, never from Arkiv; debtor_acknowledged only
+ *  when the customer wallet the invoice names on chain signed it (security 047 H1), never for a pay-link holder's. */
 export function offerJson(o: ChainOffer, now = nowSeconds(), arkiv?: ArkivMatch, ack?: DebtorAckView) {
   const advance = o.kind === "advance";
   return {
@@ -114,7 +115,7 @@ export function offerJson(o: ChainOffer, now = nowSeconds(), arkiv?: ArkivMatch,
     units_left: (o.face - o.sold).toString(),
     status: offerStatus(o, now),
     arkiv: { entity_key: arkiv?.entityKey ?? null, matches: arkiv?.matches ?? false, terms: arkiv?.terms ?? null },
-    debtor_acknowledged: Boolean(ack),
+    debtor_acknowledged: ack?.verified ?? false,
     debtor_ack: ack ?? null,
   };
 }

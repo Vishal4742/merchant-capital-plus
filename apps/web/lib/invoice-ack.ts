@@ -9,8 +9,10 @@ const CAPITAL_MARKET: Address = "0xecd63a369d23dfddc6bfac921e41a86760c20abe";
 
 export const ackDomain = { name: "Merchant Capital+", version: "1", chainId: whitechainSepolia.id, verifyingContract: CAPITAL_MARKET } as const;
 
+// merchantPay: invoice ids restart on a MerchantPay redeploy, so the id alone doesn't name one invoice (security 047 L1)
 export const ackTypes = {
   InvoiceAck: [
+    { name: "merchantPay", type: "address" },
     { name: "invoiceId", type: "uint256" },
     { name: "merchant", type: "address" },
     { name: "amount", type: "uint256" },
@@ -21,6 +23,7 @@ export const ackTypes = {
 
 /** The invoice as MerchantPay holds it: amount is the whole invoice in USDT base units, dueDate unix seconds. */
 export interface AckTerms {
+  merchantPay: Address;
   invoiceId: bigint;
   merchant: Address;
   amount: bigint;
@@ -31,5 +34,5 @@ export const ackTypedData = (terms: AckTerms, debtor: Address) => ({
   domain: ackDomain,
   types: ackTypes,
   primaryType: "InvoiceAck" as const,
-  message: { invoiceId: terms.invoiceId, merchant: terms.merchant, amount: terms.amount, dueDate: terms.dueDate, debtor },
+  message: { merchantPay: terms.merchantPay, invoiceId: terms.invoiceId, merchant: terms.merchant, amount: terms.amount, dueDate: terms.dueDate, debtor },
 });

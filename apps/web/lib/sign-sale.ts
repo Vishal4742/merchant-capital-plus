@@ -59,6 +59,7 @@ export async function signInvoice(terms: InvoicePayTerms, account: Payer = getGu
 
 /** The invoice as our server read it on chain, as decimal strings (FR-INV-8, batch 047). */
 export interface AckTermsText {
+  merchantPay: Address;
   invoiceId: string;
   merchant: Address;
   amount: string; // the whole invoice, USDT base units
@@ -68,6 +69,6 @@ export interface AckTermsText {
 /** The debtor acknowledges the invoice (the guest key unless `account` is given): a message that moves no money.
  *  Returns the body for POST /api/v1/invoices/:id/acknowledge. */
 export async function signAck(terms: AckTermsText, account: Payer = getGuestAccount()) {
-  const invoice = { invoiceId: BigInt(terms.invoiceId), merchant: terms.merchant, amount: BigInt(terms.amount), dueDate: BigInt(terms.dueDate) };
+  const invoice = { merchantPay: terms.merchantPay, invoiceId: BigInt(terms.invoiceId), merchant: terms.merchant, amount: BigInt(terms.amount), dueDate: BigInt(terms.dueDate) };
   return { debtor: account.address, signature: await account.signTypedData(ackTypedData(invoice, account.address)) };
 }

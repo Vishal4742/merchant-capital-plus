@@ -121,6 +121,8 @@ export interface Invoice {
   merchant: Address;
   dueDate: bigint; // unix seconds
   status: (typeof INVOICE_STATUS)[number]; // "paid" only once fully paid
+  /** The customer wallet the merchant named, or the zero address (anyone may pay). Only it can acknowledge (batch 047). */
+  customer: Address;
   amount: bigint;
   paid: bigint; // credited so far (partial payments are allowed)
 }
@@ -128,8 +130,8 @@ export interface Invoice {
 /** invoices(id) on chain, its status in words ("missing" for an id that was never created). */
 export async function readInvoice(merchantPay: Address, id: bigint, { blockNumber, read = defaultRead, ...retry }: ReadOptions = {}): Promise<Invoice> {
   return retried(async () => {
-    const [merchant, dueDate, status, , amount, paid] = (await read({ address: merchantPay, abi: merchantPayAbi, functionName: "invoices", args: [id], blockNumber })) as readonly [Address, bigint, number, Address, bigint, bigint];
-    return { id, merchant, dueDate, status: INVOICE_STATUS[status] ?? "missing", amount, paid };
+    const [merchant, dueDate, status, customer, amount, paid] = (await read({ address: merchantPay, abi: merchantPayAbi, functionName: "invoices", args: [id], blockNumber })) as readonly [Address, bigint, number, Address, bigint, bigint];
+    return { id, merchant, dueDate, status: INVOICE_STATUS[status] ?? "missing", customer, amount, paid };
   }, retry);
 }
 

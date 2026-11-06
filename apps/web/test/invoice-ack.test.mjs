@@ -41,6 +41,7 @@ const shared = await import("../../../packages/shared/contracts.ts");
 const ID = "7";
 const DUE = 1_900_000_000n;
 const short = (a) => `${a.slice(0, 6)}…${a.slice(-4)}`;
+const tick = () => new Promise((resolve) => setTimeout(resolve, 3)); // a later signed_at (unix ms) for "oldest first"
 before(setupDb);
 beforeEach(async () => {
   await resetDb();
@@ -121,6 +122,7 @@ test("malformed bodies are 400s: no debtor, not an address, a short signature, n
 
 test("M1: each key keeps its own first ack; the same key again is a no-op with its first time", async () => {
   const first = await (await call(await signed())).json();
+  await tick();
   const other = await call(await signed({ signer: someoneElse }));
   assert.equal(other.status, 200, "a second pay-link holder adds its own ack: the first can't squat the invoice");
   const again = await call(await signed());
@@ -197,6 +199,7 @@ test("rate limited per IP: the 11th call in a minute is a 429, another IP still 
 
 test("acksFor reads only this MerchantPay's invoices, oldest first; ackView matches the terms and counts (L1)", async () => {
   await call(await signed());
+  await tick();
   await call(await signed({ signer: someoneElse }));
   const mine = await acksFor(MERCHANT_PAY, [7n, 8n]);
   assert.deepEqual([...mine.keys()], ["7"]);
@@ -227,6 +230,7 @@ function book(offers) {
 
 test("offers: a pay-link holder's ack is shown unverified (debtor_acknowledged false); a named customer's is true (H1)", async () => {
   await call(await signed());
+  await tick();
   await call(await signed({ signer: someoneElse }));
   const [linkHolders, notYet, advance] = await book({ 1: offer(), 2: offer({ claimId: 2n, invoiceId: 8n }), 3: offer({ claimId: 3n, kind: "advance", invoiceId: 0n, bps: 2000 }) });
   assert.equal(linkHolders.debtor_acknowledged, false, "nobody's identity was checked");
