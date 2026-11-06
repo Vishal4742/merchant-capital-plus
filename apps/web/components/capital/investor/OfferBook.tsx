@@ -8,6 +8,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import type { Address } from "viem";
 import { Button } from "@/components/Button";
 import { CopyButton } from "@/components/CopyButton";
+import { DebtorAck } from "@/components/DebtorAck";
 import { card } from "@/components/gateway/Frame";
 import { aprPercent, arkivNote, buyBlocker, investorsLabel, readHolders, readInvestor, usdt2, type BookOffer } from "@/lib/capital-wallet";
 import { formatUsdt, parseUsdt } from "@/lib/usdt";
@@ -136,6 +137,8 @@ function OfferRow({ offer: o, state, connect, me, open, toggle, retry }: RowProp
         <span className="data text-ink-muted">#{o.id}</span>
         <span className="font-medium">{o.merchant_name}</span>
         <span className="text-xs text-ink-muted">{investorsLabel(o.kind)}</span>
+        {/* does the payer accept the debt (batch 047, FR-INV-8)? from our server, never from Arkiv (FR-ARK-4) */}
+        {o.kind === "invoice" && <DebtorAck ack={o.debtor_ack} />}
       </div>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-4">
         <Field label="You get back">

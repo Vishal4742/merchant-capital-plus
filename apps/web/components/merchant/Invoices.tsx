@@ -9,8 +9,10 @@ import { useRouter } from "next/navigation";
 import { useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 import type { Address } from "viem";
 import { Button } from "@/components/Button";
+import { DebtorAck } from "@/components/DebtorAck";
 import { QrActions } from "@/components/gateway/Share";
 import { cancelInvoice, connectMerchant, createInvoice, walletError } from "@/lib/merchant-wallet";
+import type { DebtorAckView } from "@/lib/server/invoice-acks";
 import { parseUsdt } from "@/lib/usdt";
 
 export interface InvoiceRow {
@@ -22,6 +24,8 @@ export interface InvoiceRow {
   paidText: string | null;
   /** The payment that paid it in full, when the log index has it. */
   receiptId: string | null;
+  /** The debtor's acknowledgement of an open invoice (batch 047, FR-INV-8), or null. */
+  ack: DebtorAckView | null;
 }
 
 interface InvoicesProps {
@@ -130,6 +134,7 @@ export function Invoices({ merchant, merchantPay, invoices, today, feeText }: In
                 <span className="sm:table-cell sm:px-4 sm:py-3 sm:text-right sm:align-middle">
                   <span className={`inline-flex rounded-pill border border-current px-3 py-0.5 text-xs font-medium ${status.tone}`}>{status.label}</span>
                   {invoice.paidText && <span className="ml-2 text-xs text-ink-muted sm:ml-0 sm:block">{invoice.paidText} paid</span>}
+                  {invoice.status === "open" && <DebtorAck ack={invoice.ack} />}
                 </span>
                 <span className="text-right sm:table-cell sm:px-4 sm:py-3 sm:align-middle">
                   <InvoiceActions invoice={invoice} merchant={merchant} merchantPay={merchantPay} />

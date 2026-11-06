@@ -7,6 +7,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import type { Address } from "viem";
 import { Button } from "@/components/Button";
 import { CopyButton } from "@/components/CopyButton";
+import { DebtorAck } from "@/components/DebtorAck";
 import { card } from "@/components/gateway/Frame";
 import { parseUsdt } from "@/lib/usdt";
 import { CancelOffer, short } from "./Listing";
@@ -59,6 +60,7 @@ function Row({ merchant, offer: o }: { merchant: Address; offer: OfferRow }) {
       <span className={`${cell} tabular-nums`}>
         {advance ? `${price} USDT now, repay ${face} USDT at ${o.holdback_pct}% of sales` : `${price} USDT now for ${face} USDT at maturity`}
         {open && <span className="block text-xs text-ink-muted">Open to investors until {o.deadlineText} IST</span>}
+        {!advance && <DebtorAck ack={o.debtor_ack} />}
       </span>
       <span className={cell}>
         <span className={`inline-flex rounded-pill border border-current px-3 py-0.5 text-xs font-medium ${o.status === "funded" ? "text-positive" : "text-accent"}`}>{offerLabel(o)}</span>

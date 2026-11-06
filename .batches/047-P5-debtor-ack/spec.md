@@ -47,7 +47,9 @@
 - apps/web/db/051_invoice_acks.sql (new)
 - apps/web/lib/invoice-ack.ts (new), apps/web/lib/server/invoice-acks.ts (new)
 - apps/web/app/api/v1/invoices/[id]/acknowledge/route.ts (new)
-- apps/web/lib/sign-sale.ts (signAck; Payer signs any typed data)
+- apps/web/lib/sign-sale.ts (signAck; Payer signs any typed data), apps/web/lib/payer-wallet.ts (the wallet's
+  signTypedData takes that generic typed data)
+- apps/web/components/capital/merchant/terms.ts (MerchantOffer carries debtor_ack)
 - apps/web/components/InvoiceAck.tsx (new), apps/web/components/DebtorAck.tsx (new)
 - apps/web/components/InvoicePay.tsx, apps/web/app/pay/[invoiceId]/page.tsx, apps/web/components/WalletPay.tsx
   (export the connect step without the funds check)
