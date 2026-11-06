@@ -1,5 +1,6 @@
-// Developer docs (FR-GW-8): the quickstart, the pay button with a live preview, the server SDK, webhooks, the API
-// reference, currencies, limits, errors and test mode. Public and prerendered, except the keys box, which streams in.
+// Developer docs (FR-GW-8): how a payment works, the quickstart, the pay button with a live preview, the server SDK
+// (and curl), webhooks, the API reference, currencies, limits, errors and test mode. Public and prerendered, except
+// the keys box, which streams in. No new browser code: callouts, tags and the closed reference groups are plain HTML.
 // Every endpoint, limit and message comes from the code via lib/docs-reference.ts (test/docs-reference.test.mjs).
 // The keys box never shows a key, not even its start (security review 006 F5): it links a signed-in merchant to the
 // API keys screen (/merchant/developers, FR-GW-6), and says whether this server has the demo shop's key, by fingerprint.
@@ -7,15 +8,17 @@ import { headers } from "next/headers";
 import { Suspense } from "react";
 import { buttonClasses } from "@/components/Button";
 import { ButtonPreview } from "@/components/docs/ButtonPreview";
-import { ApiReference, Currencies, Errors, Limits } from "@/components/docs/Reference";
+import { API_ANCHORS, ApiReference, Currencies, Errors, Events, Limits, TestScenarios } from "@/components/docs/Reference";
+import { HowItWorks, Quickstart } from "@/components/docs/Start";
 import * as code from "@/components/docs/snippets";
-import { Code, DocTable, MiniCode, Rich, Section, Snippet, card, grain, textLink } from "@/components/docs/ui";
+import { Callout, Code, DocTable, Rich, Section, Snippet, card, grain, textLink } from "@/components/docs/ui";
 import { keyFingerprint, merchantConfig, publicOrigin } from "@/lib/config";
-import { FX_CURRENCIES, LIMITS } from "@/lib/docs-reference";
+import { EVENT_FIELDS, FX_CURRENCIES, LIMITS } from "@/lib/docs-reference";
 import { currentMerchant } from "@/lib/merchant-session";
 import { USDT } from "@/lib/usdt";
 
 const SECTIONS = [
+  { id: "how", label: "How it works" },
   { id: "quickstart", label: "Quickstart" },
   { id: "button", label: "Pay button" },
   { id: "sdk", label: "Server SDK" },
@@ -47,7 +50,8 @@ export default function DocsPage() {
       <div className="mx-auto grid max-w-[1240px] grid-cols-1 gap-8 px-4 md:grid-cols-[200px_minmax(0,1fr)] md:gap-12 md:px-8">
         <SectionNav />
         <div className="grid min-w-0 gap-24 md:pt-12">
-          <Quickstart />
+          <HowItWorks {...numbered("how")} />
+          <Quickstart {...numbered("quickstart")} />
           <PayButton />
           <ServerSdk />
           <Webhooks />
@@ -129,7 +133,10 @@ function Masthead() {
 /** Sticky on every screen: a row of chips that scrolls sideways on a phone, a numbered list from md up. */
 function SectionNav() {
   return (
-    <nav aria-label="On this page" className="sticky top-0 z-10 -mx-4 min-w-0 border-b border-hairline bg-ground/90 px-4 py-2 backdrop-blur md:mx-0 md:self-start md:border-0 md:bg-transparent md:px-0 md:pt-12 md:backdrop-blur-none">
+    <nav
+      aria-label="On this page"
+      className="sticky top-0 z-10 -mx-4 min-w-0 border-b border-hairline bg-ground/90 px-4 py-2 backdrop-blur md:mx-0 md:max-h-dvh md:self-start md:overflow-y-auto md:border-0 md:bg-transparent md:px-0 md:pt-12 md:backdrop-blur-none"
+    >
       <span className="eyebrow mb-3 hidden text-ink-muted md:block">On this page</span>
       <ol className="flex gap-2 overflow-x-auto md:grid md:gap-0.5 md:overflow-visible">
         {SECTIONS.map((s, i) => (
@@ -141,51 +148,22 @@ function SectionNav() {
               <span className="eyebrow text-accent">{String(i + 1).padStart(2, "0")}</span>
               {s.label}
             </a>
+            {/* the reference's own anchors, from md up; a phone's chip row keeps one chip per section */}
+            {s.id === "api" && (
+              <ul className="ml-7 hidden border-l border-hairline md:grid">
+                {API_ANCHORS.map((a) => (
+                  <li key={a.id}>
+                    <a href={`#${a.id}`} className="flex min-h-8 items-center pl-3 text-[13px] text-ink-muted hover:text-ink">
+                      {a.label}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            )}
           </li>
         ))}
       </ol>
     </nav>
-  );
-}
-
-const STEPS = [
-  {
-    title: "Create a checkout on your server",
-    text: "With your secret key. Save the checkout's id with your order.",
-    code: 'const { id, url } =\n  await gateway.sessions.create({\n    amount: "25.00",\n  });',
-    more: { href: "#sdk", label: "Server SDK" },
-  },
-  {
-    title: "Send the customer to pay",
-    text: "Redirect to session.url, or drop in the pay button. They pay in USDT and pay no network fee.",
-    code: '<script src="…/v1/button.js"\n  data-session="SESSION_ID"></script>',
-    more: { href: "#button", label: "Pay button" },
-  },
-  {
-    title: "Mark the order paid",
-    text: "We POST payment.succeeded, signed with MC-Signature. Verify it, check the amount, then fulfil.",
-    code: "const event = constructEvent(\n  rawBody, signature, secret);",
-    more: { href: "#webhooks", label: "Webhooks" },
-  },
-];
-
-function Quickstart() {
-  return (
-    <Section {...numbered("quickstart")} title="Three steps to your first payment" lede="A server call, a button, a webhook. Use your test keys, and nothing you do here moves real money.">
-      <ol className="grid gap-4 lg:grid-cols-3">
-        {STEPS.map((step, i) => (
-          <li key={step.title} className={`${card} grid-rows-[auto_auto_1fr_auto_auto]`}>
-            <span className="text-[56px] leading-none font-medium tracking-[-0.05em] text-accent">{String(i + 1).padStart(2, "0")}</span>
-            <h3 className="title">{step.title}</h3>
-            <p className="text-sm text-ink-muted">{step.text}</p>
-            <MiniCode code={step.code} />
-            <a href={step.more.href} className={`${textLink} inline-flex min-h-11 items-center text-sm`}>
-              {step.more.label}
-            </a>
-          </li>
-        ))}
-      </ol>
-    </Section>
   );
 }
 
@@ -268,6 +246,10 @@ function ServerSdk() {
         </>
       }
     >
+      <Callout>
+        The SDK lives in the repo&apos;s <Code>packages/sdk</Code> and isn&apos;t published yet, so there&apos;s nothing to install from npm. curl works
+        today: the same calls are below, and every endpoint is in the API reference.
+      </Callout>
       <div className="grid gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:items-start">
         <div className="grid gap-3">
           <h3 className="title">Your server&apos;s environment</h3>
@@ -279,6 +261,10 @@ function ServerSdk() {
             , and copy the webhook secret when you add your endpoint there. Both are shown once.
           </p>
           <Snippet code={code.ENV} name="the environment variables" file=".env (server only)" />
+          <Callout tone="warning">
+            <Code>sk_</Code> keys stay on your server: never in a browser, an app or a repo. Revoke a leaked key on the Developers screen; it stops
+            working at once.
+          </Callout>
         </div>
         <div className="grid gap-3">
           <h3 className="title">Create a checkout</h3>
@@ -293,9 +279,17 @@ function ServerSdk() {
         </div>
         <div className="grid gap-3">
           <h3 className="title">List payments</h3>
-          <p className="text-sm text-ink-muted">Every payment to your wallet, newest first, read from the chain.</p>
+          <p className="text-sm text-ink-muted">Every payment to your wallet, newest first, with how much of it was refunded.</p>
           <Snippet code={code.LIST} name="the list snippet" file="payments.list" />
         </div>
+      </div>
+      <div className="grid gap-3">
+        <h3 className="title">Or with curl</h3>
+        <p className="max-w-[70ch] text-sm text-ink-muted">
+          The same create and read with no SDK. Send <Code>reference</Code> where the SDK says <Code>orderId</Code>, and keep the{" "}
+          <Code>Idempotency-Key</Code> when you retry.
+        </p>
+        <Snippet code={code.CURL} name="the curl requests" file="curl" />
       </div>
       <div className="grid gap-4">
         <h3 className="title">Options and errors</h3>
@@ -330,16 +324,6 @@ function ServerSdk() {
     </Section>
   );
 }
-
-const EVENT_FIELDS: [string, string][] = [
-  ["id", "The checkout's id: the one you saved when you created it."],
-  ["status", '"paid".'],
-  ["amount", "The USDT the customer paid, after any voucher."],
-  ["currency", '"USDT".'],
-  ["reference", "Your orderId, or the link's reference_id or slug, or the page's slug."],
-  ["paymentId, txHash", "The payment on chain."],
-  ["link_id, page_id", "Set when the checkout came from a payment link or page; null otherwise."],
-];
 
 const ATTEMPTS = [
   { at: "At once", what: "Attempt 1" },
@@ -377,6 +361,11 @@ function Webhooks() {
             Retries and Resend send the same body with the same event <Code>id</Code>. Skip an id you have already handled.
           </p>
         </div>
+      </div>
+
+      <div className="grid gap-3">
+        <h3 className="title">Events</h3>
+        <Events />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
@@ -419,6 +408,10 @@ function Webhooks() {
           <Code>&lt;t&gt;.&lt;raw body&gt;</Code> with your endpoint&apos;s secret. <Code>constructEvent</Code> compares it in constant time and refuses an
           event more than {LIMITS.webhookToleranceSeconds / 60} minutes old or ahead (<Code>toleranceSec</Code>, default {LIMITS.webhookToleranceSeconds}).
         </p>
+        <Callout tone="warning">
+          Verify the raw body, before any JSON parsing: parsed and re-serialized JSON won&apos;t match the signature. Use <Code>await req.text()</Code>,
+          or <Code>express.raw()</Code> in Express.
+        </Callout>
         <Snippet code={code.WEBHOOK} name="the webhook snippet" file="app/api/webhooks/route.ts" />
       </div>
 
@@ -455,8 +448,9 @@ function Webhooks() {
 function ApiLede() {
   return (
     <>
-      Paths are on your gateway URL. Send JSON, with amounts as decimal strings. Checkout, payment and webhook amounts come back with at least two decimals (
-      <Code>&quot;25.00&quot;</Code>); the dashboard resources use snake_case and may drop trailing zeros (<Code>&quot;25&quot;</Code>). Times are ISO 8601.
+      Paths are on your gateway URL, and bodies are JSON. Your server needs the first group; the other two are here for completeness. Checkout,
+      payment and webhook amounts come back with at least two decimals (<Code>&quot;25.00&quot;</Code>); the dashboard resources use snake_case and may
+      drop trailing zeros (<Code>&quot;25&quot;</Code>). Times are ISO 8601.
     </>
   );
 }
@@ -523,7 +517,7 @@ function TestMode() {
           </Suspense>
         </section>
         <section className={card} aria-labelledby="simulate">
-          <h3 id="simulate" className="eyebrow text-ink-muted">
+          <h3 id="simulate" className="eyebrow scroll-mt-24 text-ink-muted md:scroll-mt-10">
             Simulate a payment
           </h3>
           <p className="text-sm text-ink-muted">Opens a test checkout for the demo shop (25.00 USDT, test money), the same way your server would.</p>
@@ -533,6 +527,11 @@ function TestMode() {
             </button>
           </form>
         </section>
+      </div>
+      <div className="grid gap-3">
+        <h3 className="title">Test scenarios</h3>
+        <p className="max-w-[70ch] text-sm text-ink-muted">How to make each outcome happen before a real customer does, and what comes back. The codes and messages are the gateway&apos;s own.</p>
+        <TestScenarios />
       </div>
     </Section>
   );

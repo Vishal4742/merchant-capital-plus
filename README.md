@@ -15,7 +15,7 @@
 Repayment is enforced where the money arrives. One customer payment is split, in the same transaction, between the merchant, the investors who financed it and the gas fee, under rules neither the merchant nor we can change. A card rail or bank transfer can't route one payment to three parties by code, and an investor would have to trust the merchant to forward the money. With USDT on Whitechain, any verified investor can fund a café at 3 a.m. and gets repaid in one second.
 
 ## Demo
-- Live app: ⟨url⟩ · Demo shop: [merchant-capital-shop.vercel.app](https://merchant-capital-shop.vercel.app) · Video (2:45): ⟨url⟩
+- Live app: [merchant-capital.vercel.app](https://merchant-capital.vercel.app) (Whitechain testnet; test mode) · Demo shop: [merchant-capital-shop.vercel.app](https://merchant-capital-shop.vercel.app) · Video (2:45): ⟨url⟩
 - Walkthrough = acceptance tests AT-1 to AT-15 (`docs/SRS.md` §6)
 
 ## Sponsor tracks
