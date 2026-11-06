@@ -345,6 +345,18 @@ test('RPC pre-checks reject in one round with their code and never simulate or s
   }
 });
 
+test('a 200 carries per-step timings in whole ms (NFR-4 on the deployed relayer); cold only on the first relay', async () => {
+  const { status, out } = await post((await signedSale()).body, fakeNode({ sendDelayMs: 40 }));
+  assert.equal(status, 200, JSON.stringify(out));
+  const t = out.timings;
+  const steps = ['checks', 'queue', 'presend', 'send', 'receipt'];
+  for (const k of [...steps, 'total']) assert.ok(Number.isInteger(t[k]) && t[k] >= 0, `${k}: ${t[k]}`);
+  assert.ok(steps.reduce((sum, k) => sum + t[k], 0) <= t.total + steps.length, `steps add up to the total (± rounding): ${JSON.stringify(t)}`);
+  assert.ok(t.receipt >= 30, `the receipt wait is measured: ${t.receipt}`);
+  assert.equal(t.cold, false, 'earlier tests already relayed in this process');
+  assert.deepEqual(Object.keys(t).sort(), ['checks', 'cold', 'presend', 'queue', 'receipt', 'send', 'total']);
+});
+
 test('every simulation carries the same gas limit and fees the relayer signs with', async () => {
   const node = fakeNode();
   assert.equal((await post((await signedSale()).body, node)).status, 200);
