@@ -24,7 +24,7 @@ const CONTRACTS = [
 ] as const;
 
 export const NOT_ENOUGH_WBT = "Your wallet needs a little WBT to pay the network fee. Add some, then try again.";
-export const WRONG_NETWORK = "Your wallet is on another network. Switch it to Whitechain Sepolia, then try again.";
+export const WRONG_NETWORK = "Your wallet is on another network. Switch it to Whitechain Testnet (chain 1874), then try again.";
 export const UNCONFIRMED = "It was sent, but it isn't confirmed yet. Open the transaction and check it before you send again.";
 export const NOT_THROUGH = "That didn't go through, and nothing moved. Try again.";
 const NOT_ENOUGH_USDT = "Your wallet doesn't have that much USDT now. Reload the page to see what's there.";
@@ -74,13 +74,15 @@ export async function quoteWithdraw(w: MerchantWallet, to: Address, amount: bigi
 }
 
 /** Simulate, send from the merchant's wallet, wait for the receipt (merchant-wallet's send(), for a USDT transfer).
+ *  `onSent` gets the hash the moment the wallet returns it, so the page can link it during the receipt wait (041).
  *  A receipt that can't be read throws SENT_UNCONFIRMED with the hash, so the page links it instead of inviting a resend. */
-export async function withdraw(w: MerchantWallet, to: Address, amount: bigint): Promise<Hex> {
+export async function withdraw(w: MerchantWallet, to: Address, amount: bigint, onSent?: (hash: Hex) => void): Promise<Hex> {
   // the wallet may have moved networks since Review; the dry run would then read another chain's state
   if ((await w.wallet.getChainId()) !== whitechainSepolia.id) throw new Error(WRONG_NETWORK);
   const { request, result } = await w.reader.simulateContract(transfer(w, to, amount));
   if (result !== true) throw new Error(REFUSED); // a token that returns false instead of reverting (security 033 L2)
   const hash = await w.wallet.writeContract(request as Parameters<MerchantWallet["wallet"]["writeContract"]>[0]);
+  onSent?.(hash);
   const receipt = await w.reader.waitForTransactionReceipt({ hash }).catch(() => {
     throw Object.assign(new Error(SENT_UNCONFIRMED), { hash });
   });
