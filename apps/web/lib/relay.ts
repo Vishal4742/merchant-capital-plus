@@ -1,5 +1,6 @@
 // Server-only client for the relayer's POST /relay (claude-relayer, ARCHITECTURE §3).
 // The browser never calls the relayer: our server forwards a verified authorization and records the result.
+import { after } from "next/server.js"; // the .js path resolves under Node's test runner too
 import type { Address, Hex } from "viem";
 import { NOT_FUNDED } from "./outcome.ts";
 
@@ -111,3 +112,36 @@ export async function relayerHealth(relayerUrl: string): Promise<RelayerHealth |
     return null;
   }
 }
+
+const WARM_EVERY_MS = 30_000;
+let lastWarmAt = Number.NEGATIVE_INFINITY;
+
+/** Warms the relayer before a customer pays (claude-relayer 09:42): on Vercel, /health runs in the same function as
+ *  /relay, so one ping when a checkout opens keeps the instance and its RPC socket ready (7.31 s cold, 4.32 s warm).
+ *  Fire and forget after the response (Next's after(); at once outside a request), a 3 s cap, never throws, and only
+ *  to an https or loopback relayer like the secret. /health is public, so no header is sent. */
+export function warmRelayer(relayerUrl: string | undefined, schedule: (task: () => Promise<void>) => void = after, now = Date.now()): void {
+  if (!relayerUrl) return;
+  let url: URL;
+  try {
+    url = new URL("/health", relayerUrl); // a URL like "mailto:x" parses but can't take a path: it throws here (security 020 F3)
+  } catch {
+    return;
+  }
+  if (url.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) return;
+  // at most one ping per server instance per WARM_EVERY_MS: page loads must never become relayer traffic from our IP,
+  // which Vercel's burst protection would challenge, blocking every /relay (security review 020 F1, HIGH)
+  if (now - lastWarmAt < WARM_EVERY_MS) return;
+  lastWarmAt = now;
+  const ping = () =>
+    fetch(url, { signal: AbortSignal.timeout(3_000), cache: "no-store" }).then(
+      (res) => void res.body?.cancel().catch(() => undefined), // free the socket now, not at garbage collection
+      () => undefined,
+    );
+  try {
+    schedule(ping);
+  } catch {
+    void ping();
+  }
+}
+

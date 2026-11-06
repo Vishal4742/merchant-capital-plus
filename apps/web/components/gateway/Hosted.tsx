@@ -50,6 +50,9 @@ export function LinkSummary({ link }: { link: PublicLink }) {
           {amountText(link.amount)} {link.currency}
         </span>
       )}
+      {link.paid_at && Number.isFinite(Date.parse(link.paid_at)) && (
+        <span className="text-sm text-ink-muted">Paid on {new Date(link.paid_at).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata" })} IST</span>
+      )}
     </p>
   );
 }

@@ -44,7 +44,7 @@ const voucherRoute = await import("../app/api/v1/sessions/[id]/voucher/route.ts"
 const { createSession, getSession, claimPayment, releasePayment } = await import("../lib/sessions.ts");
 const { settlePending } = await import("../lib/settle.ts");
 const { recordCheckout, markCheckoutPaid } = await import("../lib/server/checkouts.ts");
-const { applyVoucher, HOLD_MS } = await import("../lib/server/vouchers.ts");
+const { applyVoucher, claimAmountDue, HOLD_MS } = await import("../lib/server/vouchers.ts");
 const { query, setTestDb } = await import("../lib/server/db.ts");
 const { saleAuthorization } = await import("../lib/pay.ts");
 
@@ -383,23 +383,143 @@ test("a shop's own session (no checkout row) keeps today's path: its amount, no 
   assert.equal(relayCalls[0].amount, "25000000");
 });
 
+/** PGlite as gw-helpers wires it; `seen` collects each query's text. */
+const pgDb = (seen = []) => ({
+  query: async (text, values) => {
+    seen.push(`${text} [${(values ?? []).map(String).join(",")}]`); // the values too: a check can pin which row was read
+    return (await pg.query(text, values)).rows;
+  },
+  transaction: (statements) =>
+    pg.transaction(async (tx) => {
+      const results = [];
+      for (const s of statements) results.push((await tx.query(s.text, s.params ?? [])).rows);
+      return results;
+    }),
+});
+const dbDown = { query: async () => Promise.reject(new Error("db down")), transaction: async () => Promise.reject(new Error("db down")) };
+
 test("a database failure while reading the checkout refuses before anything is relayed", async () => {
   const id = await linkCheckout();
-  setTestDb({ query: async () => Promise.reject(new Error("db down")), transaction: async () => Promise.reject(new Error("db down")) });
+  setTestDb(dbDown);
   try {
     const res = await callPay(id, await signed(id, USDT(100)));
     assert.equal(res.status, 503);
     assert.match(res.data.error, /Nothing was charged/);
     assert.equal(relayCalls.length, 0);
+    assert.equal((await callPay(id, { from: "nope" })).status, 400, "a bad body is still a 400, the failed read caught");
   } finally {
-    setTestDb({
-      query: async (text, values) => (await pg.query(text, values)).rows,
-      transaction: (statements) =>
-        pg.transaction(async (tx) => {
-          const results = [];
-          for (const s of statements) results.push((await tx.query(s.text, s.params ?? [])).rows);
-          return results;
-        }),
-    });
+    setTestDb(pgDb());
+  }
+});
+
+// --- batch 021 (NFR-4): the sheet signs the amount it shows and sends it; no voucher read before approving ------------
+
+test("the sheet signs the amount it shows and sends it, with no voucher read before approving (security 015 INFO 8)", async () => {
+  // a client component can't render in node:test, so this pins the source (the browser run is in the batch notes)
+  const { readFileSync } = await import("node:fs");
+  const sheet = readFileSync(new URL("../components/Checkout.tsx", import.meta.url), "utf8");
+  assert.equal(sheet.match(/\/voucher`/g)?.length, 1, "the code route is called only to apply or remove a code");
+  assert.match(sheet, /amountUnits: sale\?\.amount/, "the first units are the server-rendered amount due");
+  assert.match(sheet, /signSale\(\{ \.\.\.sale, amount: due\.amountUnits \}, expiresAt\)/, "it signs the units the sheet shows");
+  assert.match(sheet, /JSON\.stringify\(\{ \.\.\.approval, amount: due\.amountUnits \}\)/, "and sends them as amount");
+  assert.match(sheet, /res\.status === 409 && isDue\(data\)/, "a 409 with the amount due updates the sheet");
+});
+
+test("a sheet amount that isn't the claimed price: 409 with the amount due, the hold released, nothing relayed", async () => {
+  await newVoucher("HALF", { max: 10 });
+  const id = await linkCheckout();
+  const sawFull = { ...(await signed(id, USDT(100))), amount: "100000000" }; // the payer saw 100.00
+  await applyCode(id, "HALF"); // another tab applied HALF meanwhile: 50.00 is due
+  const res = await callPay(id, sawFull);
+  assert.equal(res.status, 409);
+  assert.deepEqual(res.data, { error: "The total is now 50.00 USDT. Check it, then hold to pay again.", amountDue: "50.00", discount: "50.00", amountUnits: "50000000" });
+  assert.equal(relayCalls.length, 0);
+  assert.equal(await frozen(id), false, "this attempt froze it and signed nothing for it: released");
+  assert.equal(getSession(id).pending, undefined);
+  const again = await callPay(id, { ...(await signed(id, USDT(50))), amount: res.data.amountUnits });
+  assert.equal(again.status, 200, "the payer approves the new total and pays");
+  assert.equal(relayCalls[0].amount, "50000000");
+
+  const other = await linkCheckout();
+  await applyCode(other, "HALF");
+  const sawHalf = { ...(await signed(other, USDT(50))), amount: "50000000" };
+  await voucherCall("DELETE", other); // the code was removed elsewhere: 100.00 is due
+  const up = await callPay(other, sawHalf);
+  assert.deepEqual([up.status, up.data.amountDue, up.data.discount, up.data.amountUnits], [409, "100.00", "0.00", "100000000"]);
+  assert.equal(relayCalls.length, 1, "nothing more relayed");
+});
+
+test("a sheet amount equal to the claimed price proceeds; the signature is still verified at that price", async () => {
+  await newVoucher("HALF", { max: 10 });
+  const id = await linkCheckout();
+  await applyCode(id, "HALF");
+  const lying = await callPay(id, { ...(await signed(id, USDT(100))), amount: "50000000" }); // says 50, signed 100
+  assert.deepEqual([lying.status, relayCalls.length, await frozen(id)], [400, 0, false], "MISMATCH, released: the verify is the backstop");
+  const res = await callPay(id, { ...(await signed(id, USDT(50))), amount: "050000000" });
+  assert.equal(res.status, 200);
+  assert.equal(relayCalls[0].amount, "50000000");
+});
+
+test("no sheet amount (an older sheet) keeps today's path: verified at the claimed price", async () => {
+  await newVoucher("HALF");
+  const id = await linkCheckout();
+  await applyCode(id, "HALF");
+  const res = await callPay(id, await signed(id, USDT(50)));
+  assert.equal(res.status, 200);
+  assert.equal(relayCalls[0].amount, "50000000");
+});
+
+test("a malformed sheet amount is a 400 before anything is locked or claimed", async () => {
+  await newVoucher("HALF");
+  const id = await linkCheckout();
+  await applyCode(id, "HALF");
+  for (const amount of [50000000, "5e7", "-1", "", "50.00", null]) {
+    const res = await callPay(id, { ...(await signed(id, USDT(50))), amount });
+    assert.deepEqual([res.status, res.data.error], [400, "amount must be USDT units."], String(amount));
+  }
+  assert.deepEqual([relayCalls.length, await frozen(id)], [0, false]);
+  assert.equal((await voucherCall("DELETE", id)).status, 200, "not in flight, nothing frozen");
+});
+
+test("the sheet amount is checked after the lock and the open check: there, a 409 or STILL_PENDING releases nothing", async () => {
+  await newVoucher("HALF", { max: 10 });
+  const busy = await linkCheckout();
+  await applyCode(busy, "HALF");
+  assert.equal(claimPayment(busy), true); // another request is paying: it claimed and froze the hold
+  try {
+    assert.equal(await claimAmountDue(busy), USDT(50));
+    const res = await callPay(busy, { ...(await signed(busy, USDT(100))), amount: "100000000" });
+    assert.deepEqual([res.status, res.data.error, res.data.amountDue], [409, "This checkout is already being paid.", undefined]);
+    assert.equal(await frozen(busy), true, "the other attempt's freeze stands");
+  } finally {
+    releasePayment(busy);
+  }
+
+  const id = await linkCheckout();
+  await applyCode(id, "HALF");
+  relayReply = async () => Response.json({ error: "rpc" }, { status: 502 });
+  assert.equal((await callPay(id, { ...(await signed(id, USDT(50))), amount: "50000000" })).status, 504); // pending at 50
+  const res = await callPay(id, { ...(await signed(id, USDT(100))), amount: "100000000" });
+  assert.deepEqual([res.status, res.data.amountDue], [409, undefined]);
+  assert.match(res.data.error, /still confirming/);
+  assert.equal(await frozen(id), true, "never released while pending");
+});
+
+test("the checkout read runs while the body is still arriving (NFR-4)", async () => {
+  const id = await linkCheckout();
+  const seen = [];
+  setTestDb(pgDb(seen));
+  try {
+    let body;
+    const stream = new ReadableStream({ start: (controller) => (body = controller) });
+    const replied = pay(new Request(`http://shop.test/api/v1/sessions/${id}/pay`, { method: "POST", body: stream, duplex: "half" }), { params: Promise.resolve({ id }) });
+    // this session's checkout row, not a background read from an earlier test (security review 021 F1)
+    await eventually(async () => seen.some((text) => text.includes("FROM app_gw_checkouts") && text.includes(id)));
+    body.enqueue(new TextEncoder().encode(JSON.stringify({ ...(await signed(id, USDT(100))), amount: "100000000" })));
+    body.close();
+    assert.equal((await replied).status, 200);
+    assert.equal(relayCalls[0].amount, "100000000");
+  } finally {
+    setTestDb(pgDb());
   }
 });
