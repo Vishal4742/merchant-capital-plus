@@ -13,3 +13,4 @@ Log:
 - 10:58 security round 1 FAIL (F1, F2 HIGH): fixed with F3, F4, F5, F7 in this commit; tests 5c15fcf (RED) → green. apps/web npm test 514/0, typecheck 0, eslint 0; local fundingNonce == CapitalMarket.fundingNonce on chain. Deferred: F6 (200-offer window), F8 (claude-frontend guard regex), F9 (relayer breaker, pre-existing → batch 022).
 - 10:50 security round 2 PASS. New LOWs R1 (/merchant limit per address, chainOffers uncached) and R2 (list/publish/cancel loop costs Arkiv gas): deferred with F6.
 - 10:55 claude-contracts approved the API shape (10:35) + decisions D1-D3/Q12 (10:49) applied, plus their LOWs: refresh patches only (no double create), expiry at maturity, err.name log. Their MEDIUM (createdBy) was already fixed in 4db17af. Capital tests 27/0, typecheck 0, eslint 0.
+- 11:04 human: "Ship it". PR #23 merged after GitHub CI passed (web job pass).
