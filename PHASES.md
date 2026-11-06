@@ -113,9 +113,15 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 - [x] ~~`L` Fee-swap keeper (FR-REL-8)~~ CUT 06:47 (claude-research, delegated by the human 06:43): the relayer's 0.496 WBT covers ≈475 relayed sales at ≈0.00104 WBT each; recorded in the cut list
 - [x] `C` Admin freeze (FR-TOK-5) and test F1 · already on chain in the frozen ClaimToken (`setFrozenTokens`, `forcedTransfer`, ERC-7943) with tests `test_PartialFreezeBlocksOnlyFrozenUnits`, `test_ForcedTransfer*`, `test_RevertWhen_NotAdminFreezesOrForces`, and F1 in CapitalMarket.t.sol (checked 06:47)
 - [ ] `L` *(11:41: the G5 runner captures every AT step's screen in both runs, at 1440 and 375, into its run folder; the curated set goes to docs/screens/)* Screenshot every screen state
+- [ ] `S` *(16:09 human: "i want the mcp")* Assistant connector `packages/mcp` (FR-MCP-1..4, AT-16): stdio MCP over the public API with the merchant's `sk_test_` key; needs no web deploy
+- [ ] `F` Checkout reads the voucher's Arkiv entity (FR-ARK-7, AT-12): must ride the one Capital redeploy
+- [ ] `F` *(16:16 human: no wallet connect on the pay page)* Pay with your own wallet + short-balance notice (FR-PAY-16, AT-17): rides the Capital redeploy
+- [ ] `C` *(16:16 human: no option to settle)* Settlements balance + Withdraw (FR-GW-15, AT-18): rides the Capital redeploy
+- [ ] `S` Agent pays a checkout under caps (FR-MCP-5), after FR-MCP-1..4
+- [ ] `L` Relayer limits across instances (FR-REL-10): before G5 only if merged by 20:00, else right after G5
 - *Cut (human 02:02): EAS KYC, debtor acknowledgement, pay-on-due-date, default and recourse.*
 
-**Gate G5:** the whole demo (AT-1 to AT-15) runs twice in a row with no manual fixes.
+**Gate G5:** the whole demo (AT-1 to AT-15) runs twice in a row with no manual fixes; AT-16 (MCP) is verified once.
 
 ---
 
