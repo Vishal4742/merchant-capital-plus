@@ -292,3 +292,71 @@ test("secrets never reach the logs", async () => {
     for (const s of spies) s.mock.restore();
   }
 });
+
+test("batch 008: a shop's setup script registers and lists webhooks with its secret key (AT-14); publishable and revoked keys can't", async () => {
+  const { createKey, revokeKey } = await import("../lib/server/keys.ts");
+  const sk = await createKey(MERCHANT, "shop server", "sk");
+  const pk = await createKey(MERCHANT, "pay button", "pk");
+  const bearer = (key) => ({ authorization: `Bearer ${key}` });
+  const res = await create(req("POST", "/api/v1/webhooks", { body: { url: "https://shop.example/hooks" }, headers: bearer(sk.key) }));
+  assert.equal(res.status, 201);
+  assert.match((await res.json()).secret, /^whsec_/);
+  const viaKey = await (await list(req("GET", "/api/v1/webhooks", { headers: bearer(sk.key) }))).json();
+  assert.equal(viaKey.webhooks.length, 1);
+  assert.equal((await listHooks(MERCHANT)).length, 1, "the same merchant as the dashboard sees");
+  assert.equal((await listHooks(OTHER_MERCHANT)).length, 0);
+  assert.equal((await create(req("POST", "/api/v1/webhooks", { body: { url: "https://shop.example/x" }, headers: bearer(pk.key) }))).status, 401, "a publishable key can't");
+  assert.equal((await list(req("GET", "/api/v1/webhooks", { headers: bearer("sk_test_" + "A".repeat(32)) }))).status, 401, "an unknown key can't");
+  await revokeKey(MERCHANT, sk.record.id);
+  assert.equal((await list(req("GET", "/api/v1/webhooks", { headers: bearer(sk.key) }))).status, 401, "a revoked key can't");
+});
+
+test("batch 021 (F2): a given event id is used as is, so a re-enqueue of the same event carries the same id", async () => {
+  await newHook();
+  await enqueueEvent(MERCHANT, "payment.succeeded", { id: "ses_1" }, Date.now(), "evt_stable_for_ses_1_00000");
+  await enqueueEvent(MERCHANT, "payment.succeeded", { id: "ses_1" }, Date.now(), "evt_stable_for_ses_1_00000"); // the retry
+  const ids = calls.map((c) => JSON.parse(c.init.body).id);
+  assert.deepEqual(ids, ["evt_stable_for_ses_1_00000", "evt_stable_for_ses_1_00000"], "the receiver can dedupe the second");
+  await enqueueEvent(MERCHANT, "payment.succeeded", { id: "ses_2" });
+  assert.match(JSON.parse(calls.at(-1).init.body).id, /^evt_/, "no id given: a fresh one");
+});
+
+test("batch 021: deliveredEvents tells a delivered test event from a delivered real payment, per merchant", async () => {
+  const { deliveredEvents, sendTestEvent, TIMEOUT_MS } = await import("../lib/server/webhooks.ts");
+  assert.equal(TIMEOUT_MS, 5_000);
+  const h = await newHook();
+  assert.deepEqual(await deliveredEvents(MERCHANT), { test: false, payment: false });
+  reply = async () => new Response("nope", { status: 500 });
+  await sendTestEvent(MERCHANT, h.id);
+  assert.deepEqual(await deliveredEvents(MERCHANT), { test: false, payment: false }, "a 500 isn't 'answered'");
+  reply = async () => new Response("ok", { status: 200 });
+  await sendTestEvent(MERCHANT, h.id);
+  assert.deepEqual(await deliveredEvents(MERCHANT), { test: true, payment: false });
+  await enqueueEvent(MERCHANT, "payment.succeeded", { id: "ses_real", amount: "25.00" });
+  assert.deepEqual(await deliveredEvents(MERCHANT), { test: true, payment: true });
+  assert.deepEqual(await deliveredEvents(OTHER_MERCHANT), { test: false, payment: false }, "scoped to the merchant");
+});
+
+test("batch 022 (021 review L2): an inline attempt that throws logs its error's name only, and the delivery stays pending", async () => {
+  await newHook("https://shop.example/hooks");
+  const { query } = await import("../lib/server/db.ts");
+  // the endpoint answers, then the status UPDATE fails (a DB blip): only the attempt's own write throws
+  reply = async () => {
+    await query("ALTER TABLE app_gw_deliveries ADD CONSTRAINT batch022 CHECK (attempts < 1) NOT VALID");
+    return new Response("ok", { status: 200 });
+  };
+  const spy = mock.method(console, "error", () => {});
+  let lines;
+  try {
+    await enqueueEvent(MERCHANT, "payment.succeeded", { id: "pay_1" }, Date.now());
+    lines = spy.mock.calls.map((c) => c.arguments.join(" "));
+  } finally {
+    spy.mock.restore();
+    await query("ALTER TABLE app_gw_deliveries DROP CONSTRAINT IF EXISTS batch022");
+  }
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /^webhook delivery dlv_\S+: inline attempt failed \(\w+\), left for dispatch$/);
+  assert.ok(!lines[0].includes("shop.example") && !lines[0].includes("batch022"), "no URL, no error message");
+  const [row] = await query("SELECT status FROM app_gw_deliveries");
+  assert.equal(row.status, "pending");
+});

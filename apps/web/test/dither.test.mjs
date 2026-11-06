@@ -47,3 +47,10 @@ test("a tiny or empty box doesn't throw", () => {
   assert.doesNotThrow(() => buildDots(0, 0));
   assert.doesNotThrow(() => buildDots(3, 3));
 });
+
+test("moonX moves the moon (the home hero lights it at 0.74, right of the headline)", () => {
+  const W = 320, H = 200, my = Math.round(H * 0.18), I = sceneIntensity(W, H, 0.74);
+  assert.ok(I[my * W + Math.round(W * 0.74)] > 0.9, "moon centre at 0.74 is lit");
+  assert.ok(I[my * W + Math.round(W * 0.58)] < 0.9, "nothing left at the default spot");
+  assert.deepEqual(sceneIntensity(W, H), sceneIntensity(W, H, 0.58), "the default stays 0.58");
+});

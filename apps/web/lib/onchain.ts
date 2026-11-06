@@ -48,6 +48,22 @@ async function retried<T>(fn: () => Promise<T>, { tries = READ_TRIES, gapMs = RE
   }
 }
 
+/** What a receipt tells us about a transaction's cost: execution gas and its price, plus the OP-stack L1 data fee. */
+export interface FeeReceipt {
+  gasUsed: bigint;
+  effectiveGasPrice: bigint;
+  l1Fee?: bigint | null;
+}
+type ReadReceipt = (hash: Hex) => Promise<FeeReceipt>;
+const defaultReceipt: ReadReceipt = (hash) => (client ??= makeClient()).getTransactionReceipt({ hash });
+
+/** The network fee the relayer paid for one transaction, in wei: gas used × the price it paid, plus the L1 data fee
+ *  (Whitechain Sepolia is an OP-stack chain; viem's formatter puts it on the receipt). Shown to merchants only. */
+export async function readTxFee(txHash: Hex, { readReceipt = defaultReceipt, ...retry }: { readReceipt?: ReadReceipt; tries?: number; gapMs?: number } = {}): Promise<bigint> {
+  const receipt = await retried(() => readReceipt(txHash), retry);
+  return receipt.gasUsed * receipt.effectiveGasPrice + (receipt.l1Fee ?? 0n);
+}
+
 export interface SaleRef {
   merchantPay: Address;
   merchant: Address;

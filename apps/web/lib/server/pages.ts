@@ -5,7 +5,8 @@ import type { LineItem } from "../sessions.ts";
 import { paidCounts } from "./checkouts.ts";
 import { query } from "./db.ts";
 import { HttpError, currencyField, httpsUrl, merchantName, newId, newSlug, textField, type Currency } from "./http.ts";
-import { MAX_LIST, decimal, given, iso, limitCheckouts, openCheckout, priceField, readCheckoutBody } from "./links.ts";
+import { MAX_LIST, decimal, given, iso, limitCheckouts, openCheckout, payablePrices, priceField, readCheckoutBody } from "./links.ts";
+import { dispatchSoon } from "./webhooks.ts";
 
 const MAX_ITEMS = 20;
 const MAX_QTY = 100;
@@ -98,6 +99,8 @@ export async function createPage(merchant: Address, body: Record<string, unknown
   if (given(body.items) === given(body.open_amount)) throw new HttpError(400, "Send either items or open_amount.");
   const items = given(body.items) ? itemsField(body.items) : null;
   const open = items ? { min: null, max: null } : openAmountField(body.open_amount);
+  // each item, or the open minimum, must be at most 1,000 USDT at today's rate (a cheap item adds up in a cart)
+  await payablePrices(items ? items.map((i) => i.price) : open.min === null ? [] : [open.min], currency);
   const stored = items && JSON.stringify(items.map((i) => ({ name: i.name, price: i.price.toString() })));
   const rows = await query<PageRow>(
     `INSERT INTO app_gw_pages (id, slug, merchant, title, description, logo_url, color, currency, items, open_min, open_max, created_at)
@@ -113,6 +116,7 @@ export async function listPages(merchant: Address): Promise<Page[]> {
 }
 
 export async function pageBySlug(slug: string): Promise<Page | null> {
+  dispatchSoon(); // as linkBySlug: due webhook retries ride on checkout traffic
   const rows = await query<PageRow>(`SELECT ${COLUMNS} FROM app_gw_pages WHERE slug = $1`, [slug]);
   return rows.length ? (await withPayments(rows))[0] : null;
 }

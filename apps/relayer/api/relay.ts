@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { relay, relayerClient } from '../src/relayer.ts';
+import { health, relay, relayerClient } from '../src/relayer.ts';
 
 // Only our web server holds RELAY_API_SECRET (human 02:44, ARCHITECTURE §3 point 13). Digests make the compare
 // constant-time and equal-length; an unset secret refuses every request.
@@ -18,4 +18,9 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: 'content-type must be application/json', code: 'unsupported_media_type' }, { status: 415 });
   }
   return relay(await request.text(), relayerClient());
+}
+
+// GET /health lives in this function too, so a /health warm-up ping warms the instance and RPC socket a sale uses.
+export function GET(): Promise<Response> {
+  return health(relayerClient());
 }

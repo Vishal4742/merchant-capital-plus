@@ -1,5 +1,6 @@
 // Server-only client for the relayer's POST /relay (claude-relayer, ARCHITECTURE §3).
 // The browser never calls the relayer: our server forwards a verified authorization and records the result.
+import { after } from "next/server.js"; // the .js path resolves under Node's test runner too
 import type { Address, Hex } from "viem";
 import { NOT_FUNDED } from "./outcome.ts";
 
@@ -30,7 +31,7 @@ export type RelayResult =
   | { ok: false; status: number; message: string; unknown?: boolean; refused?: boolean };
 
 export const UNKNOWN = "We couldn't confirm this payment yet. Don't pay again; check this page again in a few minutes.";
-const BUSY = "Payments are busy right now. Nothing was charged; try again in a moment.";
+export const BUSY = "Payments are busy right now. Nothing was charged; try again in a moment.";
 // connection never opened, so the request can't have reached the relayer
 const NOT_SENT = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN"]);
 
@@ -46,6 +47,16 @@ export const relayPayInvoice = (invoice: RelayInvoice) => relay(invoice, "payInv
 
 export { NOT_FUNDED }; // the routes import it from here with the other relay outcomes
 
+/** claude-relayer batch 006 (06:06): every POST /relay carries x-relay-secret = RELAY_API_SECRET, read on the server only
+ *  (this module is imported by API routes, never by the browser). Unset: no header, for the relayer that doesn't ask. */
+function relayAuth(relayerUrl: string, env: Record<string, string | undefined> = process.env): Record<string, string> {
+  const secret = env.RELAY_API_SECRET?.trim();
+  // only over https, or to this machine: plain http elsewhere would put the secret on the wire (security 008 F2)
+  const url = new URL(relayerUrl);
+  const safe = url.protocol === "https:" || ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  return secret && safe ? { "x-relay-secret": secret } : {};
+}
+
 async function relay(signed: Signed, action: "paySale" | "payInvoice", target: Record<string, string>): Promise<RelayResult> {
   const args = { ...target, from: signed.from, amount: signed.amount.toString(), validAfter: "0", validBefore: signed.validBefore.toString(), salt: signed.salt };
   const body = { action, args, sig: signed.signature };
@@ -53,8 +64,9 @@ async function relay(signed: Signed, action: "paySale" | "payInvoice", target: R
   try {
     res = await fetch(new URL("/relay", signed.relayerUrl), {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...relayAuth(signed.relayerUrl) },
       body: JSON.stringify(body),
+      redirect: "manual", // never carry the secret and the signed body to another address (security 008 F2)
       signal: AbortSignal.timeout(35_000), // longer than the relayer's 30 s receipt wait
     });
   } catch (error) {
@@ -69,8 +81,10 @@ async function relay(signed: Signed, action: "paySale" | "payInvoice", target: R
   if (res.status === 422 && data.code === "insufficient_funds") return { ok: false, status: 400, refused: true, message: NOT_FUNDED };
   const again = action === "paySale" ? "start the checkout again" : "try again"; // an invoice is reused: retry the same link
   if (res.status === 422) return { ok: false, status: 400, refused: true, message: `That approval didn't work. Nothing was charged; please ${again}.` };
-  // 503: refused before sending (gas cap, paused, budget). 429: the relayer's rate limit, also before sending.
-  if (res.status === 503 || res.status === 429) return { ok: false, status: 503, message: BUSY };
+  // 503: refused before sending (gas cap, paused, budget). 429: the relayer's rate limit, also before sending. A 403
+  // with x-vercel-mitigated is Vercel's burst protection in front of the relayer: nothing was sent (claude-relayer 06:46).
+  const mitigated = res.status === 403 && res.headers.get("x-vercel-mitigated") !== null;
+  if (res.status === 503 || res.status === 429 || mitigated) return { ok: false, status: 503, message: BUSY };
   // a 502 or other 5xx (or a 200 without a valid txHash) may have been sent: the payment goes pending and the chain
   // settles it (lib/settle.ts). ponytail: a 502's txHash isn't used yet. A sale's chain read finds the payment through
   // saleOf; an invoice's only sees that it turned Paid, with no receipt id (code review 005 F3, deferred).
@@ -98,3 +112,36 @@ export async function relayerHealth(relayerUrl: string): Promise<RelayerHealth |
     return null;
   }
 }
+
+const WARM_EVERY_MS = 30_000;
+let lastWarmAt = Number.NEGATIVE_INFINITY;
+
+/** Warms the relayer before a customer pays (claude-relayer 09:42): on Vercel, /health runs in the same function as
+ *  /relay, so one ping when a checkout opens keeps the instance and its RPC socket ready (7.31 s cold, 4.32 s warm).
+ *  Fire and forget after the response (Next's after(); at once outside a request), a 3 s cap, never throws, and only
+ *  to an https or loopback relayer like the secret. /health is public, so no header is sent. */
+export function warmRelayer(relayerUrl: string | undefined, schedule: (task: () => Promise<void>) => void = after, now = Date.now()): void {
+  if (!relayerUrl) return;
+  let url: URL;
+  try {
+    url = new URL("/health", relayerUrl); // a URL like "mailto:x" parses but can't take a path: it throws here (security 020 F3)
+  } catch {
+    return;
+  }
+  if (url.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) return;
+  // at most one ping per server instance per WARM_EVERY_MS: page loads must never become relayer traffic from our IP,
+  // which Vercel's burst protection would challenge, blocking every /relay (security review 020 F1, HIGH)
+  if (now - lastWarmAt < WARM_EVERY_MS) return;
+  lastWarmAt = now;
+  const ping = () =>
+    fetch(url, { signal: AbortSignal.timeout(3_000), cache: "no-store" }).then(
+      (res) => void res.body?.cancel().catch(() => undefined), // free the socket now, not at garbage collection
+      () => undefined,
+    );
+  try {
+    schedule(ping);
+  } catch {
+    void ping();
+  }
+}
+

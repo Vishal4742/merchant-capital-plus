@@ -43,33 +43,66 @@ export interface History {
   payments: ChainPayment[]; // oldest first
   refunds: ChainRefund[];
 }
-/** UTC days `from`..`to` inclusive; `start`..`end` in ms, end exclusive. */
+/** Days `from`..`to` inclusive in time zone `tz` (IANA, default UTC); `start`..`end` = local midnights in ms, end exclusive. */
 export interface Range {
   from: string;
   to: string;
+  tz: string;
   start: number;
   end: number;
 }
 
 export const usdt = (units: bigint) => formatUnits(units, USDT_DECIMALS);
-const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 const sum = (values: bigint[]) => values.reduce((a, b) => a + b, 0n);
+const utcMidnight = (date: string) => Date.parse(`${date}T00:00:00Z`);
+const addDays = (date: string, n: number) => new Date(utcMidnight(date) + n * DAY_MS).toISOString().slice(0, 10);
 
-function dateParam(value: string | null, name: string): number | null {
-  if (!value) return null;
-  const ms = /^\d{4}-\d{2}-\d{2}$/.test(value) ? Date.parse(`${value}T00:00:00Z`) : NaN;
-  if (!Number.isFinite(ms) || day(ms) !== value) throw new HttpError(400, `${name} must be a date like 2026-11-06.`);
-  return ms;
+/** ms → that instant's calendar date in `tz` (en-CA formats as YYYY-MM-DD). */
+const dayFormatter = (tz: string) => new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" });
+
+/** `tz`'s offset from UTC at `ms` (local wall clock − UTC), in ms. */
+function offsetAt(ms: number, tz: string): number {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })
+      .formatToParts(ms)
+      .map((p) => [p.type, p.value]),
+  );
+  return Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour, +parts.minute, +parts.second) - (ms - (ms % 1000));
 }
 
-/** `?from=YYYY-MM-DD&to=YYYY-MM-DD` (UTC, inclusive); the last 7 days by default, at most 92. */
+/** The instant `date` begins in `tz`. Two passes, so a DST change between the guess and the answer still lands right. */
+function localMidnight(date: string, tz: string): number {
+  const wall = utcMidnight(date);
+  return wall - offsetAt(wall - offsetAt(wall, tz), tz);
+}
+
+function dateParam(value: string | null, name: string): string | null {
+  if (!value) return null;
+  const ok = /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(utcMidnight(value)) && addDays(value, 0) === value;
+  if (!ok) throw new HttpError(400, `${name} must be a date like 2026-11-06.`);
+  return value;
+}
+
+function zoneParam(value: string | null): string {
+  if (!value) return "UTC";
+  try {
+    if (value.length > 64) throw new Error("too long");
+    new Intl.DateTimeFormat("en-US", { timeZone: value }); // throws RangeError on an unknown zone
+    return value;
+  } catch {
+    throw new HttpError(400, "tz must be a time zone like Asia/Kolkata.");
+  }
+}
+
+/** `?from=YYYY-MM-DD&to=YYYY-MM-DD&tz=Asia/Kolkata` (inclusive; tz default UTC); the last 7 days by default, at most 92. */
 export function rangeOf(request: Request, now = Date.now()): Range {
   const params = new URL(request.url).searchParams;
-  const toMs = dateParam(params.get("to"), "to") ?? now - (now % DAY_MS);
-  const fromMs = dateParam(params.get("from"), "from") ?? toMs - (DEFAULT_DAYS - 1) * DAY_MS;
-  if (fromMs > toMs) throw new HttpError(400, "from must be on or before to.");
-  if ((toMs - fromMs) / DAY_MS + 1 > MAX_DAYS) throw new HttpError(400, `A report covers at most ${MAX_DAYS} days.`);
-  return { from: day(fromMs), to: day(toMs), start: fromMs, end: toMs + DAY_MS };
+  const tz = zoneParam(params.get("tz"));
+  const to = dateParam(params.get("to"), "to") ?? dayFormatter(tz).format(now);
+  const from = dateParam(params.get("from"), "from") ?? addDays(to, -(DEFAULT_DAYS - 1));
+  if (from > to) throw new HttpError(400, "from must be on or before to.");
+  if ((utcMidnight(to) - utcMidnight(from)) / DAY_MS + 1 > MAX_DAYS) throw new HttpError(400, `A report covers at most ${MAX_DAYS} days.`);
+  return { from, to, tz, start: localMidnight(from, tz), end: localMidnight(addDays(to, 1), tz) };
 }
 
 /** MerchantPay's address, or 503 until the contracts are configured on this server. */
@@ -158,17 +191,21 @@ function totals(payments: ChainPayment[], refunds: ChainRefund[]) {
   };
 }
 
-/** Every UTC day in range (zeros included), the totals, and new vs returning payers (paid this merchant before). */
+/** Every day in range in its time zone (zeros included), the totals, and new vs returning payers (paid this merchant before). */
 export function report(history: History, range: Range) {
   const payments = paymentsIn(history, range);
   const refunds = history.refunds.filter(within(range));
-  const dates = Array.from({ length: (range.end - range.start) / DAY_MS }, (_, i) => day(range.start + i * DAY_MS));
+  const count = (utcMidnight(range.to) - utcMidnight(range.from)) / DAY_MS + 1;
+  const dates = Array.from({ length: count }, (_, i) => addDays(range.from, i));
+  const fmt = dayFormatter(range.tz);
+  const day = (ms: number) => fmt.format(ms);
   const before = new Set(history.payments.filter((p) => p.time < range.start).map((p) => p.payer.toLowerCase()));
   const payers = new Set(payments.map((p) => p.payer.toLowerCase()));
   const returningPayers = [...payers].filter((payer) => before.has(payer)).length;
   return {
     from: range.from,
     to: range.to,
+    tz: range.tz,
     days: dates.map((date) => ({ date, ...totals(payments.filter((p) => day(p.time) === date), refunds.filter((r) => day(r.time) === date)) })),
     totals: totals(payments, refunds),
     kpis: { new_payers: payers.size - returningPayers, returning_payers: returningPayers }, // snake_case like the rest of the API

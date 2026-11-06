@@ -9,7 +9,7 @@ import {
   serializeSignature, formatEther, toHex, zeroHash, type Address, type Hex,
 } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
-import { addresses, merchantPayAbi } from '../../../packages/shared/contracts.ts';
+import { addresses, capitalMarketAbi, merchantPayAbi } from '../src/contracts.ts';
 import { health, makeClient, relay, relayerClient, startBalanceRefresh, TIMING, USDT_ABI, USDT_DOMAIN } from '../src/relayer.ts';
 
 const MP = addresses.merchantPay; // lowercase in the generated file
@@ -19,7 +19,8 @@ const HALF_WBT = '0x6f05b59d3b20000'; // 0.5e18 wei
 const GAS_USED = 217_194n; // a live paySale (claude-contracts smoke test)
 const GAS_PRICE = 5_001_000_000n;
 const L1_FEE = 8_960n; // OP Stack L1 data fee on a live paySale receipt (drain review chain facts)
-const ABI = [...USDT_ABI, ...merchantPayAbi];
+const ABI = [...USDT_ABI, ...merchantPayAbi, ...capitalMarketAbi];
+const CM = addresses.capitalMarket;
 const REVERT_DATA = encodeErrorResult({ abi: parseAbi(['error Error(string)']), errorName: 'Error', args: ['TetherToken: auth invalid'] });
 const customRevert = (errorName: 'OrderPaid' | 'InvoiceNotOpen' | 'WrongAmount' | 'InvalidOrder' | 'EnforcedPause') =>
   () => { throw rpcError(3, 'execution reverted', encodeErrorResult({ abi: merchantPayAbi, errorName })); };
@@ -34,6 +35,9 @@ const saleNonceOf = (merchant: Address, orderRef: Hex, amount: bigint, salt: Hex
   keccak256(encodeAbiParameters(NONCE_TYPES, [1874n, MP, 2, BigInt(merchant), orderRef, amount, salt]));
 const invoiceNonceOf = (id: bigint, amount: bigint, salt: Hex) =>
   keccak256(encodeAbiParameters(NONCE_TYPES, [1874n, MP, 1, id, zeroHash, amount, salt]));
+// The fake chain's CapitalMarket.fundingNonce: any formula works, the relayer must use whatever the chain returns.
+const fundNonceOf = (claimId: bigint, investor: Address, units: bigint, salt: Hex) =>
+  keccak256(encodeAbiParameters(parseAbiParameters('uint256, address, uint256, bytes32'), [claimId, investor, units, salt]));
 
 interface NodeOptions {
   code?: Hex;
@@ -42,6 +46,7 @@ interface NodeOptions {
   used?: Hex[];
   sendDelayMs?: number;
   gasUsed?: bigint; // receipt override (budget tests)
+  quote?: bigint; // CapitalMarket.quote answer (funding tests)
   minedRevert?: boolean; // the sync receipt says status 0 (breaker tests)
   on?: Record<string, (params: unknown[]) => unknown>; // override one method; simulations are 'eth_call:paySale' / 'eth_call:payInvoice'
 }
@@ -51,6 +56,7 @@ type Call = ReturnType<typeof decodeFunctionData<typeof ABI>>;
 function authNonce(call: Call): Hex | undefined {
   if (call.functionName === 'paySale') { const [merchant, orderRef, , amount, , , salt] = call.args; return saleNonceOf(merchant, orderRef, amount, salt); }
   if (call.functionName === 'payInvoice') { const [id, , amount, , , salt] = call.args; return invoiceNonceOf(id, amount, salt); }
+  if (call.functionName === 'fundWithAuthorization') { const [claimId, investor, units, , , salt] = call.args; return fundNonceOf(claimId, investor, units, salt); }
 }
 
 // A stateful fake JSON-RPC node: USDT reads, MerchantPay's relayFee, paySale/payInvoice (revert once their authorization
@@ -80,8 +86,14 @@ function fakeNode(opts: NodeOptions = {}) {
           return encodeFunctionResult({ abi: USDT_ABI, functionName: 'balanceOf', result: opts.balance ?? 10_000_000n });
         }
         if (call.functionName === 'relayFee') return encodeFunctionResult({ abi: merchantPayAbi, functionName: 'relayFee', result: RELAY_FEE });
+        if (call.functionName === 'quote') return encodeFunctionResult({ abi: capitalMarketAbi, functionName: 'quote', result: opts.quote ?? 2_000_000n });
+        if (call.functionName === 'fundingNonce') {
+          const [claimId, investor, units, salt] = call.args;
+          return encodeFunctionResult({ abi: capitalMarketAbi, functionName: 'fundingNonce', result: fundNonceOf(claimId, investor, units, salt) });
+        }
         const auth = authNonce(call);
         if (auth && used.has(auth)) throw rpcError(3, 'execution reverted: TetherToken: auth invalid', REVERT_DATA);
+        if (auth && call.functionName === 'fundWithAuthorization') return '0x';
         if (auth) return encodeFunctionResult({ abi: merchantPayAbi, functionName: 'paySale', result: paymentId + 1n });
         throw new Error(`fake node: unexpected eth_call ${call.functionName}`);
       }
@@ -89,13 +101,14 @@ function fakeNode(opts: NodeOptions = {}) {
         const raw = params[0] as Hex;
         const hash = keccak256(raw);
         sent.push(raw);
-        const call = decodeFunctionData({ abi: merchantPayAbi, data: parseTransaction(raw).data! });
+        const call = decodeFunctionData({ abi: ABI, data: parseTransaction(raw).data! });
         void sleep(opts.sendDelayMs ?? 0).then(() => {
           used.add(authNonce(call)!);
           nonce += 1;
           paymentId += 1n;
           calls.push('mined');
-          mined.set(hash, opts.minedRevert ? receipt(hash, '0x0', [], opts.gasUsed) : receipt(hash, '0x1', [paidLog(hash, paymentId, call)], opts.gasUsed));
+          const logs = call.functionName === 'paySale' || call.functionName === 'payInvoice' ? [paidLog(hash, paymentId, call)] : [];
+          mined.set(hash, opts.minedRevert ? receipt(hash, '0x0', [], opts.gasUsed) : receipt(hash, '0x1', logs, opts.gasUsed));
         });
         return hash;
       }
@@ -109,7 +122,7 @@ function fakeNode(opts: NodeOptions = {}) {
     async request({ method, params }: { method: string; params: unknown[] }) {
       const label = name(method, params);
       calls.push(label);
-      if (label === 'eth_call:paySale' || label === 'eth_call:payInvoice') simulations.push(params[0] as Record<string, unknown>);
+      if (label === 'eth_call:paySale' || label === 'eth_call:payInvoice' || label === 'eth_call:fundWithAuthorization') simulations.push(params[0] as Record<string, unknown>);
       return opts.on?.[label] ? opts.on[label](params) : answer(method, params);
     },
   }, { retryCount: 0 }); // a real code-3 revert over HTTP isn't retried; a thrown plain Error would be
@@ -332,6 +345,18 @@ test('RPC pre-checks reject in one round with their code and never simulate or s
   }
 });
 
+test('a 200 carries per-step timings in whole ms (NFR-4 on the deployed relayer); cold only on the first relay', async () => {
+  const { status, out } = await post((await signedSale()).body, fakeNode({ sendDelayMs: 40 }));
+  assert.equal(status, 200, JSON.stringify(out));
+  const t = out.timings;
+  const steps = ['checks', 'queue', 'presend', 'send', 'receipt'];
+  for (const k of [...steps, 'total']) assert.ok(Number.isInteger(t[k]) && t[k] >= 0, `${k}: ${t[k]}`);
+  assert.ok(steps.reduce((sum, k) => sum + t[k], 0) <= t.total + steps.length, `steps add up to the total (± rounding): ${JSON.stringify(t)}`);
+  assert.ok(t.receipt >= 30, `the receipt wait is measured: ${t.receipt}`);
+  assert.equal(t.cold, false, 'earlier tests already relayed in this process');
+  assert.deepEqual(Object.keys(t).sort(), ['checks', 'cold', 'presend', 'queue', 'receipt', 'send', 'total']);
+});
+
 test('every simulation carries the same gas limit and fees the relayer signs with', async () => {
   const node = fakeNode();
   assert.equal((await post((await signedSale()).body, node)).status, 200);
@@ -536,6 +561,15 @@ test('health reports the relayer WBT balance, nothing spent yet and the full 0.1
   });
   const down = fakeNode({ on: { eth_getBalance: () => { throw rpcError(-32000, 'down'); } } });
   assert.equal((await health(down.client)).status, 502);
+});
+
+// Batch 018 security F1: /health now runs in the signing instance and the web pings it on every checkout open, so a
+// burst must not fan out balance reads onto the RPC quota a sale's receipt poll needs.
+test('concurrent /health calls on a cold cache share one balance read', async () => {
+  const node = fakeNode();
+  const replies = await Promise.all(Array.from({ length: 10 }, () => health(node.client)));
+  assert.ok(replies.every((r) => r.status === 200));
+  assert.equal(node.calls.filter((c) => c === 'eth_getBalance').length, 1);
 });
 
 // Human 23:27: NFR-14 /health ≤ 300 ms p95 via a balance at most 5 s old, re-read after every send.
@@ -887,5 +921,49 @@ test('MerchantPay paused (EnforcedPause) is 503 paused', async () => {
   const node = fakeNode({ on: { 'eth_call:paySale': customRevert('EnforcedPause') } });
   const { status, out } = await post((await signedSale()).body, node);
   assert.deepEqual([status, out.code], [503, 'paused']);
+  assert.equal(node.sent.length, 0);
+});
+
+// ---- batch 010 (human 08:20): investors fund a claim gaslessly through CapitalMarket.fundWithAuthorization ----
+
+async function signedFunding(o: { quote?: bigint; to?: Address; claimId?: bigint; units?: bigint } = {}) {
+  const investor = privateKeyToAccount(generatePrivateKey());
+  const [claimId, units, salt] = [o.claimId ?? 4n, o.units ?? 2_200_000n, random32()];
+  const message = {
+    from: investor.address, to: o.to ?? CM, value: o.quote ?? 2_000_000n, validAfter: 0n, validBefore: now() + 600n,
+    nonce: fundNonceOf(claimId, investor.address, units, salt),
+  } as const;
+  const sig = await investor.signTypedData({ domain: USDT_DOMAIN, types: TYPES, primaryType: 'ReceiveWithAuthorization', message });
+  const args = { claimId: String(claimId), investor: investor.address, units: String(units), validAfter: '0', validBefore: String(message.validBefore), salt };
+  return { body: { action: 'fund', args, sig }, message, sig, investor, claimId, units, salt };
+}
+
+test('fund: the investor signature over quote + fundingNonce is relayed to CapitalMarket.fundWithAuthorization', async () => {
+  const node = fakeNode({ quote: 2_000_000n });
+  const f = await signedFunding({ quote: 2_000_000n });
+  const { status, out } = await post(f.body, node);
+  assert.equal(status, 200, JSON.stringify(out));
+  const tx = parseTransaction(node.sent[0]);
+  assert.equal(tx.to?.toLowerCase(), CM.toLowerCase());
+  const call = decodeFunctionData({ abi: capitalMarketAbi, data: tx.data! });
+  assert.equal(call.functionName, 'fundWithAuthorization');
+  const { r, s: ss, yParity } = parseSignature(f.sig);
+  assert.deepEqual(call.args, [f.claimId, f.investor.address, f.units, 0n, f.message.validBefore, f.salt, yParity + 27, r, ss]);
+  assert.equal(out.gasUsed, String(GAS_USED));
+  assert.ok(node.calls.includes('eth_call:quote') && node.calls.includes('eth_call:fundingNonce'));
+});
+
+test('fund: a quote under 1 USDT is below_minimum (no relay fee, so dust funding would drain gas) and nothing is simulated or sent', async () => {
+  const node = fakeNode({ quote: 999_999n });
+  const { status, out } = await post((await signedFunding({ quote: 999_999n })).body, node);
+  assert.deepEqual([status, out.code], [422, 'below_minimum']);
+  assert.ok(!node.calls.includes('eth_call:fundWithAuthorization'));
+  assert.equal(node.sent.length, 0);
+});
+
+test('fund: a signature made for another contract (to = MerchantPay) is bad_signature', async () => {
+  const node = fakeNode();
+  const { status, out } = await post((await signedFunding({ to: MP })).body, node);
+  assert.deepEqual([status, out.code], [422, 'bad_signature']);
   assert.equal(node.sent.length, 0);
 });

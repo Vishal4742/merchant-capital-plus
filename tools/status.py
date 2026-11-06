@@ -73,7 +73,7 @@ def phases():
 
 def main():
     log = (ROOT / "HANDOFF_LOG.md").read_text() if (ROOT / "HANDOFF_LOG.md").exists() else ""
-    verified = set(re.findall(r"VERIFIED ([0-9]{3}-P\d-[\w-]+)", log)) | set(re.findall(r"VERIFIED (G\d)(?=: | on )", log))  # gates only as "VERIFIED G<n>:" or "VERIFIED G<n> on"
+    verified = {b for line in re.findall(r"VERIFIED [^:]*", log) for b in re.findall(r"[0-9]{3}-P\d-[\w-]+", line)} | set(re.findall(r"VERIFIED (G\d)(?=: | on )", log))  # gates only as "VERIFIED G<n>:" or "VERIFIED G<n> on"
     print(f"Merchant Capital+ status · {time.strftime('%a %H:%M')} IST\n")
     print("Phases (tasks ticked in PHASES.md · gate):")
     for n, name, done, total, gate in phases():

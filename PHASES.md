@@ -66,6 +66,7 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 - [x] `O` Review the relayer guards: can anyone make us pay gas for nothing? · done 00:42 by claude-review: yes, 3 ways once public (R1, R2, R3); fixes with claude-relayer; human chose Postgres lock + 6 gwei cap
 
 **Gate G2:** AT-1 (gasless sale), AT-2 (refund), AT-10 (relayer rejects a bad call), and the speed budgets NFR-4, NFR-12, NFR-14 measured.
+- [x] ✅ **Gate G2 passed 06:42** (verified on-chain by claude-research): AT-1 `0x7e03…7a11`, AT-2 refund `0x8334…bbeb`, AT-10 all rejected from the deployed relayer (relayer nonce unchanged), NFR-4 4.40 s sale `0xd1a7…987a`, NFR-12 /checkout 191 KB JS, NFR-14 /health p95 280 ms and rejects p95 ≤ 363 ms from https://merchant-capital-relayer.vercel.app
 **If blocked here:** this is the stuck rule's most important point. Ask for help immediately; every later phase depends on it.
 
 ---
@@ -86,16 +87,16 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 ## Phase 4: Payment gateway (v2.0, human 2026-11-06 02:35)
 **Goal:** the features merchants expect from a payment gateway (like Razorpay or Stripe), in stablecoins, strictly on Whitechain testnet. Reference: the human's Razorpay test-mode screen recording (functional reference only, nothing copied).
 
-- [ ] `F` Payment Links with QR codes (FR-GW-1, FR-GW-3); Payment Pages (FR-GW-2)
-- [ ] `F` Discount vouchers: codes as Arkiv entities that expire, redemptions counted on our server (FR-GW-12, FR-ARK-1–5 now apply to voucher entities)
-- [ ] `F` Multi-currency prices with a locked FX quote at checkout (FR-GW-11) · *batch 006 (06:20): sessions v2 with FX quotes on checkout; switch to the backend quotes module pending*
-- [ ] `F` Reports with a sales chart and CSV, and a Settlements page (FR-GW-9, FR-GW-10)
-- [ ] `F` API keys, webhooks, a `/docs` page and the test-mode badge (FR-GW-6, 7, 8, 14) · *batch 006 (06:20): test-mode strip, /docs, dashboard shell, payments API done; keys + webhooks screens pending*
+- [x] `F` *(batch 010 verified 07:42: phase mode, ci + review-security PASS, 328 tests pass; /merchant/links, /merchant/pages, hosted /l and /p, server-rendered QR; live on :3100; AT-11 runs at G4)* Payment Links with QR codes (FR-GW-1, FR-GW-3); Payment Pages (FR-GW-2)
+- [x] `F` *(AT-12 verified 09:27: code G4AT12 10% on a 6 + 5 USD page paid 9.90 USDT (0xb3e7…0e81); the code is Arkiv entity 0xf51f…482c, create tx 0x3e21…1fa2 from writer 0xF216, expires 7 Nov 06:30Z; contracts batch 018 makes every mirror attempt visible and retryable)* Discount vouchers: codes as Arkiv entities that expire, redemptions counted on our server (FR-GW-12, FR-ARK-1–5 now apply to voucher entities)
+- [x] `F` *(AT-13 verified 07:59: 20 EUR → 22.51 USDT at 0.88873, rounded up once; frontend 015 moved checkout to the backend quotes module, lib/fx.ts removed; contracts 015 converts a cart's total once)* Multi-currency prices with a locked FX quote at checkout (FR-GW-11)
+- [x] `F` *(batch 013-P4-web-money-screens verified 08:12: Reports with chart + CSV, Settlements with the network fee covered (WBT 6 dp); ci PASS, 388 tests; /merchant/reports and /merchant/settlements live; reports group by UTC day until tz support lands)* Reports with a sales chart and CSV, and a Settlements page (FR-GW-9, FR-GW-10)
+- [x] `F` *(batch 012-P4-web-developers verified 08:10: keys create/revoke with hash-only storage, webhook endpoints, /docs test-keys link; phase mode Money: yes, ci + review-security PASS, 369 tests pass; /merchant/developers live)* API keys, webhooks, a `/docs` page and the test-mode badge (FR-GW-6, 7, 8, 14) · *batch 006 (06:20): test-mode strip, /docs, dashboard shell, payments API done; keys + webhooks screens pending*
 - [x] `S` *(SDK core verified 03:21, batch 005-P4-sdk-core: Gateway sessions/payments/webhooks, zero deps; pay button batch 007 verified 05:57 incl. a DOM-clobbering fix proven in Chrome; PR #8, #9)* SDK + payment-button script in `packages/sdk` (FR-GW-4, FR-GW-5)
 - [x] `C` Capital on chain: AT-6, AT-7, AT-8 live, the E1 event-ABI snapshot and the NFR-10 coverage report (batch 006); then **contracts freeze** · batch 006 verified 03:13: AT-6 investors paid 58.8393 + 39.2262, AT-7 debtor 100.10 → 60 + 40 in one tx, AT-8 canTransfer(A, non-eligible) = false; contracts FROZEN
-- [ ] `S` Rebuild `apps/shop` on the SDK or button in ≤ 20 lines (FR-PAY-11, AT-14)
+- [x] `L` *(moved S→L 08:30: claude-sdk idle 3 h; AT-14 verified 09:20: 2.00 USDT sale 0x29c9…6ebd, webhook verified, 20 integration lines counted from git; live https://merchant-capital-shop.vercel.app; PR #19)* Rebuild `apps/shop` on the SDK or button in ≤ 20 lines (FR-PAY-11, AT-14)
 - [x] `C` After the freeze: the gateway backend API in `apps/web/app/api/v1/{links,pages,vouchers,quotes,reports,settlements,keys,webhooks}` + Neon `app_gw_*` tables (FR-GW-1, 2, 6, 7, 9, 10, 11, 12 server side); claude-frontend builds the screens against it · batch 007 verified 05:57: 101 tests on real SQL, 10 `app_gw_*` tables on Neon, voucher oversell fixed; PR #11
-- [ ] `F` Private reads by default on dashboard pages, with the meter (FR-PRIV-1–3)
+- [x] `F` *(batch 018 verified 09:33: dashboard chain reads through Anon-RPC (Nym) by default with a narrow per-route CSP (human 08:52); meter shows 'Private reads 4 of 4' in a production run with no CSP violations; ci + security PASS, 421 tests)* Private reads by default on dashboard pages, with the meter (FR-PRIV-1–3)
 - [ ] `F` Record every Arkiv problem (post it to claude-research)
 
 **Gate G4:** AT-11 to AT-15 (gateway) and AT-6 to AT-8 (Capital on chain). AT-8 counts its **contract half** here (the transfer reverts and `canTransfer` returns the reason); the UI "shows the reason first" half is checked at G5 with the Capital tab (human 03:02).
@@ -106,10 +107,10 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 ## Phase 5: Capital tab, extras and integration
 **Goal:** "Get paid early" as one tab of the gateway, and a demo that runs twice cleanly.
 
-- [ ] `F` Capital tab: advance with its total cost shown before signing (FR-ADV-1, 6), investor funding (FR-ADV-3), invoice financing price (FR-INV-2), offer book on Arkiv (FR-ARK-1–5), the transfer reason (FR-TOK-8); AT-3 to AT-9 through the UI
+- [ ] `F`+`L` *(split 08:41; server moved C→L 09:52: claude-frontend builds the screens under apps/web/app/capital/** and components/capital/**; claude-relayer builds the server api/v1/capital/** and lib/server/capital*.ts to claude-contracts' 08:53 API shape, which claude-contracts reviews; investor funding is gasless through the relayer's fund action, PR #18; build pack: docs/CAPITAL-TAB.md)* Capital tab: advance with its total cost shown before signing (FR-ADV-1, 6), investor funding (FR-ADV-3), invoice financing price (FR-INV-2), offer book on Arkiv (FR-ARK-1–5), the transfer reason (FR-TOK-8); AT-3 to AT-9 through the UI
 - [ ] `F` Gift vouchers (FR-GW-13), only if time is left
-- [ ] `L` Fee-swap keeper (FR-REL-8)
-- [ ] `C` Admin freeze (FR-TOK-5) and test F1 if still missing
+- [x] ~~`L` Fee-swap keeper (FR-REL-8)~~ CUT 06:47 (claude-research, delegated by the human 06:43): the relayer's 0.496 WBT covers ≈475 relayed sales at ≈0.00104 WBT each; recorded in the cut list
+- [x] `C` Admin freeze (FR-TOK-5) and test F1 · already on chain in the frozen ClaimToken (`setFrozenTokens`, `forcedTransfer`, ERC-7943) with tests `test_PartialFreezeBlocksOnlyFrozenUnits`, `test_ForcedTransfer*`, `test_RevertWhen_NotAdminFreezesOrForces`, and F1 in CapitalMarket.t.sol (checked 06:47)
 - [ ] `O` Screenshot every screen state
 - *Cut (human 02:02): EAS KYC, debtor acknowledgement, pay-on-due-date, default and recourse.*
 

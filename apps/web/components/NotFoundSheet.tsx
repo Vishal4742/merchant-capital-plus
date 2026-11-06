@@ -11,7 +11,7 @@ export function NotFoundSheet({ title, children }: { title: string; children: Re
         <h1 className="title">{title}</h1>
         <p className="text-sm text-ink-muted">{children}</p>
         <Link href="/" className="inline-flex min-h-11 items-center text-sm text-accent underline underline-offset-4">
-          Go to Merchant Capital+
+          About Merchant Capital+
         </Link>
       </section>
     </main>

@@ -34,26 +34,26 @@ test("forged, edited, wrong-secret and expired session cookies are rejected", ()
 test("a correctly signed SIWE message for our domain, nonce and chain signs in", async () => {
   const message = siwe();
   const signature = await merchant.signMessage({ message });
-  assert.equal(await auth.verifySignIn({ message, signature, nonce: "abcdefgh12345678", domain: "shop.test" }), merchant.address);
+  assert.equal(await auth.verifySignIn({ message, signature, nonce: "abcdefgh12345678", domains: ["shop.test"] }), merchant.address);
 });
 
 test("wrong nonce, domain, chain, signer or an expired message is refused", async () => {
   const message = siwe();
   const signature = await merchant.signMessage({ message });
-  assert.equal(await auth.verifySignIn({ message, signature, nonce: "zzzzzzzz12345678", domain: "shop.test" }), null, "nonce");
-  assert.equal(await auth.verifySignIn({ message, signature, nonce: "abcdefgh12345678", domain: "evil.test" }), null, "domain");
+  assert.equal(await auth.verifySignIn({ message, signature, nonce: "zzzzzzzz12345678", domains: ["shop.test"] }), null, "nonce");
+  assert.equal(await auth.verifySignIn({ message, signature, nonce: "abcdefgh12345678", domains: ["evil.test"] }), null, "domain");
   const mainnet = siwe({ chainId: 1 });
-  assert.equal(await auth.verifySignIn({ message: mainnet, signature: await merchant.signMessage({ message: mainnet }), nonce: "abcdefgh12345678", domain: "shop.test" }), null, "chain");
+  assert.equal(await auth.verifySignIn({ message: mainnet, signature: await merchant.signMessage({ message: mainnet }), nonce: "abcdefgh12345678", domains: ["shop.test"] }), null, "chain");
   const intruder = privateKeyToAccount(generatePrivateKey());
-  assert.equal(await auth.verifySignIn({ message, signature: await intruder.signMessage({ message }), nonce: "abcdefgh12345678", domain: "shop.test" }), null, "signer");
+  assert.equal(await auth.verifySignIn({ message, signature: await intruder.signMessage({ message }), nonce: "abcdefgh12345678", domains: ["shop.test"] }), null, "signer");
   const old = siwe({ expirationTime: new Date(Date.now() - 1000) });
-  assert.equal(await auth.verifySignIn({ message: old, signature: await merchant.signMessage({ message: old }), nonce: "abcdefgh12345678", domain: "shop.test" }), null, "expired");
+  assert.equal(await auth.verifySignIn({ message: old, signature: await merchant.signMessage({ message: old }), nonce: "abcdefgh12345678", domains: ["shop.test"] }), null, "expired");
 });
 
 test("a message with no expiry, or one valid for longer than 10 minutes, is refused (a captured signature must die)", async () => {
   for (const [what, message] of [["no expiry", siwe({ expirationTime: undefined })], ["a day", siwe({ expirationTime: new Date(Date.now() + 86_400_000) })]]) {
     const signature = await merchant.signMessage({ message });
-    assert.equal(await auth.verifySignIn({ message, signature, nonce: "abcdefgh12345678", domain: "shop.test" }), null, what);
+    assert.equal(await auth.verifySignIn({ message, signature, nonce: "abcdefgh12345678", domains: ["shop.test"] }), null, what);
   }
 });
 
@@ -121,4 +121,23 @@ test("a mangled nonce cookie is a 401, not a 500 (N21)", async () => {
 
 test("a nonce cookie stamped in the future is refused (M45)", () => {
   assert.equal(auth.readNonce(auth.signNonce("abcdefgh12345678", SECRET, Date.now() + 120_000), SECRET), null);
+});
+
+// G2 run (06:30): `next start` reports every request as localhost, but the merchant's browser may be on 127.0.0.1.
+test("signInDomains: the request's host, its loopback spellings under localhost, and PUBLIC_ORIGIN's host", () => {
+  assert.deepEqual(auth.signInDomains("http://localhost:3100/api/auth/verify", undefined), ["localhost:3100", "127.0.0.1:3100", "[::1]:3100"]);
+  assert.deepEqual(auth.signInDomains("https://shop.test/api/auth/verify", undefined), ["shop.test"], "no loopback for a real host");
+  assert.deepEqual(auth.signInDomains("https://shop.test/x", "https://pay.example"), ["shop.test", "pay.example"]);
+  assert.deepEqual(auth.signInDomains("https://shop.test/x", "javascript:alert(1)"), ["shop.test"], "only an http(s) PUBLIC_ORIGIN");
+});
+
+test("a message signed on 127.0.0.1:3100 verifies on a server that sees localhost:3100; another site's doesn't", async () => {
+  const signed = async (domain) => {
+    const message = createSiweMessage({ address: merchant.address, chainId: 1874, domain, nonce: "abcdefgh12345678", uri: `http://${domain}`, version: "1", expirationTime: new Date(Date.now() + 5 * 60_000) });
+    return { message, signature: await merchant.signMessage({ message }) };
+  };
+  const domains = auth.signInDomains("http://localhost:3100/api/auth/verify", undefined);
+  assert.equal(await auth.verifySignIn({ ...(await signed("127.0.0.1:3100")), nonce: "abcdefgh12345678", domains }), merchant.address);
+  assert.equal(await auth.verifySignIn({ ...(await signed("127.0.0.1:3112")), nonce: "abcdefgh12345678", domains }), null, "another port");
+  assert.equal(await auth.verifySignIn({ ...(await signed("evil.test")), nonce: "abcdefgh12345678", domains }), null, "a phishing site");
 });

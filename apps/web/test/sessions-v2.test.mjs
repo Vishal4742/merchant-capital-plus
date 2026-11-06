@@ -19,7 +19,7 @@ mock.module("../lib/onchain.ts", {
   },
 });
 
-// rates dated today: lib/fx.ts refuses one older than 7 days (security review 006 F1)
+// rates dated today: lib/server/quotes.ts (the single FX source, FR-GW-11) refuses one older than 7 days
 const RATE_DATE = new Date().toISOString().slice(0, 10);
 const ROWS = ["AED:3.6725", "EUR:0.88877", "GBP:0.7423", "INR:94.5", "SGD:1.2775"].map((pair) => {
   const [quote, rate] = pair.split(":");
@@ -36,7 +36,9 @@ globalThis.fetch = async (url) => {
 const { POST: createRoute } = await import("../app/api/v1/sessions/route.ts");
 const { GET: statusRoute } = await import("../app/api/v1/sessions/[id]/route.ts");
 const { createSession, getSession, recordPayment, SESSION_TTL_MS } = await import("../lib/sessions.ts");
-const { QUOTE_LOCK_MS } = await import("../lib/fx.ts");
+const { QUOTE_TTL_MS: QUOTE_LOCK_MS, resetRateCache } = await import("../lib/server/quotes.ts");
+const SOURCE = "Frankfurter (ECB and central-bank reference rates)";
+const { resetRateLimits } = await import("../lib/server/http.ts");
 
 const auth = { authorization: `Bearer ${process.env.SHOP_API_KEY}`, "content-type": "application/json" };
 async function create(body, headers = {}) {
@@ -46,20 +48,11 @@ async function create(body, headers = {}) {
 const poll = async (id) => (await statusRoute(new Request(`http://shop.test/api/v1/sessions/${id}`, { headers: auth }), { params: Promise.resolve({ id }) })).json();
 const sessionCount = () => globalThis.__mcSessions.size;
 const near = (iso, ms) => Math.abs(Date.parse(iso) - (Date.now() + ms)) < 2_000;
-// lib/fx.ts keeps rates 15 minutes: step past that so the next quote has to fetch
-async function past15Minutes(fn) {
-  mock.timers.enable({ apis: ["Date"], now: Date.now() + 16 * 60 * 1000 });
-  try {
-    return await fn();
-  } finally {
-    mock.timers.reset();
-  }
-}
-
 beforeEach(() => {
   fxDown = false;
   fxCalls.length = 0;
   refunded = 0n;
+  resetRateCache(); // quotes.ts caches rates 15 minutes and serves a checked stale rate in an outage: each test starts empty
 });
 
 test("an EUR price becomes USDT at the locked quote: the reply has the asked currency, priced and a 10 min expiry", async () => {
@@ -68,7 +61,7 @@ test("an EUR price becomes USDT at the locked quote: the reply has the asked cur
   assert.deepEqual(Object.keys(data).sort(), ["amount", "currency", "expiresAt", "id", "priced", "url"]);
   assert.equal(data.amount, "22.51", "20 ÷ 0.88877 = 22.5030…, up to the cent");
   assert.equal(data.currency, "EUR");
-  assert.deepEqual(data.priced, { currency: "EUR", amount: "20.00", rate: "0.88877", rateAt: RATE_DATE, source: "frankfurter.dev" });
+  assert.deepEqual(data.priced, { currency: "EUR", amount: "20.00", rate: "0.88877", rateAt: RATE_DATE, source: SOURCE }, "quotes.ts pricedJson's shape");
   assert.ok(near(data.expiresAt, QUOTE_LOCK_MS), "a quote lock is 10 minutes, and the checkout ends with it");
   const session = getSession(data.id);
   assert.equal(session.amount, 22_510_000n, "the USDT the contract charges is fixed at creation");
@@ -109,18 +102,20 @@ test("items are priced in the checkout's currency and must add up in it", async 
 test("when the FX rate can't be fetched, an EUR checkout is a 503 in plain words and nothing is created", async () => {
   fxDown = true;
   const before = sessionCount();
-  const { res, data } = await past15Minutes(() => create({ amount: "20.00", currency: "GBP" }));
+  const { res, data } = await create({ amount: "20.00", currency: "GBP" });
   assert.equal(res.status, 503);
-  assert.equal(data.error, "Prices in GBP are unavailable right now");
+  assert.equal(data.error, "Exchange rates are unavailable right now. Price in USD or USDT, or try again in a minute.");
   assert.equal(sessionCount(), before);
-  assert.equal((await past15Minutes(() => create({ amount: "20.00", currency: "USD" }))).res.status, 201, "USD needs no rate");
+  assert.equal((await create({ amount: "20.00", currency: "USD" })).res.status, 201, "USD needs no rate");
 });
 
-test("the converted amount must still be 1.00–10,000.00 USDT", async () => {
+test("the converted amount must still be 1.00–1,000.00 USDT (§4b: 1,000 per payment on testnet)", async () => {
   const small = await create({ amount: "50", currency: "INR" });
   assert.equal(small.res.status, 400);
-  assert.match(small.data.error, /between 1\.00 and 10,000\.00 USDT \(50\.00 INR is 0\.53 USDT\)/);
-  assert.equal((await create({ amount: "9000.00", currency: "GBP" })).res.status, 400, "9,000 GBP is over 10,000 USDT");
+  assert.match(small.data.error, /between 1\.00 and 1,000\.00 USDT \(50\.00 INR is 0\.53 USDT\)/);
+  assert.equal((await create({ amount: "900.00", currency: "GBP" })).res.status, 400, "900 GBP is over 1,000 USDT");
+  assert.equal((await create({ amount: "1000.01", currency: "USDT" })).res.status, 400, "1 cent over the cap");
+  assert.equal((await create({ amount: "1000.00", currency: "USDT" })).res.status, 201, "the cap itself is allowed");
 });
 
 test("returnUrl: http or https up to 200 characters is kept; any other scheme or a longer one is a 400", async () => {
@@ -144,11 +139,11 @@ test("a reference over 40 characters is a 400, never silently cut (claude-sdk)",
   assert.equal((await create({ amount: "25.00", reference: 42 })).res.status, 400);
 });
 
-test("amounts in every reply are plain decimals (1234.50, never 1,234.50)", async () => {
-  const { data } = await create({ amount: "1234.50", currency: "USD" });
-  assert.deepEqual([data.amount, data.priced.amount], ["1234.50", "1234.50"]);
+test("amounts in every reply are plain decimals (1000.00, never 1,000.00)", async () => {
+  const { data } = await create({ amount: "1000.00", currency: "USD" });
+  assert.deepEqual([data.amount, data.priced.amount], ["1000.00", "1000.00"]);
   const polled = await poll(data.id);
-  assert.equal(polled.amount, "1234.50");
+  assert.equal(polled.amount, "1000.00");
 });
 
 test("Idempotency-Key: the same key and body give the first checkout back; another body is a 422; a refused request isn't kept", async () => {
@@ -161,7 +156,8 @@ test("Idempotency-Key: the same key and body give the first checkout back; anoth
   assert.equal(other.res.status, 422);
   assert.match(other.data.error, /Idempotency-Key/);
   fxDown = true;
-  assert.equal((await past15Minutes(() => create(body, { "idempotency-key": "k-2" }))).res.status, 503);
+  resetRateCache();
+  assert.equal((await create(body, { "idempotency-key": "k-2" })).res.status, 503);
   fxDown = false;
   assert.equal((await create(body, { "idempotency-key": "k-2" })).res.status, 201, "a retry after a 503 creates the checkout");
   assert.equal((await create(body, { "idempotency-key": "x".repeat(256) })).res.status, 400);
@@ -203,10 +199,54 @@ test("createSession itself refuses a returnUrl that isn't http or https, and kee
   assert.equal(createSession(input).returnUrl, undefined);
 });
 
+// Security review 006 R2-F5: links and pages create checkouts for other merchants, so the shop key reads only its own.
+test("GET /api/v1/sessions/:id: another merchant's checkout is a 404 for this shop's key", async () => {
+  const other = createSession({ merchant: "0x9999999999999999999999999999999999999999", merchantName: "Elsewhere", amount: 5_000_000n, reference: "X-1", items: [] });
+  const res = await statusRoute(new Request(`http://shop.test/api/v1/sessions/${other.id}`, { headers: auth }), { params: Promise.resolve({ id: other.id }) });
+  assert.equal(res.status, 404);
+});
+
 // Security review 006 F6: the Idempotency-Key store is capped (oldest dropped), so a shop can't grow it without limit.
 test("Idempotency-Key: the store keeps the newest 1,000 keys and forgets the oldest", async () => {
   const body = (n) => ({ amount: "25.00", reference: `cap-${n}` });
-  for (let n = 0; n <= 1000; n++) assert.equal((await create(body(n), { "idempotency-key": `cap-${n}` })).res.status, 201);
+  for (let n = 0; n <= 1000; n++) {
+    if (n % 50 === 0) resetRateLimits(); // the 60-a-minute checkout limit (security 012 F3) isn't what this test is about
+    assert.equal((await create(body(n), { "idempotency-key": `cap-${n}` })).res.status, 201);
+  }
+  resetRateLimits();
   assert.equal((await create(body(9999), { "idempotency-key": "cap-0" })).res.status, 201, "the oldest key was dropped: a new body is a new checkout");
   assert.equal((await create(body(9999), { "idempotency-key": "cap-1000" })).res.status, 422, "the newest is kept");
+});
+
+// Security review 012 F3: any signed-in wallet can mint a key, so one merchant's key can't flood the checkout store.
+test("POST /api/v1/sessions: at most 60 checkouts a minute per merchant, then a plain 429", async () => {
+  resetRateLimits();
+  for (let n = 0; n < 60; n++) assert.equal((await create({ amount: "5.00", reference: `rl-${n}` })).res.status, 201, `checkout ${n + 1}`);
+  const blocked = await create({ amount: "5.00", reference: "rl-61" });
+  assert.equal(blocked.res.status, 429);
+  assert.match(blocked.data.error, /Wait a minute/);
+  resetRateLimits();
+});
+
+// Batch 015 (FR-GW-11, AT-13): the route prices through lib/server/quotes.ts, the app's one FX source (lib/fx.ts is gone).
+test("a rate outside quotes.ts's ±15% band (here a flipped EUR rate) is refused: 503, nothing created", async () => {
+  const flipped = ROWS.map((row) => (row.quote === "EUR" ? { ...row, rate: 1 / 0.88875 } : row));
+  const usual = globalThis.fetch;
+  globalThis.fetch = async (url) => (fxCalls.push(String(url)), Response.json(flipped));
+  try {
+    const before = sessionCount();
+    const { res, data } = await create({ amount: "20.00", currency: "EUR" });
+    assert.equal(res.status, 503);
+    assert.equal(data.error, "Prices in EUR are unavailable right now. Try again in a minute.");
+    assert.equal(sessionCount(), before);
+    assert.equal((await create({ amount: "20.00", currency: "GBP" })).res.status, 201, "the other rates in the same answer still price");
+  } finally {
+    globalThis.fetch = usual;
+  }
+});
+
+test("USD goes up to the cent (the merchant is never short); a USDT price is charged exactly", async () => {
+  assert.equal((await create({ amount: "25.121", currency: "USD" })).data.amount, "25.13");
+  assert.equal((await create({ amount: "25.123456" })).data.amount, "25.123456");
+  assert.equal(fxCalls.length, 0);
 });

@@ -1,10 +1,12 @@
 // Server-only webhooks (SRS FR-GW-7, FR-PAY-10): merchant endpoints, signed deliveries, retries, test send, replay.
 // One delivery row per endpoint per event; its body is stored once and re-signed with a fresh timestamp on every
-// attempt. The first attempt runs inline; retries run from POST /api/v1/webhooks/dispatch (cron secret).
+// attempt. The first attempt runs inline; retries run from POST /api/v1/webhooks/dispatch (cron secret) and, where no
+// frequent cron runs (Vercel Hobby), after busy reads (dispatchSoon).
 // Outbound requests go only to public addresses (SSRF): checked on create and again before every attempt.
 import { createHmac, randomBytes } from "node:crypto";
 import dns from "node:dns/promises";
 import { BlockList, isIP } from "node:net";
+import { after } from "next/server.js"; // the .js path resolves under Node's test runner too
 import type { Address } from "viem";
 import { query } from "./db.ts";
 import { HttpError, httpsUrl, newId } from "./http.ts";
@@ -18,7 +20,7 @@ export const signWebhook = (body: string, secret: string, t = Math.floor(Date.no
 
 export type EventType = "payment.succeeded" | "payment.refunded";
 const MAX_ENDPOINTS = 5;
-const TIMEOUT_MS = 5_000;
+export const TIMEOUT_MS = 5_000; // the Developers screen's "Answer within 5 s" (claude-frontend lib/gateway-dev.ts)
 const RETRY_DELAYS_MS = [60_000, 5 * 60_000, 30 * 60_000]; // after attempts 1, 2, 3; a 4th failure is final
 const LEASE_MS = 60_000; // a delivery being attempted is hidden from dispatch this long (no double sends)
 const DISPATCH_LIMIT = 50;
@@ -87,6 +89,7 @@ export async function createWebhook(merchant: Address, rawUrl: unknown, now = Da
 
 /** The merchant's endpoints (never the secret), each with its last 20 deliveries, newest first. */
 export async function listWebhooks(merchant: Address) {
+  dispatchSoon(); // the Developers screen: retries show up as the merchant watches (batch 025)
   const m = merchant.toLowerCase();
   const hooks = await query<{ id: string; url: string; created_at: string }>("SELECT id, url, created_at::text FROM app_gw_webhooks WHERE merchant = $1 ORDER BY created_at DESC, id", [m]);
   const deliveries = await query<DeliveryRow>(
@@ -96,6 +99,18 @@ export async function listWebhooks(merchant: Address) {
     [m, RECENT_DELIVERIES],
   );
   return hooks.map((h) => ({ id: h.id, url: h.url, created_at: iso(h.created_at), deliveries: deliveries.filter((d) => d.webhook_id === h.id).map(deliveryJson) }));
+}
+
+/** Whether a test event and a real payment.succeeded have each been answered with 2xx by one of the merchant's
+ *  endpoints (claude-frontend's Developers setup checklist). A test event is the one sendTestEvent writes: data {test: true}. */
+export async function deliveredEvents(merchant: Address): Promise<{ test: boolean; payment: boolean }> {
+  const delivered = "FROM app_gw_deliveries WHERE merchant = $1 AND event = 'payment.succeeded' AND status = 'succeeded'";
+  const isTest = "(body::jsonb #>> '{data,test}') = 'true'";
+  const [row] = await query<{ test: boolean; payment: boolean }>(
+    `SELECT EXISTS (SELECT 1 ${delivered} AND ${isTest}) AS test, EXISTS (SELECT 1 ${delivered} AND (${isTest}) IS NOT TRUE) AS payment`,
+    [merchant.toLowerCase()],
+  );
+  return { test: row?.test === true, payment: row?.payment === true };
 }
 
 /** True if the merchant had this endpoint (its deliveries go with it). */
@@ -142,9 +157,8 @@ export async function attemptDelivery(id: string, now = Date.now()): Promise<Del
 }
 
 type Endpoint = { id: string; merchant: string };
-async function deliver(endpoints: Endpoint[], type: EventType, data: object, now: number) {
+async function deliver(endpoints: Endpoint[], type: EventType, data: object, now: number, eventId = newId("evt")) {
   if (endpoints.length === 0) return [];
-  const eventId = newId("evt");
   const body = JSON.stringify({ id: eventId, type, created: Math.floor(now / 1000), data });
   const ids: string[] = [];
   for (const e of endpoints) {
@@ -155,13 +169,24 @@ async function deliver(endpoints: Endpoint[], type: EventType, data: object, now
     );
     ids.push(id);
   }
-  return Promise.all(ids.map((id) => attemptDelivery(id, now)));
+  // the rows are recorded: an inline attempt that throws (a DB blip on its status UPDATE) leaves its delivery pending for
+  // dispatch instead of failing the enqueue, which would make the caller re-enqueue (claude-frontend F2)
+  return Promise.all(
+    ids.map((id) =>
+      attemptDelivery(id, now).catch((err: unknown) => {
+        // the name only: a message can hold the merchant's URL (021 review L2)
+        console.error(`webhook delivery ${id}: inline attempt failed (${err instanceof Error ? err.name : typeof err}), left for dispatch`);
+        return null;
+      }),
+    ),
+  );
 }
 
-/** Records the event for every endpoint of the merchant and makes the first attempt inline. */
-export async function enqueueEvent(merchant: Address | string, type: EventType, data: object, now = Date.now()) {
+/** Records the event for every endpoint of the merchant and makes the first attempt inline. `eventId` (events.ts derives
+ *  it from the event's key) stays the same across a retried enqueue, so receivers can dedupe on it. */
+export async function enqueueEvent(merchant: Address | string, type: EventType, data: object, now = Date.now(), eventId?: string) {
   const endpoints = await query<Endpoint>("SELECT id, merchant FROM app_gw_webhooks WHERE merchant = $1", [merchant.toLowerCase()]);
-  return deliver(endpoints, type, data, now);
+  return deliver(endpoints, type, data, now, eventId);
 }
 
 /** A payment.succeeded test event with data {test: true}, to one of the merchant's endpoints (404 otherwise). */
@@ -188,4 +213,29 @@ export async function dispatchDue(now = Date.now()): Promise<number> {
   );
   await Promise.all(due.map((r) => attemptDelivery(r.id, now)));
   return due.length;
+}
+
+const DISPATCH_EVERY_MS = 30_000;
+let lastDispatchAt = Number.NEGATIVE_INFINITY;
+
+/** Runs dispatchDue after this response (FR-GW-7 on Vercel Hobby, whose crons run daily: claude-frontend's deploy
+ *  review). At most once per server instance per DISPATCH_EVERY_MS; dispatchDue's lease and SKIP LOCKED keep instances
+ *  from sending twice. Outside a request (tests, scripts) after() throws and nothing runs. Never throws or slows the
+ *  response (NFR-4); a failure logs its error's name only. True if a dispatch was scheduled. */
+export function dispatchSoon(schedule: (task: () => Promise<void>) => void = after, now = Date.now()): boolean {
+  if (now >= lastDispatchAt && now - lastDispatchAt < DISPATCH_EVERY_MS) return false;
+  const task = async () => {
+    try {
+      await dispatchDue(now);
+    } catch (err) {
+      console.error(`webhook dispatch failed (${err instanceof Error ? err.name : typeof err})`);
+    }
+  };
+  try {
+    schedule(task);
+  } catch {
+    return false; // outside a request: no response to run after
+  }
+  lastDispatchAt = now;
+  return true;
 }

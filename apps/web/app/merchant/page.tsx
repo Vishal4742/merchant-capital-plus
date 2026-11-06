@@ -254,9 +254,9 @@ async function Dashboard() {
                 </a>
               </li>
               <li>
-                <span className={`${action} text-ink-muted`}>
-                  Create a payment link <span className="eyebrow">Soon</span>
-                </span>
+                <a href="/merchant/links" className={`${action} hover:border-accent`}>
+                  Create a payment link <span className="eyebrow text-ink-muted">Links</span>
+                </a>
               </li>
               <li>
                 <span className={`${action} text-ink-muted`}>
