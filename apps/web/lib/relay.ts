@@ -46,6 +46,16 @@ export const relayPayInvoice = (invoice: RelayInvoice) => relay(invoice, "payInv
 
 export { NOT_FUNDED }; // the routes import it from here with the other relay outcomes
 
+/** claude-relayer batch 006 (06:06): every POST /relay carries x-relay-secret = RELAY_API_SECRET, read on the server only
+ *  (this module is imported by API routes, never by the browser). Unset: no header, for the relayer that doesn't ask. */
+function relayAuth(relayerUrl: string, env: Record<string, string | undefined> = process.env): Record<string, string> {
+  const secret = env.RELAY_API_SECRET?.trim();
+  // only over https, or to this machine: plain http elsewhere would put the secret on the wire (security 008 F2)
+  const url = new URL(relayerUrl);
+  const safe = url.protocol === "https:" || ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  return secret && safe ? { "x-relay-secret": secret } : {};
+}
+
 async function relay(signed: Signed, action: "paySale" | "payInvoice", target: Record<string, string>): Promise<RelayResult> {
   const args = { ...target, from: signed.from, amount: signed.amount.toString(), validAfter: "0", validBefore: signed.validBefore.toString(), salt: signed.salt };
   const body = { action, args, sig: signed.signature };
@@ -53,8 +63,9 @@ async function relay(signed: Signed, action: "paySale" | "payInvoice", target: R
   try {
     res = await fetch(new URL("/relay", signed.relayerUrl), {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...relayAuth(signed.relayerUrl) },
       body: JSON.stringify(body),
+      redirect: "manual", // never carry the secret and the signed body to another address (security 008 F2)
       signal: AbortSignal.timeout(35_000), // longer than the relayer's 30 s receipt wait
     });
   } catch (error) {
