@@ -3,8 +3,9 @@
 // from the root layout, so it isn't repeated here.
 import type { ReactNode } from "react";
 import { Nav, type NavKey } from "@/components/dashboard/Nav";
+import { PrivateReads } from "@/components/dashboard/PrivateReads";
 
-export function Shell({ active, account, children }: { active: NavKey; account?: ReactNode; children: ReactNode }) {
+export function Shell({ active, account, children, privateReads = true }: { active: NavKey; account?: ReactNode; children: ReactNode; privateReads?: boolean }) {
   return (
     <div className="md:grid md:min-h-dvh md:grid-cols-[240px_minmax(0,1fr)]">
       {/* the column carries the surface and the rule to the page's foot; its contents stick to the top while the page scrolls */}
@@ -16,9 +17,14 @@ export function Shell({ active, account, children }: { active: NavKey; account?:
           <a href="/" className="order-1 inline-flex min-h-11 items-center text-[17px] font-medium tracking-[-0.02em] whitespace-nowrap md:mb-3 md:px-2.5 md:text-[19px]">
             Merchant Capital+
           </a>
-          {account && <div className="order-2 ml-auto flex items-center gap-x-1 text-sm whitespace-nowrap text-ink-muted md:order-3 md:mt-auto md:ml-0 md:flex-wrap md:gap-x-2 md:px-2.5 md:pt-4">{account}</div>}
-          <div className="order-3 basis-full md:order-2 md:basis-auto">
-            <Nav active={active} />
+          {account && <div className="order-2 ml-auto flex items-center gap-x-1 text-sm whitespace-nowrap text-ink-muted md:order-4 md:mt-auto md:ml-0 md:flex-wrap md:gap-x-2 md:px-2.5 md:pt-4">{account}</div>}
+          {/* the private-read meter (FR-PRIV-3) leads the menu's row at phone width and sits under the wordmark from md up,
+              so the tab order matches what you see at both widths */}
+          <div className="order-3 flex basis-full items-center gap-2 md:contents">
+            {account && privateReads && <PrivateReads className="shrink-0 md:order-2 md:mb-3 md:self-start" />}
+            <div className="min-w-0 grow md:order-3 md:grow-0">
+              <Nav active={active} />
+            </div>
           </div>
         </div>
       </aside>

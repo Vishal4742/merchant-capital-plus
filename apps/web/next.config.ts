@@ -26,6 +26,12 @@ const nextConfig: NextConfig = {
     const csp = [{ key: "Content-Security-Policy", value: PAY_PAGE_CSP }];
     // a payment page shows the merchant's logo from its own https URL (human 06:30): images only, scripts and calls stay 'self'
     const logoCsp = [{ key: "Content-Security-Policy", value: PAY_PAGE_CSP.replace("img-src 'self' data:", "img-src 'self' data: https:") }];
+    const merchantPolicy =
+      PAY_PAGE_CSP.replace("script-src 'self' 'unsafe-inline'", "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:").replace(
+        "connect-src 'self'",
+        "connect-src 'self' blob: https://ethereum-rpc.publicnode.com https://cdn.jsdelivr.net https://unpkg.com https://raw.githubusercontent.com https://validator.nymtech.net wss:",
+      ) + "; worker-src blob:";
+    const merchantCsp = [{ key: "Content-Security-Policy", value: merchantPolicy }];
     return [
       {
         source: "/(.*)",
@@ -41,12 +47,17 @@ const nextConfig: NextConfig = {
       { source: "/r/:path*", headers: csp },
       { source: "/l/:path*", headers: csp },
       { source: "/counter/:path*", headers: csp },
-      // the dashboard sends invoices, approvals and refunds, and loads nothing from another origin (security review 005
-      // F8); wallet extensions aren't bound by a page's CSP
-      { source: "/merchant/:path*", headers: csp }, // `:path*` also matches /merchant itself
+      // the dashboard sends invoices, approvals and refunds; its scripts stay 'self' (security review 005 F8). Its chain
+      // reads go through Anon-RPC (FR-PRIV-1), so it may call the Nym bootstrap, bundle CDNs, directory and gateways
+      // (FR-PRIV-4) and run the hash-pinned worker (blob: + WebAssembly) in the harness's sandboxed iframe, which
+      // inherits this policy. Wallet extensions aren't bound by a page's CSP.
+      { source: "/merchant/:path*", headers: merchantCsp }, // `:path*` also matches /merchant itself
       // after the rules above: for the same header the last match wins (Next docs, headers)
       { source: "/p/:path*", headers: logoCsp },
-      { source: "/merchant/pages", headers: logoCsp },
+      { source: "/merchant/pages", headers: [{ key: "Content-Security-Policy", value: merchantPolicy.replace("img-src 'self' data:", "img-src 'self' data: https:") }] },
+      // the page that shows a new API key or webhook secret once keeps the strict policy: no outside host to send it to if
+      // a script were ever injected (security review 018 F1); it shows no private-reads meter
+      { source: "/merchant/developers", headers: csp },
       // /docs loads nothing third-party either, and hosts "Simulate a payment" (security review 006 F3)
       { source: "/docs", headers: csp },
     ];
