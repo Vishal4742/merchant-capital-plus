@@ -1,10 +1,12 @@
 // Server-only webhooks (SRS FR-GW-7, FR-PAY-10): merchant endpoints, signed deliveries, retries, test send, replay.
 // One delivery row per endpoint per event; its body is stored once and re-signed with a fresh timestamp on every
-// attempt. The first attempt runs inline; retries run from POST /api/v1/webhooks/dispatch (cron secret).
+// attempt. The first attempt runs inline; retries run from POST /api/v1/webhooks/dispatch (cron secret) and, where no
+// frequent cron runs (Vercel Hobby), after busy reads (dispatchSoon).
 // Outbound requests go only to public addresses (SSRF): checked on create and again before every attempt.
 import { createHmac, randomBytes } from "node:crypto";
 import dns from "node:dns/promises";
 import { BlockList, isIP } from "node:net";
+import { after } from "next/server.js"; // the .js path resolves under Node's test runner too
 import type { Address } from "viem";
 import { query } from "./db.ts";
 import { HttpError, httpsUrl, newId } from "./http.ts";
@@ -87,6 +89,7 @@ export async function createWebhook(merchant: Address, rawUrl: unknown, now = Da
 
 /** The merchant's endpoints (never the secret), each with its last 20 deliveries, newest first. */
 export async function listWebhooks(merchant: Address) {
+  dispatchSoon(); // the Developers screen: retries show up as the merchant watches (batch 025)
   const m = merchant.toLowerCase();
   const hooks = await query<{ id: string; url: string; created_at: string }>("SELECT id, url, created_at::text FROM app_gw_webhooks WHERE merchant = $1 ORDER BY created_at DESC, id", [m]);
   const deliveries = await query<DeliveryRow>(
@@ -168,7 +171,15 @@ async function deliver(endpoints: Endpoint[], type: EventType, data: object, now
   }
   // the rows are recorded: an inline attempt that throws (a DB blip on its status UPDATE) leaves its delivery pending for
   // dispatch instead of failing the enqueue, which would make the caller re-enqueue (claude-frontend F2)
-  return Promise.all(ids.map((id) => attemptDelivery(id, now).catch(() => null)));
+  return Promise.all(
+    ids.map((id) =>
+      attemptDelivery(id, now).catch((err: unknown) => {
+        // the name only: a message can hold the merchant's URL (021 review L2)
+        console.error(`webhook delivery ${id}: inline attempt failed (${err instanceof Error ? err.name : typeof err}), left for dispatch`);
+        return null;
+      }),
+    ),
+  );
 }
 
 /** Records the event for every endpoint of the merchant and makes the first attempt inline. `eventId` (events.ts derives
@@ -202,4 +213,29 @@ export async function dispatchDue(now = Date.now()): Promise<number> {
   );
   await Promise.all(due.map((r) => attemptDelivery(r.id, now)));
   return due.length;
+}
+
+const DISPATCH_EVERY_MS = 30_000;
+let lastDispatchAt = Number.NEGATIVE_INFINITY;
+
+/** Runs dispatchDue after this response (FR-GW-7 on Vercel Hobby, whose crons run daily: claude-frontend's deploy
+ *  review). At most once per server instance per DISPATCH_EVERY_MS; dispatchDue's lease and SKIP LOCKED keep instances
+ *  from sending twice. Outside a request (tests, scripts) after() throws and nothing runs. Never throws or slows the
+ *  response (NFR-4); a failure logs its error's name only. True if a dispatch was scheduled. */
+export function dispatchSoon(schedule: (task: () => Promise<void>) => void = after, now = Date.now()): boolean {
+  if (now >= lastDispatchAt && now - lastDispatchAt < DISPATCH_EVERY_MS) return false;
+  const task = async () => {
+    try {
+      await dispatchDue(now);
+    } catch (err) {
+      console.error(`webhook dispatch failed (${err instanceof Error ? err.name : typeof err})`);
+    }
+  };
+  try {
+    schedule(task);
+  } catch {
+    return false; // outside a request: no response to run after
+  }
+  lastDispatchAt = now;
+  return true;
 }

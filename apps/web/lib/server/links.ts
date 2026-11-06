@@ -23,6 +23,7 @@ import {
   type Currency,
 } from "./http.ts";
 import { QUOTE_TTL_MS, toUsdtUnits, usdRate } from "./quotes.ts";
+import { dispatchSoon } from "./webhooks.ts";
 
 const MAX_PRICE = 100_000_000_000_000n; // 100,000,000 of any currency: a sanity cap; the 1..1,000 USDT rule runs at creation and checkout
 export const MAX_LIST = 200; // ponytail: list screens show the newest 200; add a cursor when a merchant has more
@@ -225,6 +226,7 @@ export async function cancelLink(merchant: Address, id: string, now = Date.now()
 }
 
 export async function linkBySlug(slug: string): Promise<Link | null> {
+  dispatchSoon(); // a customer opening a checkout: the steadiest traffic there is, so due webhook retries ride on it
   const rows = await query<LinkRow>(`SELECT ${COLUMNS} FROM app_gw_links WHERE slug = $1`, [slug]);
   return rows.length ? (await withPayments(rows))[0] : null;
 }
