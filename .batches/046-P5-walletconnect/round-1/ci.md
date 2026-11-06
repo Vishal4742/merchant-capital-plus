@@ -23,5 +23,11 @@ Not run: the Privy modal in a browser. A local `next start` can't render a check
 only answers origins allowed in its dashboard; the check moves to the PR's Vercel preview once the human allows its
 origin.
 
+Security fixes (M1, M2, L1; human gate 20:31 kept wallets + email), commits 5a6a991 (red) → 456a68f, 4f6f3df, 9a67f0d:
+`npm run typecheck` exit 0 · `npm run lint` exit 0 · `npm test` tests 703, pass 701, fail 0, skipped 2 ·
+`npm run build` exit 0, 0 error lines. L3 (.npmrc → overrides) not done: the clashes are inside optional peers' own
+peer ranges (permissionless → ox ^0.8, @solana-program/system 0.16 → @solana/kit ^8.5 against x402's ^5), which
+overrides don't relax without moving @solana/kit for x402 too; left as is so the build isn't put at risk.
+
 VERDICT: PASS (typecheck, lint, tests, build). Open items for the human gate: the audit findings above, the browser
 check of the modal on the preview.
