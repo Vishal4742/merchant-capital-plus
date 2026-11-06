@@ -3,9 +3,8 @@
 // answers 409 with the amount due when the sheet's total is stale, batch 021).
 // The discount comes off the checkout's ORIGINAL amount (lib/server/vouchers.ts); the pay route charges exactly what it
 // claims from the hold. No code changes while a payment is in flight, pending or done (batch-009 security F5).
-import { amountDue, applyVoucher } from "../../../../../../lib/server/vouchers.ts";
+import { amountDue, applyVoucher, removeVoucher } from "../../../../../../lib/server/vouchers.ts";
 import type { Checkout } from "../../../../../../lib/server/checkouts.ts";
-import { query } from "../../../../../../lib/server/db.ts";
 import { HttpError, clientIp, handle, ok, rateLimit, readJson } from "../../../../../../lib/server/http.ts";
 import { gatewayCheckout } from "../../../../../../lib/settle.ts";
 import { getSession, isInFlight, type Session } from "../../../../../../lib/sessions.ts";
@@ -27,7 +26,7 @@ const REFUSALS: Record<string, [number, string]> = {
 
 async function checkoutFor(params: Params["params"]): Promise<{ id: string; session: Session; checkout: Checkout }> {
   const { id } = await params;
-  const session = getSession(id);
+  const session = await getSession(id);
   if (!session) throw new HttpError(404, "This checkout doesn't exist.");
   const checkout = await gatewayCheckout(id);
   if (!checkout) throw new HttpError(404, LINKS_ONLY);
@@ -35,10 +34,10 @@ async function checkoutFor(params: Params["params"]): Promise<{ id: string; sess
 }
 
 /** A code may change only on an open checkout: not paid, no payment in flight or pending (F5), not expired (F4). */
-function assertChangeable(request: Request, { id, session, checkout }: { id: string; session: Session; checkout: Checkout }): void {
+async function assertChangeable(request: Request, { id, session, checkout }: { id: string; session: Session; checkout: Checkout }): Promise<void> {
   rateLimit(`voucher:${clientIp(request)}:${id}`, CHANGES_PER_MINUTE, 60_000);
   if (session.payment || checkout.paidAt !== null) throw new HttpError(410, PAID);
-  if (isInFlight(id) || session.pending) throw new HttpError(409, IN_PROGRESS);
+  if ((await isInFlight(id)) || session.pending) throw new HttpError(409, IN_PROGRESS);
   if (Date.now() > session.expiresAt) throw new HttpError(410, EXPIRED);
 }
 
@@ -53,7 +52,7 @@ export const GET = (_request: Request, { params }: Params) =>
 export const POST = (request: Request, { params }: Params) =>
   handle(async () => {
     const found = await checkoutFor(params);
-    assertChangeable(request, found);
+    await assertChangeable(request, found);
     const body = await readJson(request, 1_024);
     const code = typeof body.code === "string" ? body.code.trim() : "";
     if (!code) throw new HttpError(400, "Enter a code.");
@@ -68,9 +67,7 @@ export const POST = (request: Request, { params }: Params) =>
 export const DELETE = (request: Request, { params }: Params) =>
   handle(async () => {
     const found = await checkoutFor(params);
-    assertChangeable(request, found);
-    // ponytail: vouchers.ts has no remove yet; this deletes only a live hold (never one being paid or confirmed), so it
-    // can only free a use. Move it next to applyVoucher when claude-contracts adds one.
-    await query("DELETE FROM app_gw_redemptions WHERE session_id = $1 AND confirmed_at IS NULL AND frozen_at IS NULL", [found.id]);
+    await assertChangeable(request, found);
+    await removeVoucher(found.id); // only a hold that isn't being paid or confirmed (claude-contracts' rule): it can only free a use
     return due(found.checkout, (await amountDue(found.id)) ?? found.checkout.usdtAmount);
   });
