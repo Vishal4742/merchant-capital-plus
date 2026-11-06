@@ -8,7 +8,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { privateKeyToAccount } from 'viem/accounts';
 import { whitechainSepolia } from 'viem/chains';
 import {
-  addresses, KIND_INVOICE, KIND_SALE, merchantPayAbi, MIN_PAYMENT, nonceParams, receiveWithAuthorizationTypes, usdtDomain,
+  addresses, capitalMarketAbi, KIND_INVOICE, KIND_SALE, merchantPayAbi, MIN_PAYMENT, nonceParams, receiveWithAuthorizationTypes, usdtDomain,
 } from './contracts.ts';
 
 // Ankr (G2 06:06: Whitechain's own RPC refused eth_sendRawTransactionSync with -32601, so the default went back to Ankr;
@@ -50,6 +50,8 @@ const SIG65_HEX = /^0x[0-9a-fA-F]{130}$/;
 
 // The allowlist (FR-REL-2): exactly these two functions on this one contract. refund is the merchant's own tx.
 const MERCHANT_PAY = getAddress(addresses.merchantPay);
+// Investor funding (human 08:20): CapitalMarket.fundWithAuthorization. No relay fee, so funding below 1 USDT is refused.
+const CAPITAL_MARKET = getAddress(addresses.capitalMarket);
 const FORBIDDEN_MERCHANTS = new Set([zeroAddress, addresses.merchantPay, addresses.capitalMarket, addresses.usdt].map((a) => a.toLowerCase()));
 export const USDT = getAddress(addresses.usdt);
 export const USDT_DOMAIN = usdtDomain;
@@ -60,12 +62,15 @@ export const USDT_ABI = parseAbi([
 
 type SaleArgs = readonly [Address, Hex, Address, bigint, bigint, bigint, Hex, number, Hex, Hex];
 type InvoiceArgs = readonly [bigint, Address, bigint, bigint, bigint, Hex, number, Hex, Hex];
-type Call = { functionName: 'paySale'; args: SaleArgs } | { functionName: 'payInvoice'; args: InvoiceArgs };
+type FundArgs = readonly [bigint, Address, bigint, bigint, bigint, Hex, number, Hex, Hex];
+type Call = { functionName: 'paySale'; args: SaleArgs } | { functionName: 'payInvoice'; args: InvoiceArgs }
+  | { functionName: 'fundWithAuthorization'; args: FundArgs };
 /** A parsed payment: what the payer authorized (USDT EIP-3009) and the MerchantPay call that pulls it. */
 interface Payment {
   from: Address; amount: bigint; validAfter: bigint; validBefore: bigint; nonce: Hex; sig: Hex; call: Call;
   merchant?: Address; // sales only
   feeOnTop: boolean; // invoices: the payer signs amount + relayFee
+  target: Address; // MerchantPay for sales and invoices, CapitalMarket for funding
 }
 interface Reject { status: number; code: string; error: string; txHash?: Hash }
 interface Sent { txHash: Hash; blockNumber: bigint; paymentId?: bigint; gasUsed: bigint; gasCostWei: bigint }
@@ -225,11 +230,12 @@ export function parsePayment(body: string): { payment: Payment } | { error: stri
   } catch {
     return { error: 'body is not JSON' };
   }
-  if (!isRecord(input) || (input.action !== 'paySale' && input.action !== 'payInvoice')) {
-    return { error: 'unknown action (this relayer supports "paySale" and "payInvoice")' };
+  if (!isRecord(input) || (input.action !== 'paySale' && input.action !== 'payInvoice' && input.action !== 'fund')) {
+    return { error: 'unknown action (this relayer supports "paySale", "payInvoice" and "fund")' };
   }
   const { args, sig } = input;
   if (!isRecord(args)) return { error: 'args must be an object' };
+  if (input.action === 'fund') return parseFunding(args, sig);
   if (typeof args.from !== 'string' || !isAddress(args.from)) return { error: 'args.from must be an address' };
   const [amount, validAfter, validBefore] = [args.amount, args.validAfter, args.validBefore].map(uint256);
   if (amount === undefined || validAfter === undefined || validBefore === undefined) {
@@ -255,13 +261,46 @@ export function parsePayment(body: string): { payment: Payment } | { error: stri
     const merchant = getAddress(args.merchant);
     const nonce = merchantPayNonce(KIND_SALE, BigInt(merchant), orderRef, amount, salt);
     const call: Call = { functionName: 'paySale', args: [merchant, orderRef, from, amount, validAfter, validBefore, salt, v, r, s] };
-    return { payment: { ...base, nonce, call, merchant, feeOnTop: false } };
+    return { payment: { ...base, nonce, call, merchant, feeOnTop: false, target: MERCHANT_PAY } };
   }
   const invoiceId = uint256(args.invoiceId);
   if (invoiceId === undefined) return { error: 'args.invoiceId must be a uint256 decimal string' };
   const nonce = merchantPayNonce(KIND_INVOICE, invoiceId, zeroHash, amount, salt);
   const call: Call = { functionName: 'payInvoice', args: [invoiceId, from, amount, validAfter, validBefore, salt, v, r, s] };
-  return { payment: { ...base, nonce, call, feeOnTop: true } };
+  return { payment: { ...base, nonce, call, feeOnTop: true, target: MERCHANT_PAY } };
+}
+
+/** fund: {claimId, investor, units, validAfter, validBefore, salt}; the quote and the nonce come from the chain (prepareFunding). */
+function parseFunding(args: Record<string, unknown>, sig: unknown): { payment: Payment } | { error: string } {
+  if (typeof args.investor !== 'string' || !isAddress(args.investor)) return { error: 'args.investor must be an address' };
+  const [claimId, units, validAfter, validBefore] = [args.claimId, args.units, args.validAfter, args.validBefore].map(uint256);
+  if (claimId === undefined || units === undefined || validAfter === undefined || validBefore === undefined) {
+    return { error: 'args.claimId, units, validAfter and validBefore must be uint256 decimal strings' };
+  }
+  if (units === 0n) return { error: 'args.units must be above 0' };
+  const salt = bytes32(args.salt);
+  if (!salt) return { error: 'args.salt must be 32 bytes of hex' };
+  if (typeof sig !== 'string' || !SIG65_HEX.test(sig)) return { error: 'sig must be 65 bytes of hex' };
+  try {
+    const { r, s, yParity } = parseSignature(sig as Hex);
+    const investor = getAddress(args.investor);
+    const call: Call = { functionName: 'fundWithAuthorization', args: [claimId, investor, units, validAfter, validBefore, salt, yParity + 27, r, s] };
+    // amount and nonce are filled from CapitalMarket.quote / fundingNonce before any check runs
+    return { payment: { from: investor, amount: 0n, validAfter, validBefore, nonce: zeroHash, sig: sig as Hex, call, feeOnTop: false, target: CAPITAL_MARKET } };
+  } catch {
+    return { error: 'sig is not a valid signature' };
+  }
+}
+
+/** The value and nonce the investor signed, as CapitalMarket computes them (one batched read). */
+async function prepareFunding(client: RelayerClient, p: Payment): Promise<Payment> {
+  if (p.call.functionName !== 'fundWithAuthorization') return p;
+  const [claimId, investor, units, , , salt] = p.call.args;
+  const [amount, nonce] = await Promise.all([
+    client.readContract({ address: CAPITAL_MARKET, abi: capitalMarketAbi, functionName: 'quote', args: [claimId, units] }),
+    client.readContract({ address: CAPITAL_MARKET, abi: capitalMarketAbi, functionName: 'fundingNonce', args: [claimId, investor, units, salt] }),
+  ]);
+  return { ...p, amount, nonce };
 }
 
 /** What the payer must hold and sign: the sale price, or an invoice's credited amount + relayFee. */
@@ -276,7 +315,7 @@ async function localChecks(client: RelayerClient, p: Payment): Promise<Reject | 
   if (p.validBefore > now + MAX_WINDOW_S) return reject(422, 'window_too_long', 'validBefore must be within 15 min');
   // Sales: at least 1 USDT. Invoices: the contract allows an exact remainder below 1 USDT and enforces its own rule.
   if (!p.feeOnTop && p.amount < MIN_PAYMENT) return reject(422, 'below_minimum', 'amount must be at least 1 USDT');
-  const message = { from: p.from, to: MERCHANT_PAY, value: await signedValue(client, p), validAfter: p.validAfter, validBefore: p.validBefore, nonce: p.nonce };
+  const message = { from: p.from, to: p.target, value: await signedValue(client, p), validAfter: p.validAfter, validBefore: p.validBefore, nonce: p.nonce };
   const signer = await recoverTypedDataAddress({
     domain: usdtDomain, types: receiveWithAuthorizationTypes, primaryType: 'ReceiveWithAuthorization', message, signature: p.sig,
   }).catch(() => undefined);
@@ -286,14 +325,23 @@ async function localChecks(client: RelayerClient, p: Payment): Promise<Reject | 
   return ledgerChecks(client, p);
 }
 
-const simulate = (client: RelayerClient, p: Payment) => (p.call.functionName === 'paySale'
-  ? client.simulateContract({ address: MERCHANT_PAY, abi: merchantPayAbi, functionName: 'paySale', args: p.call.args, ...FEES })
-  : client.simulateContract({ address: MERCHANT_PAY, abi: merchantPayAbi, functionName: 'payInvoice', args: p.call.args, ...FEES })
-).then(() => undefined, (e: unknown) => e);
+function simulateCall(client: RelayerClient, p: Payment) {
+  switch (p.call.functionName) {
+    case 'paySale': return client.simulateContract({ address: MERCHANT_PAY, abi: merchantPayAbi, functionName: 'paySale', args: p.call.args, ...FEES });
+    case 'payInvoice': return client.simulateContract({ address: MERCHANT_PAY, abi: merchantPayAbi, functionName: 'payInvoice', args: p.call.args, ...FEES });
+    case 'fundWithAuthorization':
+      return client.simulateContract({ address: CAPITAL_MARKET, abi: capitalMarketAbi, functionName: 'fundWithAuthorization', args: p.call.args, ...FEES });
+  }
+}
+const simulate = (client: RelayerClient, p: Payment) => simulateCall(client, p).then(() => undefined, (e: unknown) => e);
 
-const calldata = (p: Payment) => (p.call.functionName === 'paySale'
-  ? encodeFunctionData({ abi: merchantPayAbi, functionName: 'paySale', args: p.call.args })
-  : encodeFunctionData({ abi: merchantPayAbi, functionName: 'payInvoice', args: p.call.args }));
+function calldata(p: Payment): Hex {
+  switch (p.call.functionName) {
+    case 'paySale': return encodeFunctionData({ abi: merchantPayAbi, functionName: 'paySale', args: p.call.args });
+    case 'payInvoice': return encodeFunctionData({ abi: merchantPayAbi, functionName: 'payInvoice', args: p.call.args });
+    case 'fundWithAuthorization': return encodeFunctionData({ abi: capitalMarketAbi, functionName: 'fundWithAuthorization', args: p.call.args });
+  }
+}
 
 /** One parallel round of reads plus a gas-capped simulation; throws only if a read fails. */
 async function rpcChecks(client: RelayerClient, p: Payment): Promise<Reject | undefined> {
@@ -345,7 +393,7 @@ async function send(client: RelayerClient, p: Payment): Promise<Reject | Sent> {
   const ledger = ledgerChecks(client, p); // queued requests: the budget or the breaker may have moved while we waited
   if (ledger) return ledger;
   const signed = await client.account.signTransaction({
-    chainId: whitechainSepolia.id, type: 'eip1559', to: MERCHANT_PAY, data: calldata(p), nonce, ...FEES,
+    chainId: whitechainSepolia.id, type: 'eip1559', to: p.target, data: calldata(p), nonce, ...FEES,
   });
   const txHash = keccak256(signed);
   sentAuthorizations.add(sentKey(p)); // kept even if the send fails: the tx may still be pending, so a re-POST must not pay twice
@@ -385,8 +433,9 @@ async function send(client: RelayerClient, p: Payment): Promise<Reject | Sent> {
 export async function relay(body: string, client: RelayerClient): Promise<Response> {
   const parsed = parsePayment(body);
   if ('error' in parsed) return respond(reject(400, 'bad_request', parsed.error));
-  const p = parsed.payment;
+  let p = parsed.payment;
   try {
+    p = await prepareFunding(client, p);
     const pre = (await localChecks(client, p)) ?? (await rpcChecks(client, p));
     if (pre) return respond(pre);
   } catch (e) {

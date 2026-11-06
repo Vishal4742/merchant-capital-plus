@@ -2,7 +2,7 @@
 // a shop asked to be paid and which payment settled it, so the pay page needs no browser chain reads.
 import { randomBytes, randomUUID } from "node:crypto";
 import type { Address, Hex } from "viem";
-import type { Currency } from "./fx.ts";
+import type { Currency } from "./server/http.ts";
 import { plainUsdt } from "./usdt.ts";
 
 export const SESSION_TTL_MS = 30 * 60 * 1000;
@@ -40,6 +40,8 @@ export interface Payment {
   paymentId: string | null; // MerchantPay's Paid event id (relayer 200)
   from: Address;
   paidAt: number;
+  /** USDT units paid: the attempt's charged price (a discount code can make it less than the session's amount). */
+  amount: bigint;
 }
 
 export interface Session {
@@ -57,8 +59,10 @@ export interface Session {
   createdAt: number;
   expiresAt: number;
   payment?: Payment;
-  /** An attempt whose outcome is unknown (timeout, dropped connection, 5xx, an unconfirmed 200): the chain decides it. */
-  pending?: { from: Address; validBefore: bigint };
+  /** An attempt whose outcome is unknown (timeout, dropped connection, 5xx, an unconfirmed 200): the chain decides it.
+   *  `amount` is the price a link or page attempt claimed and signed (security 009 F3): the chain is read for exactly
+   *  that; absent for a shop's own session, whose price is `amount` above. */
+  pending?: { from: Address; validBefore: bigint; amount?: bigint };
 }
 
 // ponytail: in-memory store, so sessions vanish on restart and aren't shared between serverless

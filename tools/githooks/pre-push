@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Pre-push: run CI's checks locally, only for the folders this branch changes (human 2026-11-06 08:27:
+# "why so many ci fails, check everything before commit"). Installed for every worktree with
+#   git config core.hooksPath ~/ethglobal/tools/githooks
+# Never bypass with --no-verify (AGENTS.md). Contract fork tests and the web build stay in CI (slow, RPC limits).
+set -uo pipefail
+root=$(git rev-parse --show-toplevel)
+cd "$root" || exit 1
+git fetch -q origin main 2>/dev/null || true
+
+base=$(git merge-base HEAD origin/main 2>/dev/null || true)
+if [ -z "$base" ]; then files="ALL"; else files=$(git diff --name-only "$base" HEAD); fi
+hit() { [ "$files" = ALL ] || printf '%s\n' "$files" | grep -qE "$1"; }
+
+code_change=0
+hit '^(apps/|packages/|contracts/)' && code_change=1
+# The 2026-11-06 failure: a lane's checks passed on its branch, but CI tests the merge with main.
+if [ "$code_change" = 1 ] && ! git merge-base --is-ancestor origin/main HEAD; then
+  echo "pre-push: this branch is behind origin/main. Run 'git merge origin/main', re-run the checks, then push." >&2
+  exit 1
+fi
+
+fail=0
+run() { # $1 = label, $2 = dir, rest = command
+  local label=$1 dir=$2; shift 2
+  echo "pre-push: $label" >&2
+  ( cd "$root/$dir" && { [ -d node_modules ] || [ ! -f package.json ] || npm ci --silent; } && "$@" ) >/tmp/pre-push.$$.log 2>&1 \
+    || { echo "pre-push: FAILED $label" >&2; tail -25 /tmp/pre-push.$$.log >&2; fail=1; }
+}
+
+hit '^apps/web/|^packages/'          && run "web typecheck" apps/web npm run typecheck
+hit '^apps/web/|^packages/'          && run "web lint"      apps/web npm run lint
+hit '^apps/web/|^packages/'          && run "web tests"     apps/web npm test
+hit '^apps/relayer/|^packages/shared/' && run "relayer typecheck + tests" apps/relayer sh -c 'npm run typecheck && npm test'
+hit '^packages/sdk/'                 && run "sdk typecheck + tests" packages/sdk sh -c 'npm run typecheck && npm test'
+hit '^contracts/'                    && run "forge build" contracts forge build
+
+# Same secret scan as CI (always).
+if git grep -nE 'PRIVATE_KEY=0x[0-9a-fA-F]{64}|-----BEGIN [A-Z ]*PRIVATE KEY|(^|[^a-z])sk-[A-Za-z0-9_-]{20,}|sm_[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}' -- ':!tools/agentbus.py' >/dev/null; then
+  echo "pre-push: FAILED secret scan (a key-like string is in a tracked file)" >&2; fail=1
+fi
+rm -f /tmp/pre-push.$$.log
+[ "$fail" = 0 ] && echo "pre-push: all checks passed" >&2
+exit $fail

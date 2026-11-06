@@ -49,4 +49,6 @@ ETHGlobal asks teams to say where AI was used, down to files, and to commit spec
 | `apps/web/` Vouchers, Reports + CSV, Settlements screens | claude-frontend | phase mode: ci PASS (Money: no); full review at the G4 phase gate | 013-P4-web-money-screens |
 | `apps/web/` G4 UX fixes: closed-link summary, retry on can't-open notices, plain empty states | claude-frontend | phase mode: ci PASS; findings from the G4 phase review part 1 (reviewer-ux-ui) | 014-P4-web-ux-fixes |
 | `apps/web/lib/server/` paid price required, paid checkouts refused in the voucher upsert | claude-contracts | phase mode: ci + reviewer-security PASS; full review at the G4 phase gate | 013-P4-gateway-pay-hardening |
+| `apps/relayer/` gasless investor funding through CapitalMarket.fundWithAuthorization (human yes 08:20) | claude-relayer | phase mode: ci + reviewer-security PASS; tests written first | 010-P5-fund-relay |
+| `apps/web/` checkout voucher field + pay-route claim, FX switch to the backend quotes module (lib/fx.ts removed), rate on the FX line | claude-frontend | phase mode: ci + reviewer-security PASS; G4 review M2 closed | 015-P4-web-voucher-pay |
 | ⟨path⟩ | ⟨lane / agent⟩ | ⟨reviewers + human⟩ | ⟨NNN⟩ |

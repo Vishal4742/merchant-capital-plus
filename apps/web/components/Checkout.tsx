@@ -3,6 +3,8 @@
 // The customer's checkout sheet (FR-PAY-5, FR-PAY-7, FR-PAY-9). Plain words only: no "sign", "gas",
 // "wallet" or chain names. Press and hold to pay (human pick); the guest key signs in the browser and our
 // server checks and relays it. Batch 006: the FX line, a countdown, named states, "Back to <shop>".
+// Batch 015: a discount code on link and page checkouts (FR-GW-12). The payer approves the amount due as our server
+// reads it right before approving, never one remembered here.
 import Link from "next/link";
 import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { Address, Hex } from "viem";
@@ -33,8 +35,12 @@ interface CheckoutProps {
   merchantName: string;
   reference: string;
   items: { name: string; qty: number; price: string }[];
+  /** What the customer pays now (after any discount code), or paid. */
   amountText: string;
-  /** Server-rendered for a checkout priced in another currency: "20.00 EUR = 22.50 USDT · rate of 5 Nov 2026 · 1 USDT = 1 USD". */
+  /** A link or page checkout takes a discount code; null for a shop's own checkout. Server-rendered: the total before
+   *  any code, and the discount now held (null without one). */
+  code: { totalText: string; discountText: string | null } | null;
+  /** Server-rendered for a checkout priced in another currency: "20.00 EUR = 22.51 USDT · 1 USD = 0.88875 EUR, rate of 6 Nov 2026 · 1 USDT = 1 USD". */
   fxLine: string | null;
   /** The shop's page to go back to (http/https, checked when the shop created the checkout). */
   returnUrl: string | null;
@@ -57,8 +63,27 @@ const pill = "rounded-pill border border-current px-3 py-0.5 text-xs font-medium
 /** The sheet already shows what happened (confirming or expired): no extra error line. */
 class Shown extends Error {}
 
-export function Checkout({ sessionId, merchantName, reference, items, amountText, fxLine, returnUrl, sale, expiresAt, paid, pending }: CheckoutProps) {
+const CODE_FAILED = "We couldn't check that code. Try again.";
+type Due = { amountText: string; discountText: string | null };
+// the code route sends plain decimals ("1000.00"); the sheet groups thousands like the server-rendered amounts
+const grouped = (plain: string) => plain.replace(/^\d+/, (whole) => Number(whole).toLocaleString("en-US"));
+const dueFrom = (data: { amountDue: string; discount: string }): Due => ({ amountText: grouped(data.amountDue), discountText: /^0+(\.0+)?$/.test(data.discount) ? null : grouped(data.discount) });
+
+export function Checkout({ sessionId, merchantName, reference, items, amountText, code, fxLine, returnUrl, sale, expiresAt, paid, pending }: CheckoutProps) {
   const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [due, setDue] = useState<Due>({ amountText, discountText: code?.discountText ?? null });
+  const [codeError, setCodeError] = useState<string | null>(null);
+  const [codeBusy, setCodeBusy] = useState(false);
+  const [codeOpenAtStart] = useState(() => Boolean(code?.discountText)); // then the payer opens and closes it
+  const focusAfterCode = useRef(false);
+  const codeInput = useRef<HTMLInputElement>(null);
+  const removeButton = useRef<HTMLButtonElement>(null);
+  const hasDiscount = due.discountText !== null;
+  useEffect(() => {
+    if (!focusAfterCode.current) return;
+    focusAfterCode.current = false; // the control the payer used is gone: move focus to the one that replaced it
+    (hasDiscount ? removeButton : codeInput).current?.focus();
+  }, [hasDiscount]);
   const [paying, setPaying] = useState(false);
   const now = useNow();
   const [error, setError] = useState<string | null>(null);
@@ -87,12 +112,44 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
     return inFlight.current;
   }
 
+  /** POST applies a code, DELETE removes it; the reply is the new amount due. */
+  async function changeCode(method: "POST" | "DELETE", body?: { code: string }) {
+    setCodeError(null);
+    setCodeBusy(true);
+    try {
+      const res = await fetch(`/api/v1/sessions/${sessionId}/voucher`, { method, headers: { "content-type": "application/json" }, body: body && JSON.stringify(body) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return setCodeError(typeof data.error === "string" ? data.error : CODE_FAILED);
+      focusAfterCode.current = true;
+      setDue(dueFrom(data));
+    } catch {
+      setCodeError(CODE_FAILED);
+    } finally {
+      setCodeBusy(false);
+    }
+  }
+
+  /** The amount to approve, read from our server now (security 009 F1: the server charges what it claims, so a stale
+   *  amount here would only fail). If it moved since the payer saw the button, show it and stop. */
+  async function currentTerms(terms: NonNullable<typeof sale>, shown: Due) {
+    if (!code) return terms;
+    const res = await fetch(`/api/v1/sessions/${sessionId}/voucher`, { cache: "no-store" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || typeof data.amountUnits !== "string") throw new Error(typeof data.error === "string" ? data.error : FAILED);
+    const now = dueFrom(data);
+    if (now.amountText !== shown.amountText) {
+      setDue(now);
+      throw new Error(`The total is now ${now.amountText} USDT. Check it, then hold to pay again.`);
+    }
+    return { ...terms, amount: data.amountUnits as string };
+  }
+
   async function submit() {
     setError(null);
     try {
       if (!sale) throw new Error("Payments aren't live yet.");
       const { signSale } = await (signer.current ??= loadSigner());
-      const approval = await signSale(sale, expiresAt);
+      const approval = await signSale(await currentTerms(sale, due), expiresAt);
       let res: Response;
       try {
         res = await fetch(`/api/v1/sessions/${sessionId}/pay`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(approval) });
@@ -128,7 +185,7 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
           <h1 className="sr-only">Paid to {merchantName}</h1>
           <span className="justify-self-start rounded-pill border border-current px-3 py-0.5 text-xs font-medium tracking-wide text-positive">Paid</span>
           <p className="flex flex-wrap items-baseline gap-2">
-            <span className="amount-xl">{amountText}</span>
+            <span className="amount-xl">{due.amountText}</span>
             <span className="label text-ink-muted">USDT</span>
             <span className="text-ink-muted">to {merchantName}</span>
           </p>
@@ -198,10 +255,17 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
             <p className="flex items-baseline justify-between">
               <span className="label text-ink-muted">Total</span>
               <span>
-                <span className="amount-xl">{amountText}</span>
+                <span className="amount-xl">{code ? code.totalText : due.amountText}</span>
                 <span className="label ml-1.5 text-ink-muted">USDT</span>
               </span>
             </p>
+            {due.discountText && (
+              <p className="text-right text-sm tabular-nums">
+                <span className="whitespace-nowrap text-positive">Discount −{due.discountText} USDT</span>
+                {" · "}
+                <span className="whitespace-nowrap font-medium">You pay {due.amountText} USDT</span>
+              </p>
+            )}
             {fxLine && (
               <p className="text-right text-xs text-ink-muted tabular-nums">
                 {/* wraps between its parts, never inside one */}
@@ -229,9 +293,61 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
             </div>
           ) : sale ? (
             <div className="grid gap-3">
-              <HoldButton label={`Hold to pay ${amountText} USDT`} busyLabel="Paying" doneLabel="Paid" onConfirm={pay} aria-describedby="pay-hint" className="w-full" />
+              {code && (
+                // inert while paying: the server refuses a code change then anyway (F5)
+                <details open={codeOpenAtStart} inert={paying} className={`group ${paying ? "opacity-45" : ""}`}>
+                  <summary className="inline-flex min-h-11 cursor-pointer list-none items-center gap-1 text-sm font-medium text-accent [&::-webkit-details-marker]:hidden">
+                    Have a discount code?
+                    <span aria-hidden="true" className="transition-transform group-open:rotate-180">▾</span>
+                  </summary>
+                  {hasDiscount ? (
+                    <p className="flex items-center justify-between gap-3 text-sm">
+                      <span className="text-positive">Discount applied</span>
+                      <button ref={removeButton} type="button" aria-disabled={codeBusy} onClick={() => !codeBusy && changeCode("DELETE")} className="min-h-11 px-2 text-ink-muted underline underline-offset-4 hover:text-ink">
+                        Remove
+                      </button>
+                    </p>
+                  ) : (
+                    <form
+                      className="flex gap-2"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        const typed = String(new FormData(event.currentTarget).get("code") ?? "");
+                        if (!codeBusy) void changeCode("POST", { code: typed });
+                      }}
+                    >
+                      <label htmlFor="discount-code" className="sr-only">
+                        Discount code
+                      </label>
+                      <input
+                        ref={codeInput}
+                        id="discount-code"
+                        name="code"
+                        required
+                        maxLength={32}
+                        autoComplete="off"
+                        autoCapitalize="characters"
+                        spellCheck={false}
+                        placeholder="Code"
+                        aria-invalid={codeError ? true : undefined}
+                        aria-describedby={codeError ? "code-error" : undefined}
+                        className="h-11 min-w-0 flex-1 rounded-sm border border-hairline bg-surface px-3 font-mono uppercase text-ink placeholder:font-sans placeholder:normal-case"
+                      />
+                      <button type="submit" aria-disabled={codeBusy} className="h-11 shrink-0 rounded-pill border border-current px-5 text-sm font-medium text-accent aria-disabled:opacity-45">
+                        {codeBusy ? "Checking" : "Apply"}
+                      </button>
+                    </form>
+                  )}
+                  {codeError && (
+                    <p id="code-error" role="alert" className="mt-2 text-sm text-critical">
+                      {codeError}
+                    </p>
+                  )}
+                </details>
+              )}
+              <HoldButton label={`Hold to pay ${due.amountText} USDT`} busyLabel="Paying" doneLabel="Paid" onConfirm={pay} aria-describedby="pay-hint" className="w-full" />
               <p id="pay-hint" className="text-center text-sm text-ink-muted">
-                Pay exactly {amountText} USDT, no more and no less. No fees for you.
+                Pay exactly {due.amountText} USDT, no more and no less. No fees for you.
                 <span className="block">Press and hold the button, or press Enter, to pay.</span>
               </p>
             </div>

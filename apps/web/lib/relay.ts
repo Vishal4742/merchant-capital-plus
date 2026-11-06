@@ -30,7 +30,7 @@ export type RelayResult =
   | { ok: false; status: number; message: string; unknown?: boolean; refused?: boolean };
 
 export const UNKNOWN = "We couldn't confirm this payment yet. Don't pay again; check this page again in a few minutes.";
-const BUSY = "Payments are busy right now. Nothing was charged; try again in a moment.";
+export const BUSY = "Payments are busy right now. Nothing was charged; try again in a moment.";
 // connection never opened, so the request can't have reached the relayer
 const NOT_SENT = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN"]);
 

@@ -53,7 +53,7 @@ async function Receipt({ params }: Pick<PageProps<"/r/[id]">, "params">) {
   return (
     <ReceiptCard
       label={`Receipt${session.reference ? ` · order ${session.reference}` : ""}`}
-      amount={session.amount}
+      amount={payment.amount ?? session.amount} // what was charged: a discount code makes it less than the session's
       merchantName={session.merchantName}
       paidAt={when(payment.paidAt)}
       reference={session.reference ? { term: "Order", value: session.reference } : null}
