@@ -345,6 +345,18 @@ test('RPC pre-checks reject in one round with their code and never simulate or s
   }
 });
 
+test('a 200 carries per-step timings in whole ms (NFR-4 on the deployed relayer); cold only on the first relay', async () => {
+  const { status, out } = await post((await signedSale()).body, fakeNode({ sendDelayMs: 40 }));
+  assert.equal(status, 200, JSON.stringify(out));
+  const t = out.timings;
+  const steps = ['checks', 'queue', 'presend', 'send', 'receipt'];
+  for (const k of [...steps, 'total']) assert.ok(Number.isInteger(t[k]) && t[k] >= 0, `${k}: ${t[k]}`);
+  assert.ok(steps.reduce((sum, k) => sum + t[k], 0) <= t.total + steps.length, `steps add up to the total (± rounding): ${JSON.stringify(t)}`);
+  assert.ok(t.receipt >= 30, `the receipt wait is measured: ${t.receipt}`);
+  assert.equal(t.cold, false, 'earlier tests already relayed in this process');
+  assert.deepEqual(Object.keys(t).sort(), ['checks', 'cold', 'presend', 'queue', 'receipt', 'send', 'total']);
+});
+
 test('every simulation carries the same gas limit and fees the relayer signs with', async () => {
   const node = fakeNode();
   assert.equal((await post((await signedSale()).body, node)).status, 200);
@@ -549,6 +561,15 @@ test('health reports the relayer WBT balance, nothing spent yet and the full 0.1
   });
   const down = fakeNode({ on: { eth_getBalance: () => { throw rpcError(-32000, 'down'); } } });
   assert.equal((await health(down.client)).status, 502);
+});
+
+// Batch 018 security F1: /health now runs in the signing instance and the web pings it on every checkout open, so a
+// burst must not fan out balance reads onto the RPC quota a sale's receipt poll needs.
+test('concurrent /health calls on a cold cache share one balance read', async () => {
+  const node = fakeNode();
+  const replies = await Promise.all(Array.from({ length: 10 }, () => health(node.client)));
+  assert.ok(replies.every((r) => r.status === 200));
+  assert.equal(node.calls.filter((c) => c === 'eth_getBalance').length, 1);
 });
 
 // Human 23:27: NFR-14 /health ≤ 300 ms p95 via a balance at most 5 s old, re-read after every send.

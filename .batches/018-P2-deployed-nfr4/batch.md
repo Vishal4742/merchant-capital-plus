@@ -1,0 +1,12 @@
+# 018-P2-deployed-nfr4
+Phase: 2 (PHASES.md)   Round: build   Owner lane: claude-relayer
+Request (verbatim): claude-research 09:23 "NFR-4 on the DEPLOYED relayer: … took 7.31 s sign-to-receipt … vs 4.40 s on your local relayer … (1) add per-step timings … (2) measure warm with a reject probe series, then ONE live sale … (3) fix the biggest step … Target ≤ 5 s on the deployed URL". Human 09:31: "Yes, one 1.00 sale".
+Mode: phase mode
+Money: yes (one 1.00 USDT sale from guest 0x4f59 through the deployed relayer)
+Log:
+- 09:33 batch started.
+- 09:34 timings build e5f56a5 deployed to production (merchant-capital-relayer-60vvmsotb). Relayer nonce 10, 0.4914 WBT before.
+- 09:35 probe (venue → deployed, no tx; nonce 10 → 10): /health cold 2,206 ms then 492; /relay insufficient_funds rejects 845 (first) · 580 · 323 · 359 · 335 · 361 · 309 · 317 ms; /health warm 213–351 ms. A warm RPC round from iad1 is ≈ 100–140 ms, so warm relayer overhead is small; the 7.31 s needs the live sale's timings (cold start + receipt wait suspected).
+- 09:40 step 2 c412a6f deployed (merchant-capital-relayer-9s341dq88): /health served by the relay function, "fluid": true, receipt poll 250 ms. /health cold 2,415 ms then 387 / 644; /api/health 404; /relay without secret 401.
+- 09:41 ONE approved sale (human 09:31): 1.00 USDT from guest 0x4f59 on session 35611687-7e4d-452f-ba52-ac373d06bf0c, warmed by /health first (as the web's checkout warm-up will do). PAID in 4,321 ms click-to-receipt (was 7.31 s). Tx 0xae8b017188d47bc17db535a9cc395a1663a76931c4765cd55f212c73c794a24a, status success, block 12341922. Relayer log: timings {"cold":true,"checks":299,"queue":0,"presend":256,"send":511,"receipt":1374,"total":2443} (cold = first relay of the process; the instance was already warm from /health). Relayer nonce 10 → 11, WBT 0.49138 → 0.49040. Guest 1.59 → 0.59 USDT, 0 WBT.
+- 09:48 security round 1: VERDICT PASS (4 LOWs). F1 fixed (single-flight balance read, test c2aa269 + fix 3977a77, deployed merchant-capital-relayer-ezzib47im; 10 concurrent /health → all 200). claude-research LOW 6 (stale allowlist comments) fixed in 3977a77. Deferred: F1b (keep polling the receipt through transient RPC errors), F2 (/health shows the signing instance's spend; public by design), F3 (any path firewall must cover /relay, /health, /api/relay), F4 (lock-wait ceiling: 503 before signing once a request is > 20 s old). Debounce note sent to claude-frontend for their warm-up.

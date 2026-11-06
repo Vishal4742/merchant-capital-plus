@@ -1,9 +1,22 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "regions": ["iad1"],
-  "functions": { "api/*.ts": { "maxDuration": 60 } },
+  "regions": [
+    "iad1"
+  ],
+  "fluid": true,
+  "functions": {
+    "api/*.ts": {
+      "maxDuration": 60
+    }
+  },
   "rewrites": [
-    { "source": "/relay", "destination": "/api/relay" },
-    { "source": "/health", "destination": "/api/health" }
+    {
+      "source": "/relay",
+      "destination": "/api/relay"
+    },
+    {
+      "source": "/health",
+      "destination": "/api/relay"
+    }
   ]
 }
