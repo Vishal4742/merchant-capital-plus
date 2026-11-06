@@ -178,11 +178,15 @@ export function WalletOption({ busy, disabled, onPay, primary = false }: WalletO
               {busy === "wallet" ? "Check your wallet…" : "Pay with your browser wallet"}
             </button>
           )}
-          <button type="button" className={browser ? quiet : main} aria-disabled={disabled} aria-describedby="wallet-hint" onClick={disabled ? undefined : () => onPay("privy")}>
+          <button type="button" className={browser ? quiet : main} aria-disabled={disabled} aria-describedby="wallet-hint privy-notice" onClick={disabled ? undefined : () => onPay("privy")}>
             {busy === "privy" ? "Finish in the wallet window…" : browser ? "Use another wallet or email" : "Pay with your wallet"}
           </button>
           <p id="wallet-hint" className="text-center text-sm text-ink-muted">
             A browser or phone wallet, or your email, with test USDT. You approve one message. No network fee.
+          </p>
+          {/* who sees what before the customer opens it (security 046 M2) */}
+          <p id="privy-notice" className="text-center text-xs text-ink-muted">
+            Opens Privy and WalletConnect. They see your IP address, and with email, your email and wallet address.
           </p>
         </>
       )}
