@@ -4,7 +4,7 @@
 // Signatures use the browser wallet (EIP-1193) directly: Privy is not loaded on the dashboard. The receiving wallet signs
 // a proof of control; then a wallet Privy verified for the Owner signs the approval; a confirmation screen shows the full
 // address, network and exact token before anything is activated (FR-BIZ-4).
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createWalletClient, custom, getAddress, type Address, type EIP1193Provider } from "viem";
 import { CopyButton } from "@/components/CopyButton";
 import { card, field, textLink } from "@/components/gateway/Frame";
@@ -21,6 +21,7 @@ interface Me {
 interface Member { principalId: string; you: boolean; label: string; email: string | null; wallets: string[]; role: Role; since: number }
 interface Policy { version: number; chainId: number; token: string; recipient: string; policyHash: string; approvalWallet: string; v1Obligations: boolean; approvedAt: number }
 interface Proof { nonce: string; message: string; recipient: string; version: number; policyHash: string; token: string; chainId: number }
+interface ApprovalWallets { wallets: { wallet: string; you: boolean; enrolledAt: number; endorsedBy: string | null }[]; firstPinOpen: boolean }
 
 const primary =
   "h-11 cursor-pointer rounded-pill bg-accent px-5 text-sm font-medium text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
@@ -87,8 +88,16 @@ export function WorkspaceSettings() {
     void load();
   }, [load]);
 
+  const [signOutProblem, setSignOutProblem] = useState<string | null>(null);
   const signOut = async () => {
-    await api("/api/v2/auth/signout", { method: "POST" }).catch(() => undefined);
+    setSignOutProblem(null);
+    try {
+      await api("/api/v2/auth/signout", { method: "POST" });
+    } catch {
+      // the session may still be live: say so and stay (round 2; 051 review S-L3 pattern)
+      setSignOutProblem("We couldn't sign you out. Try again.");
+      return;
+    }
     // a full load on purpose: /sign-in sends its own CSP (with Privy) and ends Privy's session there (?out=1)
     // eslint-disable-next-line @next/next/no-location-assign-relative-destination
     window.location.assign("/sign-in?out=1");
@@ -121,6 +130,7 @@ export function WorkspaceSettings() {
           <h2 id="ws-heading" className="text-[17px] font-semibold text-ink">Workspace</h2>
           <button type="button" className={secondary} onClick={() => void signOut()}>Sign out</button>
         </div>
+        {signOutProblem && <p role="alert" className="text-sm text-critical">{signOutProblem}</p>}
         <p className="text-sm text-ink-muted">
           Signed in as <span className="font-medium text-ink break-all">{me.principal.email ?? (me.principal.wallets[0] ? short(me.principal.wallets[0]) : "your Privy account")}</span>
           {me.principal.wallets.length > 0 && <> · approval {me.principal.wallets.length === 1 ? "wallet" : "wallets"} {me.principal.wallets.map(short).join(", ")}</>}
@@ -219,12 +229,23 @@ function ReceivingWallet({ role, principalWallets }: { role: Role; principalWall
   const [proof, setProof] = useState<Proof | null>(null);
   const [signed, setSigned] = useState<{ proofSignature: string; approvalNonce: string; approvalSignature: string } | null>(null);
   const [confirmed, setConfirmed] = useState(false);
+  const [pinned, setPinned] = useState<ApprovalWallets | null>(null);
   const owner = role === "owner";
+  // H1: approve only with an enrolled approval wallet of yours, or with any of your wallets for the first activation
+  const approvers = useMemo(
+    () => (!pinned ? [] : pinned.firstPinOpen ? principalWallets : principalWallets.filter((w) => pinned.wallets.some((p) => p.you && p.wallet.toLowerCase() === w.toLowerCase()))),
+    [pinned, principalWallets],
+  );
 
   const load = useCallback(
-    () => api<{ current: Policy | null }>("/api/v2/business/policy").then((r) => setCurrent(r.current), (e: unknown) => setError(message(e))),
-    [],
+    () =>
+      Promise.all([
+        api<{ current: Policy | null }>("/api/v2/business/policy").then((r) => setCurrent(r.current)),
+        owner ? api<ApprovalWallets>("/api/v2/business/approval-wallets").then(setPinned) : Promise.resolve(),
+      ]).catch((e: unknown) => setError(message(e))),
+    [owner],
   );
+  const chosenApprover = approvers.includes(approver) ? approver : (approvers[0] ?? ""); // derived, not synced in an effect
   useEffect(() => {
     void load();
   }, [load]);
@@ -261,8 +282,8 @@ function ReceivingWallet({ role, principalWallets }: { role: Role; principalWall
   const signApproval = () =>
     run(async () => {
       if (!proof || !signed) return;
-      const a = await api<{ nonce: string; message: string }>("/api/v2/business/policy/approval", { method: "POST", body: { proofNonce: proof.nonce, wallet: approver } });
-      const approvalSignature = await sign(approver, a.message);
+      const a = await api<{ nonce: string; message: string }>("/api/v2/business/policy/approval", { method: "POST", body: { proofNonce: proof.nonce, wallet: chosenApprover } });
+      const approvalSignature = await sign(chosenApprover, a.message);
       setSigned({ ...signed, approvalNonce: a.nonce, approvalSignature });
       setStep("confirm");
     });
@@ -280,6 +301,7 @@ function ReceivingWallet({ role, principalWallets }: { role: Role; principalWall
       setSigned(null);
       setConfirmed(false);
       setStep("idle");
+      void load(); // the first activation pinned the approval wallet
     });
 
   return (
@@ -322,14 +344,24 @@ function ReceivingWallet({ role, principalWallets }: { role: Role; principalWall
             <p className="text-sm text-critical" role="alert">
               To approve, link a wallet to your sign-in: <a className={textLink} href="/sign-in">sign in again</a> with a wallet, or add one in the Privy dialog.
             </p>
+          ) : approvers.length === 0 ? (
+            <p className="text-sm text-critical" role="alert">
+              None of your linked wallets is an approval wallet of this workspace. Enroll one under Approval wallets below: an enrolled approval wallet must endorse it.
+            </p>
           ) : (
             <>
               <label className="grid gap-1 text-sm">
-                <span className="eyebrow text-ink-muted">Approve with (a wallet linked to your sign-in)</span>
-                <select className={`${field} data`} value={approver} onChange={(e) => setApprover(e.target.value)}>
-                  {principalWallets.map((w) => <option key={w} value={w}>{getAddress(w)}</option>)}
+                <span className="eyebrow text-ink-muted">{pinned?.firstPinOpen ? "Approve with (this becomes the workspace's approval wallet)" : "Approve with (your enrolled approval wallet)"}</span>
+                <select className={`${field} data`} value={chosenApprover} onChange={(e) => setApprover(e.target.value)}>
+                  {approvers.map((w) => <option key={w} value={w}>{getAddress(w)}</option>)}
                 </select>
               </label>
+              {pinned?.firstPinOpen && (
+                <p className="text-xs text-ink-muted">
+                  The first approval pins this wallet. Later changes to where this workspace is paid need an approval wallet, and a wallet you link later must be
+                  endorsed by one. A solo Owner who loses every approval wallet needs WhiteFlow support to change the policy.
+                </p>
+              )}
               <button type="button" className={`${primary} justify-self-start`} onClick={() => void signApproval()}>Sign the approval</button>
               <p className="text-xs text-ink-muted">Step 2 of 3: your own wallet approves these exact terms (valid for 5 minutes).</p>
             </>
@@ -368,7 +400,111 @@ function ReceivingWallet({ role, principalWallets }: { role: Role; principalWall
         </div>
       )}
       {error && <p role="alert" className="text-sm text-critical">{error}</p>}
+      {owner && pinned && !pinned.firstPinOpen && <ApprovalWalletsPanel pinned={pinned} principalWallets={principalWallets} onEnrolled={() => void load()} />}
     </section>
+  );
+}
+
+/** H1: the workspace's approval wallets, and enrolling another of yours. An enrolled approval wallet of a current Owner
+ *  must sign the endorsement: in this browser if you hold it, or by its Owner, who sends you the signature. */
+function ApprovalWalletsPanel({ pinned, principalWallets, onEnrolled }: { pinned: ApprovalWallets; principalWallets: string[]; onEnrolled: () => void }) {
+  const enrolled = new Set(pinned.wallets.map((w) => w.wallet.toLowerCase()));
+  const candidates = principalWallets.filter((w) => !enrolled.has(w.toLowerCase()));
+  const [wallet, setWallet] = useState(candidates[0] ?? "");
+  const [endorser, setEndorser] = useState(pinned.wallets[0]?.wallet ?? "");
+  const [request, setRequest] = useState<{ nonce: string; message: string; endorser: string } | null>(null);
+  const [pasted, setPasted] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const step = async (fn: () => Promise<void>) => {
+    setProblem(null);
+    setBusy(true);
+    try {
+      await fn();
+    } catch (e) {
+      setProblem(message(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const ask = () =>
+    step(async () => {
+      setDone(null);
+      setRequest(await api<{ nonce: string; message: string; endorser: string }>("/api/v2/business/approval-wallets", { method: "POST", body: { wallet, endorser } }));
+    });
+  const finish = async (signature: string) => {
+    if (!request) return;
+    const r = await api<{ wallet: string }>("/api/v2/business/approval-wallets/confirm", { method: "POST", body: { nonce: request.nonce, signature } });
+    setRequest(null);
+    setPasted("");
+    setDone(`${getAddress(r.wallet)} is now an approval wallet of this workspace. Every Owner was notified.`);
+    onEnrolled();
+  };
+  return (
+    <div className="grid gap-3 border-t border-hairline pt-4">
+      <h3 className="font-medium text-ink">Approval wallets</h3>
+      <p className="text-xs text-ink-muted">
+        Only these wallets can approve where this workspace is paid. A wallet linked to a sign-in later can&apos;t, until an approval wallet endorses it. A solo
+        Owner who loses every approval wallet needs WhiteFlow support to change the policy.
+      </p>
+      <ul className="grid gap-1 text-sm">
+        {pinned.wallets.map((w) => (
+          <li key={w.wallet} className="data break-all">
+            {w.wallet} <span className="text-xs text-ink-muted">({w.you ? "yours" : "another Owner's"}, {w.endorsedBy ? `endorsed by ${short(w.endorsedBy)}` : "pinned by the first activation"})</span>
+          </li>
+        ))}
+      </ul>
+      {candidates.length === 0 ? (
+        <p className="text-xs text-ink-muted">Every wallet linked to your sign-in is an approval wallet already.</p>
+      ) : !request ? (
+        <div className="grid gap-2 sm:grid-cols-2">
+          <label className="grid gap-1 text-sm">
+            <span className="eyebrow text-ink-muted">Enroll your wallet</span>
+            <select className={`${field} data`} value={wallet} onChange={(e) => setWallet(e.target.value)}>
+              {candidates.map((w) => <option key={w} value={w}>{getAddress(w)}</option>)}
+            </select>
+          </label>
+          <label className="grid gap-1 text-sm">
+            <span className="eyebrow text-ink-muted">Endorsed by (an approval wallet)</span>
+            <select className={`${field} data`} value={endorser} onChange={(e) => setEndorser(e.target.value)}>
+              {pinned.wallets.map((w) => <option key={w.wallet} value={w.wallet}>{w.wallet}</option>)}
+            </select>
+          </label>
+          <button type="button" className={`${secondary} justify-self-start`} disabled={busy || !wallet || !endorser} onClick={() => void ask()}>
+            Ask for an endorsement
+          </button>
+        </div>
+      ) : (
+        <div className="grid gap-2">
+          <p className="text-sm text-ink">
+            {short(request.endorser)} must sign this endorsement (free, moves no funds). If it&apos;s in your browser wallet, sign it here. Otherwise send the message to its
+            Owner and paste the signature they send back.
+          </p>
+          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-[8px] bg-surface-sunk p-3 text-xs">{request.message}</pre>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" className={primary} disabled={busy} onClick={() => void step(async () => finish(await sign(request.endorser, request.message)))}>
+              Sign with {short(request.endorser)}
+            </button>
+            <CopyButton text={request.message} name="endorsement message" label="Copy the message" />
+          </div>
+          <label className="grid gap-1 text-sm">
+            <span className="eyebrow text-ink-muted">Or paste the endorser&apos;s signature</span>
+            <input className={`${field} data`} value={pasted} onChange={(e) => setPasted(e.target.value.trim())} placeholder="0x…" />
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className={secondary} disabled={busy || !/^0x[0-9a-fA-F]{130}$/.test(pasted)} onClick={() => void step(() => finish(pasted))}>
+              Enroll with this signature
+            </button>
+            <button type="button" className={secondary} disabled={busy} onClick={() => setRequest(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+      {done && <p className="text-sm text-ink" role="status">{done}</p>}
+      {problem && <p className="text-sm text-critical" role="alert">{problem}</p>}
+    </div>
   );
 }
 
