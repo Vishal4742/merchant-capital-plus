@@ -30,6 +30,7 @@ export const BANDS: Record<(typeof QUOTED)[number], [number, number]> = {
 export interface Rate {
   num: bigint;
   den: bigint;
+  exact?: boolean; // USDT itself: no conversion, no rounding
   rate: string; // per 1 USD, as the source gave it
   rateAt: string; // the source's publish date, YYYY-MM-DD
   source: string;
@@ -74,20 +75,33 @@ function checked(currency: (typeof QUOTED)[number], row: { date?: unknown; rate?
   return { ...fraction(text), rate: text, rateAt: date, source: "Frankfurter (ECB and central-bank reference rates)", fetchedAt };
 }
 
+// F6: after a fetch that TIMED OUT, don't make every request wait out the 5 s timeout again for a minute. A fast
+// failure (connection refused, an HTTP error) costs no wait, so the next request simply tries again.
+const RETRY_AFTER_MS = 60_000;
+const timedOut = (err: unknown) => err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
+const UNAVAILABLE = "Exchange rates are unavailable right now. Price in USD or USDT, or try again in a minute.";
+
 // ponytail: per-instance cache; each serverless instance fetches at most once per 15 min.
 let cache: { fetchedAt: number; rates: Map<string, Rate> } | undefined;
+let failedAt: number | undefined;
 
 async function fetchRates(now: number): Promise<Map<string, Rate>> {
   if (cache && now - cache.fetchedAt < RATE_CACHE_MS) return cache.rates;
+  if (failedAt !== undefined && now - failedAt < RETRY_AFTER_MS) {
+    if (cache) return cache.rates; // usdRate still re-checks each rate's date
+    throw new HttpError(503, UNAVAILABLE);
+  }
   let rows: unknown;
   try {
     const res = await fetch(FRANKFURTER, { signal: AbortSignal.timeout(FX_TIMEOUT_MS), cache: "no-store" });
     if (!res.ok) throw new Error(`status ${res.status}`);
     rows = await res.json();
-  } catch {
+  } catch (err) {
+    if (timedOut(err)) failedAt = now;
     if (cache) return cache.rates; // a stale-but-checked rate beats none; each row was band- and date-checked
-    throw new HttpError(503, "Exchange rates are unavailable right now. Price in USD or USDT, or try again in a minute.");
+    throw new HttpError(503, UNAVAILABLE);
   }
+  failedAt = undefined;
   const rates = new Map<string, Rate>();
   for (const row of Array.isArray(rows) ? rows : []) {
     const quote = typeof row?.quote === "string" ? row.quote.toUpperCase() : "";
@@ -101,16 +115,20 @@ async function fetchRates(now: number): Promise<Map<string, Rate>> {
 }
 
 export async function usdRate(currency: Currency, now = Date.now()): Promise<Rate> {
-  if (currency === "USD" || currency === "USDT") return { num: 1n, den: 1n, rate: "1", rateAt: utcDate(now), source: "USD = USDT 1:1", fetchedAt: now };
+  if (currency === "USDT") return { num: 1n, den: 1n, exact: true, rate: "1", rateAt: utcDate(now), source: "USD = USDT 1:1", fetchedAt: now };
+  if (currency === "USD") return { num: 1n, den: 1n, rate: "1", rateAt: utcDate(now), source: "USD = USDT 1:1", fetchedAt: now };
   const rate = (await fetchRates(now)).get(currency);
   // re-checked here, not only at fetch time: during an outage the cache keeps serving, and it must not age past 7 days (S3)
   if (!rate || !freshDate(rate.rateAt, now)) throw new HttpError(503, `Prices in ${currency} are unavailable right now. Try again in a minute.`);
   return rate;
 }
 
-/** USDT units for `amount` of a currency at `rate` (per 1 USD), rounded UP to the cent: the merchant is never short. */
-export function toUsdtUnits(amount: string, rate: Pick<Rate, "num" | "den">): bigint {
+/** USDT units for `amount` of a currency at `rate` (per 1 USD), rounded UP to the cent: the merchant is never short.
+ *  A USDT price (`rate.exact`) is charged exactly (G4 review H1: 10.123456 USDT stays 10.123456); USD is a fiat price
+ *  at 1:1 and rounds up to the cent like the others (the convention claude-frontend's sessions and the SDK use). */
+export function toUsdtUnits(amount: string, rate: Pick<Rate, "num" | "den"> & { exact?: boolean }): bigint {
   if (!/^\d+(\.\d{1,6})?$/.test(amount)) throw new HttpError(400, 'amount must be a decimal string like "20.00".');
+  if (rate.exact) return parseUnits(amount, 6);
   const scaled = parseUnits(amount, 6) * rate.den; // = USDT units × num
   const step = rate.num * CENT;
   return ((scaled + step - 1n) / step) * CENT;
@@ -159,4 +177,5 @@ export const pricedJson = (q: Quote) => ({ currency: q.currency, amount: q.amoun
 /** Tests only: forget the cached rates. */
 export const resetRateCache = () => {
   cache = undefined;
+  failedAt = undefined;
 };
