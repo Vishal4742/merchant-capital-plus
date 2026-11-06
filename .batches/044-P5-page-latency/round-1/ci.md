@@ -34,3 +34,10 @@ Vouchers answer at once with their "couldn't read" message). "full" = what the o
   Pages and API keys are full loads (new document), and API keys answers with the strict CSP (no Nym hosts).
 
 Production after-numbers wait for the next deploy (this batch doesn't deploy).
+
+## After merging origin/main (1165425: batch 045 gave every Nav item an href, conflict in Nav.tsx resolved by keeping
+## softNav ? Link : a for every item; Webhooks → /merchant/developers#webhooks stays a full load)
+- `npm run typecheck` exit 0 · `npm run lint` exit 0 · `npm test` exit 0, `tests 676 · pass 674 · fail 0 · skipped 2`
+  (nav-links 2 of 2 and dashboard-soft-nav 4 of 4) · `npm run build` exit 0 (only the two baseline `shop key check` lines)
+- Phone check re-run on that build: `{"softKeptDocument":true,"menuOpenAfterReturn":false,"pagesIsFullLoad":true,
+  "developersIsFullLoad":true,"developersCspHasNoNym":true}`
