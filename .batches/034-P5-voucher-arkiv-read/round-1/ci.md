@@ -1,5 +1,6 @@
 VERDICT: PASS
 
+Landing card as an invoice offer (948650f): typecheck 0, lint 0, tests 595/593/0 fail/2 skipped, build 0.
 Re-run after the security F2 fix (2864ac7), apps/web: `npm run typecheck` exit 0, `npm run lint` exit 0, `npm test` exit 0
 (tests 595, pass 593, fail 0, cancelled 0, skipped 2), `npm run build` exit 0 ("✓ Compiled successfully in 913ms").
 Voucher suites (voucher-arkiv-read, gw-vouchers, gw-tester-vouchers, voucher-pay, gw-single-use, gw-vouchers-paid-race):
