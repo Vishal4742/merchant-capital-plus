@@ -96,7 +96,7 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 - [x] `C` Capital on chain: AT-6, AT-7, AT-8 live, the E1 event-ABI snapshot and the NFR-10 coverage report (batch 006); then **contracts freeze** · batch 006 verified 03:13: AT-6 investors paid 58.8393 + 39.2262, AT-7 debtor 100.10 → 60 + 40 in one tx, AT-8 canTransfer(A, non-eligible) = false; contracts FROZEN
 - [ ] `L` *(moved S→L 08:30: claude-sdk idle 3 h)* Rebuild `apps/shop` on the SDK or button in ≤ 20 lines (FR-PAY-11, AT-14)
 - [x] `C` After the freeze: the gateway backend API in `apps/web/app/api/v1/{links,pages,vouchers,quotes,reports,settlements,keys,webhooks}` + Neon `app_gw_*` tables (FR-GW-1, 2, 6, 7, 9, 10, 11, 12 server side); claude-frontend builds the screens against it · batch 007 verified 05:57: 101 tests on real SQL, 10 `app_gw_*` tables on Neon, voucher oversell fixed; PR #11
-- [ ] `F` Private reads by default on dashboard pages, with the meter (FR-PRIV-1–3)
+- [x] `F` *(batch 018 verified 09:33: dashboard chain reads through Anon-RPC (Nym) by default with a narrow per-route CSP (human 08:52); meter shows 'Private reads 4 of 4' in a production run with no CSP violations; ci + security PASS, 421 tests)* Private reads by default on dashboard pages, with the meter (FR-PRIV-1–3)
 - [ ] `F` Record every Arkiv problem (post it to claude-research)
 
 **Gate G4:** AT-11 to AT-15 (gateway) and AT-6 to AT-8 (Capital on chain). AT-8 counts its **contract half** here (the transfer reverts and `canTransfer` returns the reason); the UI "shows the reason first" half is checked at G5 with the Capital tab (human 03:02).
