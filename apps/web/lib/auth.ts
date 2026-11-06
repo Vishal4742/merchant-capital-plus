@@ -1,9 +1,10 @@
 // Merchant sign-in with a wallet (SIWE, EIP-4361): the server hands out a one-time nonce, the merchant's
 // wallet signs a sign-in message (no gas, no money), and the server sets an HMAC-signed session cookie.
-// Server-only. No password, no email, and nothing stored but the cookie.
+// Server-only. No password and no email: the cookie, and each used nonce until it would have expired anyway.
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { getAddress, isAddress, verifyMessage, type Address, type Hex } from "viem";
 import { parseSiweMessage, validateSiweMessage } from "viem/siwe";
+import { query } from "./server/db.ts";
 
 export const SESSION_COOKIE = "mc_session";
 export const NONCE_COOKIE = "mc_nonce";
@@ -60,16 +61,15 @@ export function readNonce(token: string | undefined, secret: string, now = Date.
   return Number.isSafeInteger(issued) && now - issued <= NONCE_TTL_S * 1000 && issued <= now + CLOCK_SKEW_MS ? nonce : null;
 }
 
-// Nonces already used for a sign-in, until their cookie would have expired anyway: a captured request can't be
-// replayed inside the 5 min window. ponytail: per process, like the sessions; moves to Neon with them.
-const usedNonces = new Map<string, number>();
+// Nonces already used for a sign-in (app_web_nonces), until their cookie would have expired anyway: a captured request
+// can't be replayed inside the 5 min window, on this instance or any other.
+const NONCE_KEEP_MS = NONCE_TTL_S * 1000 + CLOCK_SKEW_MS;
 
-/** True the first time a nonce is used; false after that. */
-export function consumeNonce(nonce: string, now = Date.now()): boolean {
-  for (const [old, until] of usedNonces) if (until <= now) usedNonces.delete(old);
-  if (usedNonces.has(nonce)) return false;
-  usedNonces.set(nonce, now + NONCE_TTL_S * 1000 + CLOCK_SKEW_MS);
-  return true;
+/** True the first time a nonce is used, on any instance; false after that (one INSERT: two at once, one wins). */
+export async function consumeNonce(nonce: string, now = Date.now()): Promise<boolean> {
+  await query("DELETE FROM app_web_nonces WHERE used_at <= $1", [now - NONCE_KEEP_MS]);
+  const rows = await query("INSERT INTO app_web_nonces (nonce, used_at) VALUES ($1, $2) ON CONFLICT (nonce) DO NOTHING RETURNING nonce", [nonce, now]);
+  return rows.length === 1;
 }
 
 /** Checks a SIWE message (our domain, the nonce we issued, chain 1874, expiring within 10 min) and its signature. */
