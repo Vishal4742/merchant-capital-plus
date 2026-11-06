@@ -80,10 +80,11 @@ async function ConnectionsLoader() {
   return (
     <Shell active="connections" privateReads={false} account={<Account merchant={merchant} />}>
       {header}
-      {/* minmax(0,1fr): the MCP <pre> scrolls inside its box instead of widening the page (468 px at 360 before batch 051) */}
+      {/* minmax(0,1fr) on every grid down to the MCP <pre>: an `auto` column sizes to the pre's longest line, so each
+          level must allow shrinking for the pre to scroll inside its box (the page was 468 px wide at 360 before 051) */}
       <div className="grid grid-cols-[minmax(0,1fr)] gap-8 px-4 py-6 md:px-8 md:py-8">
         {/* Model Context Protocol (MCP) Section */}
-        <section aria-labelledby="mcp-heading" className="grid gap-4 rounded-[16px] border border-hairline bg-surface p-5 md:p-6 shadow-card">
+        <section aria-labelledby="mcp-heading" className="grid grid-cols-[minmax(0,1fr)] gap-4 rounded-[16px] border border-hairline bg-surface p-5 md:p-6 shadow-card">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-hairline pb-4">
             <div>
               <div className="flex items-center gap-2">
@@ -100,7 +101,7 @@ async function ConnectionsLoader() {
             </div>
           </div>
 
-          <div className="grid gap-3 text-sm text-ink-muted">
+          <div className="grid grid-cols-[minmax(0,1fr)] gap-3 text-sm text-ink-muted">
             <p>
               WhiteFlow targets protocol version <span className="font-mono text-ink">2025-11-25</span> using{" "}
               <span className="font-mono text-ink">@modelcontextprotocol/sdk 1.32.2</span> over Streamable HTTP.
