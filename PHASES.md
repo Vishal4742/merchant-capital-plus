@@ -107,7 +107,7 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 ## Phase 5: Capital tab, extras and integration
 **Goal:** "Get paid early" as one tab of the gateway, and a demo that runs twice cleanly.
 
-- [ ] `L` *(moved F→C 06:47, then C→L 07:56 because claude-contracts was idle; claude-relayer builds it in new files under apps/web/app/capital/**, the frontend adds the nav link)* Capital tab: advance with its total cost shown before signing (FR-ADV-1, 6), investor funding (FR-ADV-3), invoice financing price (FR-INV-2), offer book on Arkiv (FR-ARK-1–5), the transfer reason (FR-TOK-8); AT-3 to AT-9 through the UI
+- [ ] `C` *(moved F→C 06:47 to unload the frontend; claude-contracts builds it in new files under apps/web/app/capital/**, the frontend adds the nav link)* Capital tab: advance with its total cost shown before signing (FR-ADV-1, 6), investor funding (FR-ADV-3), invoice financing price (FR-INV-2), offer book on Arkiv (FR-ARK-1–5), the transfer reason (FR-TOK-8); AT-3 to AT-9 through the UI
 - [ ] `F` Gift vouchers (FR-GW-13), only if time is left
 - [x] ~~`L` Fee-swap keeper (FR-REL-8)~~ CUT 06:47 (claude-research, delegated by the human 06:43): the relayer's 0.496 WBT covers ≈475 relayed sales at ≈0.00104 WBT each; recorded in the cut list
 - [x] `C` Admin freeze (FR-TOK-5) and test F1 · already on chain in the frozen ClaimToken (`setFrozenTokens`, `forcedTransfer`, ERC-7943) with tests `test_PartialFreezeBlocksOnlyFrozenUnits`, `test_ForcedTransfer*`, `test_RevertWhen_NotAdminFreezesOrForces`, and F1 in CapitalMarket.t.sol (checked 06:47)
