@@ -30,7 +30,14 @@ import { EXPLORER, formatUsdt } from "@/lib/usdt";
 
 export default function MerchantPage() {
   return (
-    <Suspense fallback={<p className="mx-auto max-w-6xl px-4 pt-16 text-ink-muted">Loading the dashboard…</p>}>
+    // the sidebar paints at once, so switching to Home never drops the frame while its data streams in (NFR-13)
+    <Suspense
+      fallback={
+        <Shell active="home">
+          <p className="px-4 py-6 text-ink-muted md:px-8">Loading the dashboard…</p>
+        </Shell>
+      }
+    >
       <Dashboard />
     </Suspense>
   );
@@ -182,6 +189,7 @@ async function Dashboard() {
   }
   const setup = setupFacts(merchant); // its own reads, alongside the chain's
   const vouchers = merchantVouchers(merchant).catch((error: unknown) => (logFailure("dashboard: vouchers", error), null)); // the name only: a DB message can hold SQL
+  const sessions = listPayments(merchant).catch(logged("checkout records")); // Postgres, alongside the chain's reads
   const pay = payConfig();
   const [health, invoices, logs, fee] = pay
     ? await Promise.all([
@@ -192,7 +200,7 @@ async function Dashboard() {
       ])
     : [null, null, null, null];
   // our checkout records only label the chain's payments: unreadable, the chain's rows still show
-  const candidates = paymentRows((await listPayments(merchant).catch(logged("checkout records"))) ?? [], logs ?? []);
+  const candidates = paymentRows((await sessions) ?? [], logs ?? []);
   // amounts and what is left to refund, read on chain per payment (one multicall), never from the index
   const records = pay ? await Promise.all(candidates.map((row) => (row.paymentId ? readPayment(pay.merchantPay, BigInt(row.paymentId)).catch(logged(`payments(${row.paymentId})`)) : null))) : [];
   const payments = confirmed(candidates, records, merchant);
