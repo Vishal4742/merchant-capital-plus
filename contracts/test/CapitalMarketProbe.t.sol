@@ -496,6 +496,8 @@ contract CapitalMarketProbeForkTest is Test {
     uint256 constant RELAYER_GAS_LIMIT = 400_000; // apps/relayer relayer.ts: every tx is simulated and sent with it
     uint256 constant SAFE_INVOICE_HOLDERS = 2;
     uint256 constant SAFE_ADVANCE_HOLDERS = 1;
+    uint256 constant SOLD = FACE / 2; // M3: the invoice is half sold
+    uint256 constant MIXED_REPAYMENT_GAS_LIMIT = 600_000; // M3: what a payInvoice that repays two claims needs (batch 039)
 
     /// @dev Lists an invoice or an advance, funds it across `n` investors, optionally empties their USDT (paying a
     ///      wallet at 0 USDT is a 0 -> nonzero write, +17.1k), then repays it in full (`settle`, the last repayment of
@@ -538,5 +540,45 @@ contract CapitalMarketProbeForkTest is Test {
         assertGt(_repaymentGas(false, SAFE_INVOICE_HOLDERS + 1, true, true), RELAYER_GAS_LIMIT);
         assertLe(_repaymentGas(true, SAFE_ADVANCE_HOLDERS, true, true), RELAYER_GAS_LIMIT);
         assertGt(_repaymentGas(true, SAFE_ADVANCE_HOLDERS + 1, true, true), RELAYER_GAS_LIMIT);
+    }
+
+    // ---------- M3 (batch 039, claude-relayer's PR #27 review): one payInvoice repays two claims ----------
+    // A partly-sold invoice from a merchant with a running advance: onPayment pays the invoice holders first (settling
+    // the invoice claim), then the advance lien from the remainder, in the same relayed tx.
+
+    /// @dev Advance fully bought by inv[0]; the invoice half sold across inv[1..invoiceHolders]; every holder at 0 USDT.
+    ///      Pays the invoice in full (the advance's holdback covers its cap: both claims settle) or `sold + 5` (the
+    ///      advance takes the 5 left: a partial lien payment).
+    function _mixedRepaymentGas(uint256 invoiceHolders, bool advanceSettles) internal returns (uint256 used) {
+        uint256 snap = vm.snapshotState();
+        uint256 advanceClaim = _listAdvance();
+        _fund(0, advanceClaim, CAP);
+        (uint256 invoiceId, uint256 invoiceClaim) = _listInvoice(FACE, PRICE);
+        for (uint256 i = 1; i <= invoiceHolders; ++i) {
+            _fund(i, invoiceClaim, SOLD / invoiceHolders); // 1 or 2 holders: exact
+        }
+        for (uint256 i; i <= invoiceHolders; ++i) {
+            uint256 held = _bal(inv[i]); // read first: vm.prank applies to the next call
+            vm.prank(inv[i]);
+            USDT.transfer(HOLDER, held);
+        }
+        _payInvoice(invoiceId, advanceSettles ? FACE : SOLD + 5e6, "m3");
+        used = vm.lastCallGas().gasTotalUsed;
+        assertEq(claims.holdersOf(invoiceClaim).length, 0, "the invoice claim settles");
+        assertEq(claims.holdersOf(advanceClaim).length, advanceSettles ? 0 : 1, "the lien is paid from the remainder");
+        vm.revertToState(snap);
+        console.log("M3: %s invoice holders, advance settles %s, gas %s", invoiceHolders, advanceSettles, used);
+    }
+
+    function test_Gas_PartlySoldInvoiceWithRunningAdvance() public {
+        vm.prank(HOLDER);
+        USDT.transfer(feeRecipient, 1e6); // the relayer hot wallet always holds USDT (the merchant holds the funding)
+        uint256[4] memory used; // one call site: this probe contract is near the compiler's code size limit
+        for (uint256 k; k < 4; ++k) {
+            used[k] = _mixedRepaymentGas(k < 2 ? 2 : 1, k % 2 == 0); // 2 holders settling, partial; then 1 holder
+        }
+        assertLe(used[0], MIXED_REPAYMENT_GAS_LIMIT); // the worst case at the caps
+        // M3 is real: even the smallest mixed repayment (1 invoice holder, a partial lien payment) needs more than 400k
+        assertGt(used[3], RELAYER_GAS_LIMIT);
     }
 }
