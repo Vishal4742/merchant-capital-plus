@@ -122,6 +122,9 @@ export async function quoteCost(claimId: bigint, units: bigint, { read = default
   return plainUsdt((await market(read, "quote", [claimId, units])) as bigint);
 }
 
+/** Investors per invoice claim: a full repayment pays them all in one tx under the relayer's 400k gas (contracts Q19). */
+export const MAX_INVOICE_HOLDERS = 2;
+
 export interface TransferCheck { allowed: boolean; reason: string | null }
 
 /**
@@ -130,7 +133,7 @@ export interface TransferCheck { allowed: boolean; reason: string | null }
  * check, then the holder cap in _move (FR-TOK-8; the AT-8 UI half shows the reason before any wallet prompt).
  */
 export async function transferCheck(t: { from: Address; to: Address; claimId: bigint; amount: bigint }, { read = defaultRead }: Deps = {}): Promise<TransferCheck> {
-  const [state, canSend, canReceive, frozenUnits, balance, toBalance, holders, maxHolders] = (await Promise.all([
+  const [state, canSend, canReceive, frozenUnits, balance, toBalance, holders, maxHolders, offer] = (await Promise.all([
     token(read, "claimState", [t.claimId]),
     token(read, "canSend", [t.from]),
     token(read, "canReceive", [t.to]),
@@ -139,7 +142,8 @@ export async function transferCheck(t: { from: Address; to: Address; claimId: bi
     token(read, "balanceOf", [t.to, t.claimId]),
     token(read, "holdersOf", [t.claimId]),
     token(read, "MAX_HOLDERS"),
-  ])) as [[bigint, boolean], boolean, boolean, bigint, bigint, bigint, readonly Address[], bigint];
+    readOffer(t.claimId, { read }),
+  ])) as [[bigint, boolean], boolean, boolean, bigint, bigint, bigint, readonly Address[], bigint, ChainOffer | null];
   const [lockFrom, frozen] = state;
   const no = (reason: string): TransferCheck => ({ allowed: false, reason });
   const unfrozen = balance > frozenUnits ? balance - frozenUnits : 0n;
@@ -149,8 +153,10 @@ export async function transferCheck(t: { from: Address; to: Address; claimId: bi
   if (!canReceive) return no("The receiver isn't a verified investor, so it can't hold claim units.");
   if (t.amount > unfrozen && t.amount <= balance) return no(`Only ${unfrozen} of the sender's ${balance} units are unfrozen.`);
   if (t.amount > balance) return no(`The sender's balance is too small: it holds ${balance} units.`);
-  const fitsCap = t.amount === 0n || toBalance !== 0n || BigInt(holders.length) < maxHolders || t.amount === balance;
-  if (!fitsCap) return no(`This claim already has the maximum of ${maxHolders} holders.`);
+  const fits = (cap: bigint) => t.amount === 0n || toBalance !== 0n || BigInt(holders.length) < cap || t.amount === balance;
+  if (!fits(maxHolders)) return no(`This claim already has the maximum of ${maxHolders} holders.`);
+  // the product's own rule after the contract's (security 022 M1): an invoice repayment pays every holder in one tx
+  if (offer?.kind === "invoice" && !fits(BigInt(MAX_INVOICE_HOLDERS))) return no(`This invoice already has ${MAX_INVOICE_HOLDERS} investors, the most one invoice can have.`);
   return { allowed: true, reason: null };
 }
 

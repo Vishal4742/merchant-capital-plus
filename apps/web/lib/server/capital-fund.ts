@@ -8,7 +8,7 @@ import { payConfig } from "../config.ts";
 import { BUSY, NOT_FUNDED, UNKNOWN } from "../relay.ts";
 import { receiveTypes, usdtDomain } from "../usdt.ts";
 import { syncOffer } from "./capital-arkiv.ts";
-import { CAPITAL_MARKET, claimHolders, fundingNonce, isVerifiedInvestor, offerStatus, parseFundBody, quoteUnits, readOffer, type Deps, type FundBody } from "./capital.ts";
+import { CAPITAL_MARKET, MAX_INVOICE_HOLDERS, claimHolders, fundingNonce, isVerifiedInvestor, offerStatus, parseFundBody, quoteUnits, readOffer, type Deps, type FundBody } from "./capital.ts";
 import { HttpError, MIN_PAYMENT } from "./http.ts";
 
 const RELAY_TIMEOUT_MS = 35_000; // longer than the relayer's receipt wait, as in lib/relay.ts
@@ -17,7 +17,6 @@ const HASH = /^0x[0-9a-fA-F]{64}$/;
 // the relayer's own window (apps/relayer: validBefore at least 30 s and at most 15 min ahead; lib/pay.ts uses the same)
 const MIN_WINDOW_S = 30n;
 const MAX_WINDOW_S = 15n * 60n;
-const MAX_INVOICE_HOLDERS = 2;
 
 export type FundDeps = Deps & {
   fetch?: typeof fetch;

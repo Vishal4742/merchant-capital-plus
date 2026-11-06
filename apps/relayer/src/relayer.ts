@@ -19,7 +19,8 @@ const DEFAULT_RPC = 'https://rpc.ankr.com/whitechain_testnet';
 const RPC_TIMEOUT_MS = 8_000;
 // NFR-4 (payment ≤ 5 s): Ankr's eth_sendRawTransactionSync waited ~7 s for a 1 s-block chain (G2, 06:16), so send plainly
 // and poll our own receipt. Tests shrink these.
-// 1 s blocks: ~4 polls per block. maxRequestAgeMs + receiptTimeoutMs stays under the web's 35 s give-up and the 60 s maxDuration.
+// 1 s blocks: ~4 polls per block. Worst case after the age gate: the 8 s send timeout + the 8 s poll (+ one poll's
+// overrun), about 37-44 s: past the web's 35 s, which it treats as unknown (it polls the chain), and under the 60 s maxDuration.
 export const TIMING = { receiptPollMs: 250, receiptTimeoutMs: 8_000, maxRequestAgeMs: 20_000 };
 const BALANCE_TTL_MS = 5_000; // /health WBT balance may be 5 s old (human 23:27, NFR-14 ≤ 300 ms p95); a send clears it
 // Refresh it every 3 s (human 01:14): stays inside the 5 s rule and keeps the RPC socket warm (Node drops idle ones at ~4 s).
@@ -411,10 +412,15 @@ function stopwatch() {
 }
 type Stopwatch = ReturnType<typeof stopwatch>;
 let relays = 0; // the first /relay of this process is the cold one
+// Queued behind a hung send (security 018 F4): never sign after the web has given up. Nothing was sent, so 503: the web
+// shows it as "Nothing was charged; try again" (security 022 L1).
+const tooOld = (clock: Stopwatch) => clock.read().total > TIMING.maxRequestAgeMs;
+const QUEUED_TOO_LONG = reject(503, 'busy', 'the relayer was too slow to start this payment; nothing was sent, so retry');
 
 /** Runs inside the send lock: re-simulate on fresh state, sign with capped fees, send once, poll our receipt. */
 async function send(client: RelayerClient, p: Payment, clock: Stopwatch): Promise<Reject | Sent> {
   clock.lap('queue');
+  if (tooOld(clock)) return QUEUED_TOO_LONG; // before any RPC in the lock (security 022 L2)
   if (tooLate(p)) return EXPIRED; // queue time counts
   if (sentAuthorizations.has(sentKey(p))) return REPLAY;
   let nonce: number;
@@ -429,8 +435,7 @@ async function send(client: RelayerClient, p: Payment, clock: Stopwatch): Promis
     return reject(502, 'rpc_error', reason(e));
   }
   if (tooLate(p)) return EXPIRED; // and so does a slow simulate/nonce step: never sign what could expire unmined
-  // queued behind a hung send (security 018 F4): never sign after the web has given up; nothing was sent, so it may re-POST
-  if (clock.read().total > TIMING.maxRequestAgeMs) return reject(502, 'rpc_error', 'the relayer was too slow to start this payment; nothing was sent, so retry');
+  if (tooOld(clock)) return QUEUED_TOO_LONG; // and the simulate/nonce round may have been slow too
   const ledger = ledgerChecks(client, p); // queued requests: the budget or the breaker may have moved while we waited
   if (ledger) return ledger;
   const signed = await client.account.signTransaction({
