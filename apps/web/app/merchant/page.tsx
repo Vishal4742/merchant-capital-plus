@@ -18,7 +18,8 @@ import { authSecret } from "@/lib/auth";
 import { currentMerchant } from "@/lib/merchant-session";
 import { merchantConfig, payConfig } from "@/lib/config";
 import { change, confirmed, dailyGross, figures, paymentRows, type Confirmed } from "@/lib/dashboard";
-import { logFailure } from "@/lib/gateway-server";
+import { vouchersUsed, type Voucher } from "@/lib/gateway-money";
+import { logFailure, merchantVouchers } from "@/lib/gateway-server";
 import { setupSteps } from "@/lib/onboarding";
 import { merchantInvoices, paidLogs, readPayment, readRelayFee, type Invoice, type PaidLog, type PaymentRecord } from "@/lib/onchain";
 import { relayerHealth } from "@/lib/relay";
@@ -90,7 +91,7 @@ const arrow = (n: number) => (n === 0 ? "0" : `${n > 0 ? "▲" : "▼"} ${Math.a
 const toneOf = (n: number | null): Tile["tone"] => (n === null || n === 0 ? undefined : n > 0 ? "up" : "down");
 
 /** Everything on the home that depends on the clock, in one plain function (the render body never reads it). */
-function home(payments: Confirmed[], fee: bigint | null) {
+function home(payments: Confirmed[], fee: bigint | null, vouchers: Voucher[] | null) {
   const now = Date.now();
   const f = figures(payments, now);
   const vsYesterday = change(f.grossToday, f.grossYesterday);
@@ -106,7 +107,7 @@ function home(payments: Confirmed[], fee: bigint | null) {
       ? { label: "Refunds", value: formatUsdt(0n), sub: "None yet" }
       : { label: "Refunds", value: f.refunded === null ? "—" : formatUsdt(f.refunded), sub: `${f.refundedPayments} ${f.refundedPayments === 1 ? "payment" : "payments"}, all time` },
     { label: "Settled", value: "T+0", sub: "in the payment's transaction" },
-    { label: "Vouchers used", value: "—", sub: "Soon" },
+    { label: "Vouchers used", ...vouchersUsed(vouchers, now) },
   ];
   const series = dailyGross(
     payments.map(({ row }) => row),
@@ -180,6 +181,7 @@ async function Dashboard() {
     );
   }
   const setup = setupFacts(merchant); // its own reads, alongside the chain's
+  const vouchers = merchantVouchers(merchant).catch((error: unknown) => (logFailure("dashboard: vouchers", error), null)); // the name only: a DB message can hold SQL
   const pay = payConfig();
   const [health, invoices, logs, fee] = pay
     ? await Promise.all([
@@ -196,7 +198,7 @@ async function Dashboard() {
   const payments = confirmed(candidates, records, merchant);
   const isShopWallet = merchant.toLowerCase() === config.merchant.toLowerCase();
   const shop = isShopWallet ? config.merchantName : "your shop";
-  const { tiles, ranges, when, today } = home(payments, fee);
+  const { tiles, ranges, when, today } = home(payments, fee, await vouchers);
   // the owner may change relayFee (≤ 0.25 USDT): every fee the merchant reads comes from the chain (code review 005 F7)
   const feeText = fee === null ? null : formatUsdt(fee);
   const steps = setupSteps({ ...(await setup), payments: payments.length });
@@ -253,9 +255,9 @@ async function Dashboard() {
                 </a>
               </li>
               <li>
-                <span className={`${action} text-ink-muted`}>
-                  Get paid early <span className="eyebrow text-accent">Capital · Soon</span>
-                </span>
+                <a href="/merchant/capital" className={`${action} hover:border-accent`}>
+                  Get paid early <span className="eyebrow text-ink-muted">Capital</span>
+                </a>
               </li>
             </ul>
           </section>
