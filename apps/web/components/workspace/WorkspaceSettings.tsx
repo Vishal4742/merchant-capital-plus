@@ -429,7 +429,12 @@ function Team({ role, selfId }: { role: Role; selfId: string }) {
       {members === null && !error && <p className="text-sm text-ink-muted">Loading…</p>}
       {members && (
         <ul className="grid divide-y divide-hairline">
-          {members.map((m) => (
+          {members.map((m) => {
+            // the last Owner can't be demoted or removed (the server refuses it too): say so instead of offering it
+            const lastOwner = m.role === "owner" && members.filter((x) => x.role === "owner").length === 1;
+            const locked = !owner || lastOwner;
+            const why = !owner ? "Only an Owner can change roles." : lastOwner ? "A workspace needs at least one Owner. Make someone else an Owner first." : undefined;
+            return (
             <li key={m.principalId} className="flex flex-wrap items-center justify-between gap-3 py-3">
               <div className="grid min-w-0 gap-0.5">
                 <span className="break-all text-sm text-ink">{m.email ?? (m.wallets[0] ? getAddress(m.wallets[0]) : "Privy account")}{m.principalId === selfId && " (you)"}</span>
@@ -441,13 +446,17 @@ function Team({ role, selfId }: { role: Role; selfId: string }) {
                   id={`role-${m.principalId}`}
                   className={`${field} h-10 w-auto`}
                   value={m.role}
-                  disabled={!owner}
-                  title={owner ? undefined : "Only an Owner can change roles."}
+                  disabled={locked}
+                  title={why}
+                  aria-describedby={lastOwner && owner ? `last-owner-${m.principalId}` : undefined}
                   onChange={(e) => void act(() => api(`/api/v2/business/members/${encodeURIComponent(m.principalId)}`, { method: "PATCH", body: { role: e.target.value, idempotencyKey: crypto.randomUUID() } }))}
                 >
                   {(["owner", "operator", "viewer"] as Role[]).map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
                 </select>
-                {owner && (
+                {owner && lastOwner && (
+                  <span id={`last-owner-${m.principalId}`} className="text-xs text-ink-muted">Last Owner: add another Owner before changing this role.</span>
+                )}
+                {owner && !lastOwner && (
                   <button
                     type="button"
                     className="min-h-10 cursor-pointer px-2 text-sm font-medium text-critical underline underline-offset-4"
@@ -458,7 +467,8 @@ function Team({ role, selfId }: { role: Role; selfId: string }) {
                 )}
               </div>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
       {owner ? (
