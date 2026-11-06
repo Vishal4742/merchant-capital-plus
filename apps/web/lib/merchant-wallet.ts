@@ -6,7 +6,6 @@
 import {
   BaseError,
   ContractFunctionRevertedError,
-  HttpRequestError,
   TimeoutError,
   UserRejectedRequestError,
   createPublicClient,
