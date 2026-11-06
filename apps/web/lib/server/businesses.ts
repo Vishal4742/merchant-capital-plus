@@ -5,7 +5,7 @@
 // (R1-7, R2-6). Idempotency is a plain INSERT into wf_idempotency in the same statement; a 23505 on its primary key is
 // read back: same request hash → the stored answer, different → 409 (R2-4).
 import { query } from "./db.ts";
-import { HttpError, textField } from "./http.ts";
+import { HttpError, sharedRateLimit, textField } from "./http.ts";
 import { Forbidden, concurrencyConflict, notFound, requireScope, type AuthContext, type Role } from "./identity.ts";
 import { newId, sha256 } from "./auth-sessions.ts";
 
@@ -17,15 +17,27 @@ export interface Business {
 }
 export interface Member {
   principalId: string;
-  email: string | null;
-  wallets: string[];
+  you: boolean;
+  label: string; // what every member sees: a masked email or a short wallet (review M2)
+  email: string | null; // only on your own row
+  wallets: string[]; // only on your own row
   role: Role;
   since: number;
+}
+
+/** A member as other members see them: the email's first two characters and its domain, or a short wallet. */
+function memberLabel(email: string | null, wallets: string[]): string {
+  if (email) {
+    const at = email.lastIndexOf("@");
+    return at > 0 ? `${email.slice(0, Math.min(2, at))}...${email.slice(at)}` : "Privy account";
+  }
+  return wallets[0] ? `${wallets[0].slice(0, 6)}...${wallets[0].slice(-4)}` : "Privy account";
 }
 
 const ROLES: readonly Role[] = ["owner", "operator", "viewer"];
 const LAST_OWNER = "A workspace needs at least one Owner. Make someone else an Owner first.";
 const IDEM_KEY = /^[A-Za-z0-9_.:-]{1,255}$/;
+const ADDS_PER_MINUTE = 10; // per Owner (review M2)
 
 /** Sorted-key JSON, SHA-256 (FR-AUTH-4 engineering choice): the canonical request hash. */
 export function requestHash(value: unknown): string {
@@ -158,7 +170,9 @@ export async function setActiveBusiness(ctx: AuthContext, businessId: unknown): 
   if (rows.length === 0) throw notFound();
 }
 
-/** Team list (account:read): every member's role, verified email and Privy-verified wallets. */
+/** Team list (account:read): every member's role and a masked label. Your own row also carries your verified email
+ *  and Privy-verified wallets; another member's never do (review M2: adding someone by one public wallet must not
+ *  reveal their email and every other wallet they linked). */
 export async function listMembers(ctx: AuthContext): Promise<Member[]> {
   requireScope(ctx, "account:read");
   const rows = await query<{ id: string; email: string | null; role: Role; created_at: string; wallets: string[] | null }>(
@@ -167,7 +181,11 @@ export async function listMembers(ctx: AuthContext): Promise<Member[]> {
      FROM wf_memberships m JOIN wf_principals p ON p.id = m.principal_id WHERE m.business_id = $1 ORDER BY m.created_at, p.id`,
     [ctx.businessId],
   );
-  return rows.map((r) => ({ principalId: r.id, email: r.email, wallets: r.wallets ?? [], role: r.role, since: Number(r.created_at) }));
+  return rows.map((r) => {
+    const you = r.id === ctx.principalId;
+    const wallets = r.wallets ?? [];
+    return { principalId: r.id, you, label: memberLabel(r.email, wallets), email: you ? r.email : null, wallets: you ? wallets : [], role: r.role, since: Number(r.created_at) };
+  });
 }
 
 // The actor CTE every member-management statement starts with (R1-7, R2-6): the caller's own Owner membership, locked.
@@ -193,6 +211,8 @@ export async function addMember(ctx: AuthContext, input: { wallet?: unknown; ema
   const wallet = typeof input.wallet === "string" && /^0x[0-9a-fA-F]{40}$/.test(input.wallet) ? input.wallet.toLowerCase() : null;
   const email = !wallet && typeof input.email === "string" && input.email.length <= 254 && /^[^\s@]+@[^\s@]+$/.test(input.email) ? input.email.toLowerCase() : null;
   if (!wallet && !email) throw new HttpError(400, "Give the wallet or the email the person signs in with.");
+  // each lookup tells an Owner whether that wallet/email has signed up, so lookups are limited (review M2)
+  await sharedRateLimit(`members-add:${ctx.principalId}`, ADDS_PER_MINUTE, 60_000, "closed");
   const [target] = wallet
     ? await query<{ id: string }>("SELECT principal_id AS id FROM wf_principal_wallets WHERE address = $1 ORDER BY updated_at DESC LIMIT 1", [wallet])
     : await query<{ id: string }>("SELECT id FROM wf_principals WHERE lower(email) = $1 ORDER BY last_sign_in_at DESC LIMIT 1", [email]);

@@ -18,7 +18,7 @@ interface Me {
   businesses: { id: string; displayName: string; timezone: string; role: Role }[];
   active: { id: string; role: Role } | null;
 }
-interface Member { principalId: string; email: string | null; wallets: string[]; role: Role; since: number }
+interface Member { principalId: string; you: boolean; label: string; email: string | null; wallets: string[]; role: Role; since: number }
 interface Policy { version: number; chainId: number; token: string; recipient: string; policyHash: string; approvalWallet: string; v1Obligations: boolean; approvedAt: number }
 interface Proof { nonce: string; message: string; recipient: string; version: number; policyHash: string; token: string; chainId: number }
 
@@ -134,7 +134,7 @@ export function WorkspaceSettings() {
       {active && (
         <>
           <ReceivingWallet role={active.role} principalWallets={me.principal.wallets} />
-          <Team role={active.role} selfId={me.principal.id} />
+          <Team role={active.role} />
         </>
       )}
     </div>
@@ -395,7 +395,7 @@ function PolicyFacts({ policy }: { policy: Policy }) {
   );
 }
 
-function Team({ role, selfId }: { role: Role; selfId: string }) {
+function Team({ role }: { role: Role }) {
   const [members, setMembers] = useState<Member[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [who, setWho] = useState("");
@@ -438,11 +438,12 @@ function Team({ role, selfId }: { role: Role; selfId: string }) {
             return (
             <li key={m.principalId} className="flex flex-wrap items-center justify-between gap-3 py-3">
               <div className="grid min-w-0 gap-0.5">
-                <span className="break-all text-sm text-ink">{m.email ?? (m.wallets[0] ? getAddress(m.wallets[0]) : "Privy account")}{m.principalId === selfId && " (you)"}</span>
+                {/* other members show a masked label only (review M2); your own row shows your email or wallet */}
+                <span className="break-all text-sm text-ink">{m.you ? (m.email ?? (m.wallets[0] ? getAddress(m.wallets[0]) : m.label)) : m.label}{m.you && " (you)"}</span>
                 <span className="text-xs text-ink-muted">since {new Date(m.since).toLocaleDateString()}</span>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <label className="sr-only" htmlFor={`role-${m.principalId}`}>Role of {m.email ?? m.principalId}</label>
+                <label className="sr-only" htmlFor={`role-${m.principalId}`}>Role of {m.label}</label>
                 <select
                   id={`role-${m.principalId}`}
                   className={`${field} h-10 w-auto`}

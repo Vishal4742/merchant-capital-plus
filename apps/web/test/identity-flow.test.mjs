@@ -204,6 +204,27 @@ test("round 2 (M1): a replayed member write gets its stored answer; the same key
   assert.deepEqual([rm2.status, rm2.body], [rm.status, rm.body], "removal replay: the stored answer, not 404");
 });
 
+test("round 2 (M2): the team list shows a member's email and linked wallets only to that member; adds are rate-limited", async () => {
+  const [ua, ub] = [user("alice"), user("bobby", { wallets: 2 })];
+  const a = await signIn(ua);
+  const b = await signIn(ub);
+  const biz = (await create(a.cookie)).body.id;
+  assert.equal((await addMember(a.cookie, { wallet: ub.accounts[0].address, role: "viewer", idempotencyKey: "v1" })).status, 201);
+  await call(activeRoute.POST, "POST", "/api/v2/me/active-business", { cookie: b.cookie, body: { businessId: biz } });
+  const list = async (cookie) => (await call(membersRoute.GET, "GET", "/api/v2/business/members", { cookie, origin: null })).body.members;
+  const byOwner = await list(a.cookie);
+  const self = byOwner.find((m) => m.you), other = byOwner.find((m) => !m.you);
+  assert.deepEqual([self.email, self.wallets], ["alice@example.com", [ua.accounts[0].address.toLowerCase()]], "your own details");
+  assert.deepEqual([other.email, other.wallets, other.label], [null, [], "bo...@example.com"], "another member: a masked label only");
+  assert.ok(!JSON.stringify(byOwner).includes(ub.accounts[1].address.toLowerCase()), "no other linked wallet leaks");
+  const byViewer = await list(b.cookie);
+  assert.deepEqual(byViewer.find((m) => !m.you), { ...byViewer.find((m) => !m.you), email: null, wallets: [], label: "al...@example.com" });
+  // adds: at most 10 a minute per Owner (enumeration of who has signed up is slowed; known/unknown still differ)
+  const statuses = [];
+  for (let i = 0; i < 11; i++) statuses.push((await addMember(a.cookie, { email: `nobody${i}@example.com`, role: "viewer", idempotencyKey: `n${i}` })).status);
+  assert.deepEqual(statuses, [404, 404, 404, 404, 404, 404, 404, 404, 404, 429, 429], "the add above counted: 10 a minute");
+});
+
 test("10 (race): two Owners demoting themselves at once on one connection still leave exactly one Owner", async () => {
   const [ua, ub] = [user("alice"), user("bob")];
   const a = await signIn(ua), b = await signIn(ub);
