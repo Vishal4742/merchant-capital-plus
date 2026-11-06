@@ -54,7 +54,7 @@ docs/PITCH.md
 !/PIPELINE.md
 !/README.md
 !/WHITECHAIN_FEEDBACK.md
-# Pixa wallet source: a reference for patterns only, no code copied (CON-1 Start Fresh)
+# Pixa wallet source (MIT): a local reference copy. The parts adapted into packages/mcp are credited in README and packages/mcp/THIRD_PARTY_LICENSES
 /Pixa-main/
 # Pre-git snapshot of this repo that the WhiteFlow sessions still work in
 /merchant-capital-plus-main/
