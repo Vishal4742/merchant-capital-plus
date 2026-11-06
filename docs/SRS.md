@@ -248,7 +248,7 @@ Priority: **M** = must (never cut), **S** = should, **C** = could (first to cut)
 ## 6. Acceptance scenarios (demo script = acceptance test)
 | ID | Scenario | Pass when |
 |---|---|---|
-| AT-1 | A customer with 0 WBT pays a 25 USDT shop sale | Explorer shows one tx: fee to the relayer recipient, rest to the merchant; webhook received |
+| AT-1 | A customer with 0 WBT pays a 25 USDT shop sale | Explorer shows one tx: fee to the relayer recipient, rest to the merchant; the checkout and receipt show Paid (the signed webhook is proven at AT-14) |
 | AT-2 | The merchant refunds the sale | Customer receives USDT; investors untouched |
 | AT-3 | An investor funds a 10 USDT advance (cap 11, holdback 20%) | Merchant receives 10; investor holds 11,000,000 units |
 | AT-4 | A 5 USDT sale after AT-3 | 1 USDT to the investor in the same tx; outstanding falls from 11 to 10 |
