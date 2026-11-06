@@ -561,3 +561,73 @@ test("removeVoucher: the payer drops the code from an open checkout, never while
   assert.equal(await removeVoucher(paid, t + 2000), false, "a paid checkout keeps its code");
   assert.equal(await removeVoucher("ses_no_hold", t), false);
 });
+
+// Batch 018 (claude-research 09:16, AT-12's Arkiv half): a failed mirror is stored and visible, never silent, and the
+// merchant can retry it with POST /api/v1/vouchers/{id}/publish.
+const { POST: publish } = await import("../app/api/v1/vouchers/[id]/publish/route.ts");
+const publishAs = (id, merchant = MERCHANT) => publish(req("POST", `/api/v1/vouchers/${id}/publish`, { headers: signedIn(merchant) }), params({ id }));
+const TX = `0x${"cd".repeat(32)}`;
+
+test("a failed mirror is stored with a secret-free reason and shows as not_on_arkiv", async () => {
+  arkiv.fail = new Error(`HTTP request failed. URL: https://rpc.example/${ACCESS_KEY}`);
+  const spy = mock.method(console, "error", () => {});
+  let data;
+  try {
+    data = (await newVoucher()).data;
+  } finally {
+    spy.mock.restore();
+  }
+  assert.equal(data.arkiv_status, "not_on_arkiv");
+  assert.match(data.arkiv_error, /^Arkiv refused or timed out: /);
+  assert.ok(!data.arkiv_error.includes(ACCESS_KEY), "the access key never reaches the stored reason");
+  const listed = (await (await list(req("GET", "/api/v1/vouchers", { headers: signedIn() }))).json()).vouchers[0];
+  assert.deepEqual([listed.arkiv_status, listed.arkiv_error], ["not_on_arkiv", data.arkiv_error], "visible in the list too");
+});
+
+test("without VOUCHER_HASH_SECRET the stored reason says so", async () => {
+  delete process.env.VOUCHER_HASH_SECRET;
+  const spy = mock.method(console, "error", () => {});
+  let data;
+  try {
+    data = (await newVoucher()).data;
+  } finally {
+    spy.mock.restore();
+  }
+  assert.equal(data.arkiv_error, "VOUCHER_HASH_SECRET isn't set on this server.");
+});
+
+test("publish retries a failed mirror and records the entity key and the create tx", async () => {
+  arkiv.fail = new Error("rabdi down");
+  const spy = mock.method(console, "error", () => {});
+  let id;
+  try {
+    id = (await newVoucher()).data.id;
+  } finally {
+    spy.mock.restore();
+  }
+  arkiv.fail = null;
+  const res = await publishAs(id);
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.deepEqual([data.arkiv_status, data.arkiv_entity_key, data.arkiv_tx_hash, data.arkiv_error], ["on_arkiv", ENTITY_KEY, TX, null]);
+  assert.equal(arkiv.calls.length, 2, "one failed write, one good one");
+});
+
+test("publish on a voucher already on Arkiv writes nothing", async () => {
+  const { data } = await newVoucher();
+  assert.equal(data.arkiv_status, "on_arkiv");
+  assert.equal(data.arkiv_tx_hash, TX);
+  const res = await publishAs(data.id);
+  assert.equal(res.status, 200);
+  assert.equal(arkiv.calls.length, 1, "no second entity");
+});
+
+test("publish: dashboard only, owner only (404), and an expired voucher is refused (409)", async () => {
+  const { data } = await newVoucher();
+  assert.equal((await publish(req("POST", `/api/v1/vouchers/${data.id}/publish`), params({ id: data.id }))).status, 401);
+  assert.equal((await publishAs(data.id, OTHER_MERCHANT)).status, 404);
+  assert.equal((await publishAs("vch_unknown")).status, 404);
+  const { query } = await import("../lib/server/db.ts");
+  await query("UPDATE app_gw_vouchers SET expires_at = 1, arkiv_entity_key = NULL WHERE id = $1", [data.id]);
+  assert.equal((await publishAs(data.id)).status, 409);
+});

@@ -26,6 +26,8 @@ export interface Voucher {
   minAmount: bigint | null;
   active: boolean;
   arkivEntityKey: string | null;
+  arkivTxHash: string | null; // the Arkiv create tx (batch 018)
+  arkivError: string | null; // why the last mirror attempt failed: a fixed, secret-free reason
   createdAt: number;
 }
 export type ApplyResult = { ok: true; discount: bigint; usdtAmount: bigint } | { ok: false; reason: string };
@@ -53,8 +55,8 @@ export const FREEZE_MS = 20 * 60_000;
 const BEING_PAID = "This checkout is being paid.";
 const PAID_ONCE = "This payment link has already been paid.";
 
-type VoucherRow = { id: string; merchant: string; code: string; kind: VoucherKind; value: string; expires_at: string; max_redemptions: number; times_redeemed: number; min_amount: string | null; active: boolean; arkiv_entity_key: string | null; created_at: string };
-const COLUMNS = "id, merchant, code, kind, value::text, expires_at::text, max_redemptions, times_redeemed, min_amount::text, active, arkiv_entity_key, created_at::text";
+type VoucherRow = { id: string; merchant: string; code: string; kind: VoucherKind; value: string; expires_at: string; max_redemptions: number; times_redeemed: number; min_amount: string | null; active: boolean; arkiv_entity_key: string | null; arkiv_tx_hash: string | null; arkiv_error: string | null; created_at: string };
+const COLUMNS = "id, merchant, code, kind, value::text, expires_at::text, max_redemptions, times_redeemed, min_amount::text, active, arkiv_entity_key, arkiv_tx_hash, arkiv_error, created_at::text";
 const fromRow = (r: VoucherRow): Voucher => ({
   id: r.id,
   merchant: r.merchant,
@@ -67,6 +69,8 @@ const fromRow = (r: VoucherRow): Voucher => ({
   minAmount: r.min_amount === null ? null : BigInt(r.min_amount),
   active: r.active,
   arkivEntityKey: r.arkiv_entity_key,
+  arkivTxHash: r.arkiv_tx_hash,
+  arkivError: r.arkiv_error,
   createdAt: Number(r.created_at),
 });
 
@@ -83,7 +87,10 @@ export const voucherJson = (v: Voucher) => ({
   times_redeemed: v.timesRedeemed,
   min_amount: v.minAmount === null ? null : usdt(v.minAmount),
   active: v.active,
+  arkiv_status: v.arkivEntityKey ? ("on_arkiv" as const) : ("not_on_arkiv" as const),
   arkiv_entity_key: v.arkivEntityKey,
+  arkiv_tx_hash: v.arkivTxHash,
+  arkiv_error: v.arkivEntityKey ? null : v.arkivError,
   created_at: new Date(v.createdAt).toISOString(),
 });
 
@@ -128,22 +135,48 @@ export function voucherInput(body: Record<string, unknown>, now = Date.now()) {
   return { code, kind: kind as VoucherKind, value, expiresAt, maxRedemptions, minAmount };
 }
 
-/** Writes the Arkiv mirror; null (and a redacted log line) when it isn't configured or the write fails. */
-async function mirrorToArkiv(v: Voucher): Promise<string | null> {
+type Mirror = { entityKey: string; txHash: string | null } | { error: string };
+const MAX_REASON = 200;
+
+/** Writes the Arkiv mirror and returns the outcome; a failure's reason is a fixed string or the redacted SDK error. */
+async function mirrorToArkiv(v: Voucher): Promise<Mirror> {
   const secret = process.env.VOUCHER_HASH_SECRET;
-  if (!secret) {
-    console.error("voucher not mirrored to Arkiv: VOUCHER_HASH_SECRET is missing");
-    return null;
+  if (!secret) return { error: "VOUCHER_HASH_SECRET isn't set on this server." };
+  let writer;
+  try {
+    writer = arkivClients().writer;
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Arkiv isn't configured on this server." }; // arkivClients' own messages name no value
   }
   try {
-    const { writer } = arkivClients();
     const values = { type: VOUCHER_TYPE, merchant: v.merchant, code_hash: codeHash(v.merchant, v.code, secret), kind: v.kind, value: formatValue(v.kind, v.value), expires_at: u64(BigInt(Math.floor(v.expiresAt / 1000))) }; // unix s, like the chain
-    const { entityKey } = await writer.createEntity(VoucherEntity, values, { expiration: ExpirationTime.atDate(new Date(v.expiresAt)) });
-    return entityKey;
+    const created = await writer.createEntity(VoucherEntity, values, { expiration: ExpirationTime.atDate(new Date(v.expiresAt)) });
+    return { entityKey: created.entityKey, txHash: typeof created.txHash === "string" ? created.txHash : null };
   } catch (err) {
-    console.error(`voucher not mirrored to Arkiv: ${redactArkivError(err, process.env.ARKIV_ACCESS_KEY)}`);
-    return null;
+    return { error: `Arkiv refused or timed out: ${redactArkivError(err, process.env.ARKIV_ACCESS_KEY)}`.slice(0, MAX_REASON) };
   }
+}
+
+/** Stores a mirror attempt's outcome on the voucher (batch 018: never silent) and returns the updated voucher. */
+async function recordMirror(v: Voucher, mirror: Mirror, now: number): Promise<Voucher> {
+  if ("error" in mirror) {
+    console.error(`voucher ${v.id} not mirrored to Arkiv: ${mirror.error}`);
+    await query("UPDATE app_gw_vouchers SET arkiv_error = $2, arkiv_attempted_at = $3 WHERE id = $1", [v.id, mirror.error, now]);
+    return { ...v, arkivError: mirror.error };
+  }
+  await query("UPDATE app_gw_vouchers SET arkiv_entity_key = $2, arkiv_tx_hash = $3, arkiv_error = NULL, arkiv_attempted_at = $4 WHERE id = $1", [v.id, mirror.entityKey, mirror.txHash, now]);
+  return { ...v, arkivEntityKey: mirror.entityKey, arkivTxHash: mirror.txHash, arkivError: null };
+}
+
+/** The merchant's "Publish to Arkiv": retries the mirror of a voucher that isn't on Arkiv yet. Idempotent: a voucher
+ *  already on Arkiv is returned as is (no second entity). 404 for another merchant's id; 409 once it has expired. */
+export async function publishVoucher(merchant: Address, id: string, now = Date.now()): Promise<Voucher> {
+  const rows = await query<VoucherRow>(`SELECT ${COLUMNS} FROM app_gw_vouchers WHERE id = $1 AND merchant = $2`, [id, merchant.toLowerCase()]);
+  if (!rows[0]) throw new HttpError(404, "No such voucher.");
+  const voucher = fromRow(rows[0]);
+  if (voucher.arkivEntityKey) return voucher;
+  if (voucher.expiresAt <= now) throw new HttpError(409, "This voucher has expired, so it isn't published.");
+  return recordMirror(voucher, await mirrorToArkiv(voucher), now);
 }
 
 /** Creates the voucher (409 if the merchant already has the code), then mirrors it to Arkiv. */
@@ -155,10 +188,7 @@ export async function createVoucher(merchant: Address, input: ReturnType<typeof 
   );
   if (!rows[0]) throw new HttpError(409, `You already have a voucher with the code ${input.code}.`);
   const voucher = fromRow(rows[0]);
-  const entityKey = await mirrorToArkiv(voucher);
-  if (!entityKey) return voucher;
-  await query("UPDATE app_gw_vouchers SET arkiv_entity_key = $2 WHERE id = $1", [voucher.id, entityKey]);
-  return { ...voucher, arkivEntityKey: entityKey };
+  return recordMirror(voucher, await mirrorToArkiv(voucher), now);
 }
 
 export async function listVouchers(merchant: Address): Promise<Voucher[]> {
