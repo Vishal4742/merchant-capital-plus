@@ -247,13 +247,13 @@ export function Capital() {
         </div>
         <div className="lp-offer rv">
           <div className="head">
-            <span className="mono muted">Offer · revenue advance</span>
+            <span className="mono muted">Offer · invoice</span>
             <span className="tag">Open</span>
           </div>
           <div className="big num">
             1,000.00 <span className="mono muted">USDT now</span>
           </div>
-          <div className="num muted">Repay 1,100.00 · 20% of each sale · cost 100.00</div>
+          <div className="num muted">Customer pays 1,030.00 in 30 days · cost 30.00</div>
           <div className="lp-bar" aria-hidden="true">
             <i />
           </div>
