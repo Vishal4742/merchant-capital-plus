@@ -20,6 +20,8 @@ const USDT_MIN = 1_000_000n; // 1 USDT: the gateway's floor for a minimum order
 const USDT_MAX = 1_000_000_000n; // 1,000 USDT: the testnet cap per payment
 const CODE = /^[A-Z0-9_-]{3,32}$/;
 const HASH = /^0x[0-9a-fA-F]{64}$/;
+// longer than the Arkiv SDK's 180 s receipt wait, which a publish can sit in (lib/server/vouchers.ts PUBLISH_LEASE_MS)
+const PUBLISH_TIMEOUT_MS = 200_000;
 
 export type VoucherKind = "percent" | "fixed";
 export interface Voucher {
@@ -105,7 +107,7 @@ export const csvHref = (range: ReportRange) => `/api/v1/reports.csv?${rangeQuery
 export function moneyClient({ fetch: send = fetch }: Transport = {}) {
   // ponytail: repeats gatewayClient's call() so batch 010's client is untouched while the Developers screen is built
   // beside it; fold the two into one exported call at merge.
-  async function call(path: string, what: string, body?: unknown): Promise<unknown> {
+  async function call(path: string, what: string, body?: unknown, timeoutMs = TIMEOUT_MS): Promise<unknown> {
     let res: Response;
     try {
       res = await send(path, {
@@ -113,7 +115,7 @@ export function moneyClient({ fetch: send = fetch }: Transport = {}) {
         headers: { accept: "application/json", ...(body === undefined ? {} : { "content-type": "application/json" }) },
         body: body === undefined ? undefined : JSON.stringify(body),
         cache: "no-store",
-        signal: AbortSignal.timeout(TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch {
       throw new GatewayError(0, OFFLINE);
@@ -126,6 +128,11 @@ export function moneyClient({ fetch: send = fetch }: Transport = {}) {
   return {
     createVoucher: async (body: VoucherBody) => voucherOf(await call("/api/v1/vouchers", "Vouchers", body)),
     deactivateVoucher: async (id: string) => void (await call(`/api/v1/vouchers/${encodeURIComponent(id)}/deactivate`, "Vouchers", {})),
+    /** Retries the Arkiv mirror of a code that isn't on Arkiv (FR-GW-12, batch 028); arkivError says why it still isn't. */
+    publishVoucher: async (id: string) => {
+      const data = await call(`/api/v1/vouchers/${encodeURIComponent(id)}/publish`, "Vouchers", {}, PUBLISH_TIMEOUT_MS);
+      return { voucher: voucherOf(data), arkivError: nullable(record(data).arkiv_error, text) };
+    },
   };
 }
 
