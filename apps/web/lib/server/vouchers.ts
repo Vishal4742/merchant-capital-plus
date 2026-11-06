@@ -3,6 +3,7 @@
 // mirrored to Arkiv as mcplus.voucher.v1 with only an HMAC of the code (FR-ARK-4: no plain code, no personal data).
 import { createHmac } from "node:crypto";
 import { ExpirationTime } from "@arkiv-network/sdk";
+import { eq } from "@arkiv-network/sdk/query";
 import { defineSchema, str, u64 } from "@arkiv-network/sdk/schema";
 import { formatUnits, type Address } from "viem";
 import { arkivClients, redactArkivError } from "../arkiv.ts";
@@ -135,9 +136,10 @@ export function voucherInput(body: Record<string, unknown>, now = Date.now()) {
   return { code, kind: kind as VoucherKind, value, expiresAt, maxRedemptions, minAmount };
 }
 
-type Mirror = { entityKey: string; txHash: string | null } | { error: string; config?: boolean };
+type Mirror = { entityKey: string; txHash: string | null } | { error: string };
 const MAX_REASON = 200;
-const PUBLISH_LEASE_MS = 3 * 60_000; // longer than one Arkiv write including its receipt wait
+// outlasts one attempt: the existing-entity query plus the SDK's 180 s receipt wait (021 review M1: 3 min was a tie)
+const PUBLISH_LEASE_MS = 5 * 60_000;
 
 /** Why this server can't mirror vouchers to Arkiv at all, or null: checks only that the settings exist (names, never
  *  values). Shown on every read of a voucher that isn't on Arkiv, so a misconfigured server is visible at once. */
@@ -151,36 +153,47 @@ export function arkivConfigProblem(env: Record<string, string | undefined> = pro
 /** Writes the Arkiv mirror and returns the outcome; a failure's reason is a fixed string or the redacted SDK error. */
 async function mirrorToArkiv(v: Voucher): Promise<Mirror> {
   const problem = arkivConfigProblem();
-  if (problem) return { error: problem, config: true };
+  if (problem) return { error: problem };
   const secret = process.env.VOUCHER_HASH_SECRET as string;
-  let writer;
+  let clients;
   try {
-    writer = arkivClients().writer;
+    clients = arkivClients();
   } catch (err) {
     // arkivClients' own messages name no value; redacted and capped anyway (batch 018 review L2)
     const reason = err instanceof Error ? err.message : "Arkiv isn't configured on this server.";
-    return { error: redactArkivError(reason, process.env.ARKIV_ACCESS_KEY).slice(0, MAX_REASON), config: true };
+    return { error: redactArkivError(reason, process.env.ARKIV_ACCESS_KEY).slice(0, MAX_REASON) };
   }
+  const hash = codeHash(v.merchant, v.code, secret);
   try {
-    const values = { type: VOUCHER_TYPE, merchant: v.merchant, code_hash: codeHash(v.merchant, v.code, secret), kind: v.kind, value: formatValue(v.kind, v.value), expires_at: u64(BigInt(Math.floor(v.expiresAt / 1000))) }; // unix s, like the chain
-    const created = await writer.createEntity(VoucherEntity, values, { expiration: ExpirationTime.atDate(new Date(v.expiresAt)) });
+    // 021 review M1: an earlier write that timed out may still have landed: adopt it rather than write a second entity.
+    // ownedBy: code_hash is public on Arkiv, so only our writer's entities count. A failed query writes nothing.
+    // ponytail: a timed-out tx landing after this query still duplicates; hold the lease on a timeout if that's seen.
+    const found = await clients.reader.select({ $key: true }).from(VoucherEntity).where(eq("code_hash", hash)).ownedBy(clients.address).limit(1).fetch();
+    const existing = found.entities[0]?.$key;
+    if (existing) return { entityKey: existing, txHash: null };
+    const values = { type: VOUCHER_TYPE, merchant: v.merchant, code_hash: hash, kind: v.kind, value: formatValue(v.kind, v.value), expires_at: u64(BigInt(Math.floor(v.expiresAt / 1000))) }; // unix s, like the chain
+    const created = await clients.writer.createEntity(VoucherEntity, values, { expiration: ExpirationTime.atDate(new Date(v.expiresAt)) });
     return { entityKey: created.entityKey, txHash: typeof created.txHash === "string" ? created.txHash : null };
   } catch (err) {
     return { error: `Arkiv refused or timed out: ${redactArkivError(err, process.env.ARKIV_ACCESS_KEY)}`.slice(0, MAX_REASON) };
   }
 }
 
-/** Stores a mirror attempt's outcome on the voucher (batch 018: never silent) and returns the updated voucher. */
-async function recordMirror(v: Voucher, mirror: Mirror): Promise<Voucher> {
+// the attempt is over: frees the lease only if this attempt still holds it (021 review M1: a slow attempt whose lease
+// lapsed must not free the next attempt's)
+const releaseLease = (param: string) => `arkiv_attempted_at = CASE WHEN arkiv_attempted_at = ${param} THEN NULL ELSE arkiv_attempted_at END`;
+
+/** Stores a mirror attempt's outcome on the voucher (batch 018: never silent) and returns the updated voucher. `lease`
+ *  is the arkiv_attempted_at this attempt set, or null when nothing was attempted. */
+async function recordMirror(v: Voucher, mirror: Mirror, lease: number | null): Promise<Voucher> {
   if ("error" in mirror) {
     console.error(`voucher ${v.id} not mirrored to Arkiv: ${mirror.error}`);
-    // a missing setting is the server's state, not this voucher's: shown on every read (arkivConfigProblem), not stored
-    if (mirror.config) return { ...v, arkivError: mirror.error };
-    // the attempt is over: record its reason and release the lease (arkiv_attempted_at = an attempt in progress)
-    await query("UPDATE app_gw_vouchers SET arkiv_error = $2, arkiv_attempted_at = NULL WHERE id = $1", [v.id, mirror.error]);
+    // no lease = a missing setting: the server's state, not this voucher's, shown on every read (arkivConfigProblem)
+    if (lease === null) return { ...v, arkivError: mirror.error };
+    await query(`UPDATE app_gw_vouchers SET arkiv_error = $2, ${releaseLease("$3")} WHERE id = $1 AND arkiv_entity_key IS NULL`, [v.id, mirror.error, lease]);
     return { ...v, arkivError: mirror.error };
   }
-  await query("UPDATE app_gw_vouchers SET arkiv_entity_key = $2, arkiv_tx_hash = $3, arkiv_error = NULL, arkiv_attempted_at = NULL WHERE id = $1", [v.id, mirror.entityKey, mirror.txHash]);
+  await query(`UPDATE app_gw_vouchers SET arkiv_entity_key = $2, arkiv_tx_hash = $3, arkiv_error = NULL, ${releaseLease("$4")} WHERE id = $1`, [v.id, mirror.entityKey, mirror.txHash, lease]);
   return { ...v, arkivEntityKey: mirror.entityKey, arkivTxHash: mirror.txHash, arkivError: null };
 }
 
@@ -202,20 +215,21 @@ export async function publishVoucher(merchant: Address, id: string, now = Date.n
     [id, now, now - PUBLISH_LEASE_MS],
   );
   if (leased.length === 0) throw new HttpError(409, "Publishing to Arkiv already, try again in a minute.");
-  return recordMirror(voucher, await mirrorToArkiv(voucher));
+  return recordMirror(voucher, await mirrorToArkiv(voucher), now);
 }
 
 /** Creates the voucher (409 if the merchant already has the code), then mirrors it to Arkiv. */
 export async function createVoucher(merchant: Address, input: ReturnType<typeof voucherInput>, now = Date.now()): Promise<Voucher> {
+  const lease = arkivConfigProblem() ? null : now;
   const rows = await query<VoucherRow>(
     `INSERT INTO app_gw_vouchers (id, merchant, code, kind, value, expires_at, max_redemptions, min_amount, created_at, arkiv_attempted_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (merchant, code) DO NOTHING RETURNING ${COLUMNS}`,
     // create's own mirror attempt holds the publish lease from the start (018 review M1); none when nothing will be tried
-    [newId("vch"), merchant.toLowerCase(), input.code, input.kind, input.value.toString(), input.expiresAt, input.maxRedemptions, input.minAmount?.toString() ?? null, now, arkivConfigProblem() ? null : now],
+    [newId("vch"), merchant.toLowerCase(), input.code, input.kind, input.value.toString(), input.expiresAt, input.maxRedemptions, input.minAmount?.toString() ?? null, now, lease],
   );
   if (!rows[0]) throw new HttpError(409, `You already have a voucher with the code ${input.code}.`);
   const voucher = fromRow(rows[0]);
-  return recordMirror(voucher, await mirrorToArkiv(voucher));
+  return recordMirror(voucher, await mirrorToArkiv(voucher), lease);
 }
 
 export async function listVouchers(merchant: Address): Promise<Voucher[]> {

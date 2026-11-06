@@ -168,7 +168,15 @@ async function deliver(endpoints: Endpoint[], type: EventType, data: object, now
   }
   // the rows are recorded: an inline attempt that throws (a DB blip on its status UPDATE) leaves its delivery pending for
   // dispatch instead of failing the enqueue, which would make the caller re-enqueue (claude-frontend F2)
-  return Promise.all(ids.map((id) => attemptDelivery(id, now).catch(() => null)));
+  return Promise.all(
+    ids.map((id) =>
+      attemptDelivery(id, now).catch((err: unknown) => {
+        // the name only: a message can hold the merchant's URL (021 review L2)
+        console.error(`webhook delivery ${id}: inline attempt failed (${err instanceof Error ? err.name : typeof err}), left for dispatch`);
+        return null;
+      }),
+    ),
+  );
 }
 
 /** Records the event for every endpoint of the merchant and makes the first attempt inline. `eventId` (events.ts derives
