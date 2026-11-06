@@ -10,20 +10,36 @@ const ACCESS_KEY = "ak_test_secret/access+key";
 const HASH_SECRET = "voucher-hash-secret-for-tests";
 const ENTITY_KEY = `0x${"ab".repeat(32)}`;
 
-// the Arkiv writer: records every createEntity call; arkiv.fail makes the write throw
-const arkiv = { calls: [], fail: null };
+// the Arkiv writer: records every createEntity call; arkiv.fail makes the write throw. The reader answers the
+// mirror's "already on Arkiv?" query with arkiv.existing (batch 022); arkiv.queryFail makes it throw; arkiv.clientFail
+// makes arkivClients itself throw; arkiv.during runs inside the write (another attempt acting meanwhile).
+const arkiv = { calls: [], fail: null, existing: [], queries: 0, queryFail: null, clientFail: null, during: null };
+const queryChain = () => {
+  const chain = { from: () => chain, where: () => chain, ownedBy: () => chain, limit: () => chain };
+  chain.fetch = async () => {
+    arkiv.queries += 1;
+    if (arkiv.queryFail) throw arkiv.queryFail;
+    return { entities: arkiv.existing };
+  };
+  return chain;
+};
 mock.module("../lib/arkiv.ts", {
   namedExports: {
-    arkivClients: () => ({
-      address: "0x3333333333333333333333333333333333333333",
-      writer: {
-        createEntity: async (...args) => {
-          arkiv.calls.push(args);
-          if (arkiv.fail) throw arkiv.fail;
-          return { entityKey: ENTITY_KEY, txHash: `0x${"cd".repeat(32)}`, expiresAt: 123n };
+    arkivClients: () => {
+      if (arkiv.clientFail) throw arkiv.clientFail;
+      return {
+        address: "0x3333333333333333333333333333333333333333",
+        reader: { select: () => queryChain() },
+        writer: {
+          createEntity: async (...args) => {
+            arkiv.calls.push(args);
+            if (arkiv.during) await arkiv.during();
+            if (arkiv.fail) throw arkiv.fail;
+            return { entityKey: ENTITY_KEY, txHash: `0x${"cd".repeat(32)}`, expiresAt: 123n };
+          },
         },
-      },
-    }),
+      };
+    },
     redactArkivError: (err, key) => (err instanceof Error ? err.message : String(err)).replaceAll(key, "<access-key>"),
   },
 });
@@ -53,6 +69,7 @@ beforeEach(async () => {
   await resetDb();
   arkiv.calls.length = 0;
   arkiv.fail = null;
+  Object.assign(arkiv, { existing: [], queries: 0, queryFail: null, clientFail: null, during: null });
   process.env.VOUCHER_HASH_SECRET = HASH_SECRET;
   process.env.ARKIV_ACCESS_KEY = ACCESS_KEY;
   process.env.ARKIV_PRIVATE_KEY = "not-a-key-arkivClients-is-mocked"; // arkivConfigProblem checks presence only
@@ -660,7 +677,7 @@ test("batch 021 (018 review M1): two publishes at once write one entity; the sec
   assert.equal(blocked.status, 409);
   assert.match(blocked.message, /already/);
   const before = arkiv.calls.length;
-  const ok = await publishVoucher(MERCHANT, id, now + 3 * 60_000 + 1); // the lease lapsed
+  const ok = await publishVoucher(MERCHANT, id, now + 5 * 60_000 + 1); // the lease lapsed (5 min since batch 022)
   assert.equal(ok.arkivEntityKey, ENTITY_KEY);
   assert.equal(arkiv.calls.length, before + 1, "exactly one more write");
 });
@@ -678,4 +695,94 @@ test("batch 021 (018 review L1): a deactivated voucher isn't published", async (
   await deactivate(req("POST", `/api/v1/vouchers/${id}/deactivate`, { headers: signedIn() }), params({ id }));
   const res = await publishAs(id);
   assert.equal(res.status, 409);
+});
+
+// Batch 022 (021 review M1/L1): the mirror never makes a second entity, and a lease is only ever released by its holder.
+async function failedVoucher() {
+  arkiv.fail = new Error("rabdi down");
+  const spy = mock.method(console, "error", () => {});
+  try {
+    return (await newVoucher()).data.id;
+  } finally {
+    spy.mock.restore();
+    arkiv.fail = null;
+  }
+}
+
+test("batch 022 M1: an entity of ours with this code_hash on Arkiv is adopted, with no second write", async () => {
+  const id = await failedVoucher(); // e.g. a write that timed out but whose tx landed later
+  const writes = arkiv.calls.length;
+  const LANDED = `0x${"ef".repeat(32)}`;
+  arkiv.existing = [{ $key: LANDED }]; // select() rows are flat, keyed by the selection
+  const res = await publishAs(id);
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.deepEqual([data.arkiv_status, data.arkiv_entity_key, data.arkiv_tx_hash, data.arkiv_error], ["on_arkiv", LANDED, null, null]);
+  assert.equal(arkiv.calls.length, writes, "no createEntity call");
+  const { query } = await import("../lib/server/db.ts");
+  assert.equal((await query("SELECT arkiv_attempted_at FROM app_gw_vouchers WHERE id = $1", [id]))[0].arkiv_attempted_at, null, "lease released");
+});
+
+test("batch 022 M1: the Arkiv query failing stores a reason and writes nothing", async () => {
+  const id = await failedVoucher();
+  const writes = arkiv.calls.length;
+  arkiv.queryFail = new Error(`HTTP request failed. URL: https://rpc.example/${ACCESS_KEY}`);
+  const spy = mock.method(console, "error", () => {});
+  let res;
+  try {
+    res = await publishAs(id);
+  } finally {
+    spy.mock.restore();
+  }
+  const data = await res.json();
+  assert.equal(data.arkiv_status, "not_on_arkiv");
+  assert.match(data.arkiv_error, /^Arkiv refused or timed out: /);
+  assert.ok(!data.arkiv_error.includes(ACCESS_KEY));
+  assert.equal(arkiv.calls.length, writes, "no write when we can't tell whether an entity exists");
+});
+
+test("batch 022 M1: an attempt that outlived its lease doesn't clear the next attempt's lease", async () => {
+  const id = await failedVoucher();
+  const { publishVoucher } = await import("../lib/server/vouchers.ts");
+  const { query } = await import("../lib/server/db.ts");
+  const t0 = Date.now() + 10 * 60_000;
+  const NEXT = t0 + 6 * 60_000; // the slow attempt's lease lapsed and another publish took it meanwhile
+  arkiv.during = () => query("UPDATE app_gw_vouchers SET arkiv_attempted_at = $2 WHERE id = $1", [id, NEXT]);
+  arkiv.fail = new Error("receipt wait timed out");
+  const spy = mock.method(console, "error", () => {});
+  try {
+    await publishVoucher(MERCHANT, id, t0);
+  } finally {
+    spy.mock.restore();
+  }
+  const [row] = await query("SELECT arkiv_attempted_at::text AS at FROM app_gw_vouchers WHERE id = $1", [id]);
+  assert.equal(row.at, String(NEXT), "the other attempt still holds its lease");
+});
+
+test("batch 022: the lease outlasts the SDK's 180 s receipt wait", async () => {
+  const id = await failedVoucher();
+  const { publishVoucher } = await import("../lib/server/vouchers.ts");
+  const { query } = await import("../lib/server/db.ts");
+  const t0 = Date.now() + 10 * 60_000;
+  await query("UPDATE app_gw_vouchers SET arkiv_attempted_at = $2 WHERE id = $1", [id, t0]); // an attempt in its receipt wait
+  const blocked = await publishVoucher(MERCHANT, id, t0 + 4 * 60_000).catch((e) => e);
+  assert.equal(blocked.status, 409, "4 min in, the first attempt may still land: wait");
+});
+
+test("batch 022 L1: a client that fails to build after the lease was taken releases it with the reason", async () => {
+  const id = await failedVoucher();
+  arkiv.clientFail = new Error("ARKIV_PRIVATE_KEY is missing or malformed.");
+  const spy = mock.method(console, "error", () => {});
+  let data;
+  try {
+    data = await (await publishAs(id)).json();
+  } finally {
+    spy.mock.restore();
+  }
+  assert.equal(data.arkiv_error, "ARKIV_PRIVATE_KEY is missing or malformed.");
+  const { query } = await import("../lib/server/db.ts");
+  const [row] = await query("SELECT arkiv_attempted_at, arkiv_error FROM app_gw_vouchers WHERE id = $1", [id]);
+  assert.deepEqual([row.arkiv_attempted_at, row.arkiv_error], [null, "ARKIV_PRIVATE_KEY is missing or malformed."], "released, reason kept");
+  arkiv.clientFail = null;
+  assert.equal((await publishAs(id)).status, 200, "the next publish isn't told to wait");
 });

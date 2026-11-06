@@ -336,3 +336,27 @@ test("batch 021: deliveredEvents tells a delivered test event from a delivered r
   assert.deepEqual(await deliveredEvents(MERCHANT), { test: true, payment: true });
   assert.deepEqual(await deliveredEvents(OTHER_MERCHANT), { test: false, payment: false }, "scoped to the merchant");
 });
+
+test("batch 022 (021 review L2): an inline attempt that throws logs its error's name only, and the delivery stays pending", async () => {
+  await newHook("https://shop.example/hooks");
+  const { query } = await import("../lib/server/db.ts");
+  // the endpoint answers, then the status UPDATE fails (a DB blip): only the attempt's own write throws
+  reply = async () => {
+    await query("ALTER TABLE app_gw_deliveries ADD CONSTRAINT batch022 CHECK (attempts < 1) NOT VALID");
+    return new Response("ok", { status: 200 });
+  };
+  const spy = mock.method(console, "error", () => {});
+  let lines;
+  try {
+    await enqueueEvent(MERCHANT, "payment.succeeded", { id: "pay_1" }, Date.now());
+    lines = spy.mock.calls.map((c) => c.arguments.join(" "));
+  } finally {
+    spy.mock.restore();
+    await query("ALTER TABLE app_gw_deliveries DROP CONSTRAINT IF EXISTS batch022");
+  }
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /^webhook delivery dlv_\S+: inline attempt failed \(\w+\), left for dispatch$/);
+  assert.ok(!lines[0].includes("shop.example") && !lines[0].includes("batch022"), "no URL, no error message");
+  const [row] = await query("SELECT status FROM app_gw_deliveries");
+  assert.equal(row.status, "pending");
+});
