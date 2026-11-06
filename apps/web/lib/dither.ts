@@ -2,7 +2,8 @@
 // No DOM, no three.js, so it runs in node:test as well as the browser.
 
 export const CELL = 3; // px per dither cell
-const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+/** 4×4 ordered-dither thresholds (0–15): a cell is lit when brightness × 16 > BAYER[(y & 3) * 4 + (x & 3)] + 0.5. */
+export const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 
 /** Small seeded PRNG so the scene draws the same every time. */
 export function mulberry32(seed: number): () => number {
@@ -19,12 +20,13 @@ export function mulberry32(seed: number): () => number {
 /** Horizon row as a share of the height; the sea is below it. */
 export const HORIZON = 0.6;
 
-/** Brightness 0–1 per cell: sky glow, moon, skyline with lit windows, the Queen's Necklace of lamps, the sea and the moon's reflection. */
-export function sceneIntensity(W: number, H: number): Float32Array {
+/** Brightness 0–1 per cell: sky glow, moon, skyline with lit windows, the Queen's Necklace of lamps, the sea and the moon's reflection.
+ *  moonX: the moon's position as a share of the width (the home hero puts it at 0.74, right of the headline). */
+export function sceneIntensity(W: number, H: number, moonX = 0.58): Float32Array {
   const I = new Float32Array(W * H);
   const r = mulberry32(1874);
   const hz = Math.round(H * HORIZON);
-  const mx = W * 0.58, my = H * 0.18, mr = Math.min(H * 0.075, W * 0.05);
+  const mx = W * moonX, my = H * 0.18, mr = Math.min(H * 0.075, W * 0.05);
   const roof = new Int16Array(W).fill(hz);
   for (let bx = 0; bx < W; ) {
     const w = 3 + Math.floor(r() * 9), h = Math.floor(H * (0.02 + r() * r() * 0.16));
