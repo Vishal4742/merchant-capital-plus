@@ -48,7 +48,8 @@ test("Buy is enabled only when every Arkiv term equals the chain (FR-ARK-3); sta
 test("the book joins chain offers with our Arkiv entities; an offer missing from Arkiv shows matches false", async () => {
   const { deps } = fakes({ offers: { 1: offer(), 2: offer({ claimId: 2n, price: 90_000_000n }) }, rows: [rowOf(offer()), rowOf(offer({ claimId: 2n }), "0xk2")] });
   const book = await arkiv.offerBook(deps);
-  assert.deepEqual(book.map((o) => [o.id, o.arkiv]), [["1", { entity_key: "0xk1", matches: true }], ["2", { entity_key: "0xk2", matches: false }]]);
+  assert.deepEqual(book.map((o) => [o.id, o.arkiv.entity_key, o.arkiv.matches]), [["1", "0xk1", true], ["2", "0xk2", false]]);
+  assert.equal(book[1].arkiv.terms.priceUsdt, "100000000", "D3: the entity's own values, to show what differs");
 });
 
 test("an Arkiv outage keeps the book on screen with Buy disabled, and the error never leaks", async (t) => {
@@ -58,7 +59,7 @@ test("an Arkiv outage keeps the book on screen with Buy disabled, and the error 
   const { deps } = fakes({ failRows: true });
   const book = await arkiv.offerBook(deps);
   assert.equal(book.length, 1);
-  assert.deepEqual(book[0].arkiv, { entity_key: null, matches: false });
+  assert.deepEqual(book[0].arkiv, { entity_key: null, matches: false, terms: null });
   assert.ok(logged.length === 1);
   assert.doesNotMatch(logged[0], /SECRET-KEY/, "the access key is redacted from the log");
   delete process.env.ARKIV_ACCESS_KEY;
@@ -69,7 +70,7 @@ test("publish: only the offer's merchant; creates once with expiry = deadline, t
   await assert.rejects(arkiv.publishOffer(OTHER, 1n, fresh.deps), (e) => e.status === 403);
   await assert.rejects(arkiv.publishOffer(M, 9n, fresh.deps), (e) => e.status === 404);
   assert.deepEqual(await arkiv.publishOffer(M, 1n, fresh.deps), { entity_key: "0xnew" });
-  assert.equal(fresh.writes[0].expiresAt, NOW + 3600);
+  assert.equal(fresh.writes[0].expiresAt, NOW + 30 * 86400, "expires at maturity: a funded offer keeps its entity until it repays");
   const again = fakes({ rows: [{ entityKey: "0xk1", terms: { ...arkiv.offerTerms(offer()), remainingUsdt: "5" } }] }); // a funding the mirror missed
   assert.deepEqual(await arkiv.publishOffer(M, 1n, again.deps), { entity_key: "0xk1" });
   assert.equal(again.writes[0].patch, "0xk1");
@@ -97,4 +98,10 @@ test("Arkiv write failures reach the client as a fixed message, never the SDK's 
   const w = fakes();
   w.deps.arkiv.create = async () => { throw new Error("rpc https://rabdi/abc-internal failed"); };
   await assert.rejects(arkiv.publishOffer(M, 1n, w.deps), (e) => e.status === 502 && !/rabdi|internal/.test(e.message));
+});
+
+test("the refresh after a funding only patches: it never creates, so a race with publish can't make two entities", async () => {
+  const w = fakes();
+  assert.equal(await arkiv.syncOffer(offer({ sold: 10_000_000n }), w.deps, NOW, { create: false }), null);
+  assert.equal(w.writes.length, 0);
 });

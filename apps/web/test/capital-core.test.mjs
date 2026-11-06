@@ -72,11 +72,11 @@ test("the offer book leaves out cancelled and expired-unfunded offers (AT-9) and
 test("an advance's JSON carries principal, cap and holdback_pct; an invoice's carries face; amounts are plain USDT", async () => {
   const { read } = chain({ offers: { 1: advance({ sold: 25_000_000n }), 2: invoice() } });
   const [a, i] = await capital.chainOffers({ read });
-  assert.deepEqual(capital.offerJson(a, NOW, { entityKey: "0xabc", matches: true }), {
+  assert.deepEqual(capital.offerJson(a, NOW, { entityKey: "0xabc", matches: true, terms: { claimId: "1" } }), {
     id: "1", kind: "advance", merchant: M, merchant_name: capital.offerJson(a, NOW).merchant_name,
-    principal: "100.00", face: null, price: "100.00", cap: "110.00", holdback_pct: 20,
+    principal: "100.00", face: "110.00", price: "100.00", cap: "110.00", holdback_pct: 20, // Q12: face always (an advance's face = its cap)
     maturity: new Date((NOW + 30 * 86400) * 1000).toISOString(), offer_deadline: new Date((NOW + 3600) * 1000).toISOString(),
-    units_left: "85000000", status: "open", arkiv: { entity_key: "0xabc", matches: true },
+    units_left: "85000000", status: "open", arkiv: { entity_key: "0xabc", matches: true, terms: { claimId: "1" } },
   });
   const inv = capital.offerJson(i, NOW);
   assert.equal(inv.kind, "invoice");
@@ -84,8 +84,8 @@ test("an advance's JSON carries principal, cap and holdback_pct; an invoice's ca
   assert.equal(inv.price, "48.00");
   assert.equal(inv.principal, null);
   assert.equal(inv.cap, null);
-  assert.equal(inv.holdback_pct, null);
-  assert.deepEqual(inv.arkiv, { entity_key: null, matches: false }, "not on Arkiv yet: Buy stays disabled");
+  assert.equal(inv.holdback_pct, 0, "Q12: 0 for invoices");
+  assert.deepEqual(inv.arkiv, { entity_key: null, matches: false, terms: null }, "not on Arkiv yet: Buy stays disabled");
 });
 
 test("quote is CapitalMarket.quote as plain USDT; an unknown offer is a 404", async () => {
