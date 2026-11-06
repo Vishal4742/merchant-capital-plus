@@ -63,10 +63,10 @@ const timeout = async () => {
   throw new DOMException("timed out", "TimeoutError");
 };
 
-test("create: 1.00 and 10,000.00 are accepted; 10,000.01 is not; the reply is {id, url, amount, currency, expiresAt} with a 30 min expiry", async () => {
+test("create: 1.00 and 1,000.00 are accepted; 1,000.01 is not (§4b cap); the reply is {id, url, amount, currency, expiresAt} with a 30 min expiry", async () => {
   assert.equal((await create({ amount: "1.00" })).res.status, 201);
-  assert.equal((await create({ amount: "10000.00" })).res.status, 201);
-  assert.equal((await create({ amount: "10000.01" })).res.status, 400);
+  assert.equal((await create({ amount: "1000.00" })).res.status, 201);
+  assert.equal((await create({ amount: "1000.01" })).res.status, 400);
   assert.equal((await create({ amount: 25 })).res.status, 400, "a number, not a string");
   const before = Date.now();
   const { data } = await create({ amount: "25.00" });
@@ -287,8 +287,17 @@ test("create: qty 1000 is refused even when the items add up (M26)", async () =>
   assert.equal((await create({ amount: "1000.00", items: [{ name: "Tea", qty: 1000, price: "1.00" }] })).res.status, 400);
 });
 
-test("demo checkout: a plain POST answers 303 to a new /checkout/<uuid> (N26)", async () => {
-  const res = await demoCheckout(new Request("http://shop.test/api/demo-checkout", { method: "POST" }));
+test("demo checkout: a plain POST answers 303 to a new /checkout/<uuid>, relative so the browser keeps its host (N26)", async () => {
+  const res = await demoCheckout(new Request("http://localhost:3100/api/demo-checkout", { method: "POST" }));
   assert.equal(res.status, 303);
-  assert.match(res.headers.get("location"), /^http:\/\/shop\.test\/checkout\/[0-9a-f-]{36}$/);
+  assert.match(res.headers.get("location"), /^\/checkout\/[0-9a-f-]{36}$/, "no host: 127.0.0.1 stays 127.0.0.1 (the guest key is per origin)");
+});
+
+test("demo checkout: at most 10 per IP per minute, then a plain 429 (security review 006 R2-F8)", async () => {
+  const press = (ip) => demoCheckout(new Request("http://shop.test/api/demo-checkout", { method: "POST", headers: { "x-forwarded-for": ip } }));
+  for (let n = 0; n < 10; n++) assert.equal((await press("203.0.113.7")).status, 303, `press ${n + 1}`);
+  const blocked = await press("203.0.113.7");
+  assert.equal(blocked.status, 429);
+  assert.match(await blocked.text(), /Wait a minute/);
+  assert.equal((await press("203.0.113.8")).status, 303, "another visitor isn't blocked");
 });
