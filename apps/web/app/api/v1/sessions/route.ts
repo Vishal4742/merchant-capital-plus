@@ -2,10 +2,13 @@
 // v2 (batch 006): `currency` (a price in USD, EUR, GBP, INR, AED or SGD becomes USDT at a quote locked for the checkout,
 // FR-GW-11), `returnUrl` for the checkout's "Back to <shop>" link, plain amounts, and `Idempotency-Key` (ARCHITECTURE §4b).
 // Batch 011: a merchant's own secret key (sk_test_…) works too, and the checkout is that merchant's (FR-GW-6).
+// Batch 015: prices go through lib/server/quotes.ts, the app's one FX source (human 05:4x; ±15% bands, 7-day date,
+// rounded up to the cent), the same rate links and pages use (FR-GW-11, AT-13).
 import { createHash } from "node:crypto";
-import { CURRENCIES, FxUnavailableError, QUOTE_LOCK_MS, quote, type Currency } from "../../../../lib/fx.ts";
-import { BAD_RETURN_URL, SESSION_TTL_MS, createSession, currencyFields, webUrl, type LineItem } from "../../../../lib/sessions.ts";
-import { MAX_PAYMENT, MIN_PAYMENT, rateLimit } from "../../../../lib/server/http.ts";
+import { formatUnits } from "viem";
+import { BAD_RETURN_URL, SESSION_TTL_MS, createSession, currencyFields, webUrl, type LineItem, type Priced } from "../../../../lib/sessions.ts";
+import { CURRENCIES, HttpError, MAX_PAYMENT, MIN_PAYMENT, rateLimit, type Currency } from "../../../../lib/server/http.ts";
+import { QUOTE_TTL_MS, toUsdtUnits, usdRate } from "../../../../lib/server/quotes.ts";
 import { shopCaller, type Shop } from "../../../../lib/shop-auth.ts";
 import { formatUsdt, parseUsdt, plainUsdt } from "../../../../lib/usdt.ts";
 
@@ -99,15 +102,21 @@ async function create(text: string, pageUrl: string, shop: Shop): Promise<Reply>
     if (items.length && total !== asked) return fail(400, `Items add up to ${formatUsdt(total)} ${currency}, but amount is ${formatUsdt(asked)} ${currency}.`);
   }
 
-  let fx: Awaited<ReturnType<typeof quote>>;
-  try {
-    fx = await quote(currency, body.amount);
-  } catch (error) {
-    if (error instanceof FxUnavailableError) return fail(503, error.message); // nothing is created without a rate
-    throw error;
+  // USDT is charged exactly; any other currency at quotes.ts's rate (USD 1:1), up to the cent
+  let usdt = asked;
+  let priced: Priced | undefined;
+  if (currency !== "USDT") {
+    try {
+      const rate = await usdRate(currency);
+      usdt = toUsdtUnits(formatUnits(asked, 6), rate);
+      priced = { currency, amount: asked, rate: rate.rate, rateDate: rate.rateAt, fetchedAt: rate.fetchedAt, source: rate.source };
+    } catch (error) {
+      if (error instanceof HttpError) return fail(error.status, error.message); // 503 without a usable rate: nothing is created
+      throw error;
+    }
   }
-  if (fx.usdt < MIN_PAYMENT || fx.usdt > MAX_PAYMENT) {
-    const converted = currency === "USDT" ? "" : ` (${formatUsdt(asked)} ${currency} is ${formatUsdt(fx.usdt)} USDT)`;
+  if (usdt < MIN_PAYMENT || usdt > MAX_PAYMENT) {
+    const converted = currency === "USDT" ? "" : ` (${formatUsdt(asked)} ${currency} is ${formatUsdt(usdt)} USDT)`;
     return fail(400, `amount must be between 1.00 and 1,000.00 USDT${converted}.`); // §4b: 1,000 per payment on testnet
   }
 
@@ -115,15 +124,15 @@ async function create(text: string, pageUrl: string, shop: Shop): Promise<Reply>
     {
       merchant: shop.merchant,
       merchantName: shop.merchantName,
-      amount: fx.usdt,
+      amount: usdt,
       reference,
       items,
-      priced: currency === "USDT" ? undefined : { currency, amount: asked, rate: fx.rate, rateDate: fx.rateDate, fetchedAt: fx.fetchedAt, source: fx.source },
+      priced,
       returnUrl,
     },
     Date.now(),
     // a quoted rate holds for 10 minutes, and the checkout ends with it; USD (1:1) and USDT keep 30
-    currency === "USDT" || currency === "USD" ? SESSION_TTL_MS : QUOTE_LOCK_MS,
+    currency === "USDT" || currency === "USD" ? SESSION_TTL_MS : QUOTE_TTL_MS,
   );
   const url = new URL(`/checkout/${session.id}`, pageUrl).toString();
   return { status: 201, body: { id: session.id, url, amount: plainUsdt(session.amount), ...currencyFields(session), expiresAt: new Date(session.expiresAt).toISOString() } };
