@@ -59,10 +59,10 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 **Goal:** a merchant gets paid gaslessly and can refund; a separate shop integrates in about 20 lines.
 
 - [x] `C` `MerchantPay` (FR-PAY-1–3, 5, 6, 8; FR-REL-4, 7, 9); tests M1–M3; deploy and verify · batch 002-P2-merchantpay verified 23:58: `0x83b5…73b7` full match, 39/39 tests, MerchantPay 96.97% lines / 100% branches; Phase 3 redeploy planned
-- [ ] `L` *(batch 002 drain guard verified 02:55: 36/36 tests, 5/5 checks, AT-10 PullStub half; MerchantPay relay batch 007 verified 05:57: 42 tests, only MerchantPay paySale/payInvoice, reject p95 266 ms; Postgres lock + rate limits + budget = relayer batch 006)* Relayer: submit, health, drain guards (FR-REL-1–3, 5, 6); uses the MerchantPay ABI from `packages/shared`
+- [x] `L` *(batch 002 drain guard verified 02:55: 36/36 tests, 5/5 checks, AT-10 PullStub half; MerchantPay relay batch 007 verified 05:57: 42 tests, only MerchantPay paySale/payInvoice, reject p95 266 ms; Postgres lock + rel_sent + breaker + rate limits + daily budget + shared secret verified 06:22, batch 006)* Relayer: submit, health, drain guards (FR-REL-1–3, 5, 6); uses the MerchantPay ABI from `packages/shared`
 - [x] `C` Demo seed script (CON-8; batch 004-P2-seed verified 00:36: 54/54 tests; on-chain investor A 69, investor B 40, debtor 100, merchant 1 USDT, team keeps 25.93 for the AT-1 customer): funds the demo customer, investor and debtor wallets from the team wallet in `.env`; no faucet button in the app. `H` collects test USDT first (faucet WBT → YetiTrade swap)
 - [x] `F` *(batch 004 verified 01:48: pages, wallet sign-in FR-PAY-15, checkout + receipt on the final MerchantPay, /checkout 184.5 KB JS and LCP 0.62 s; invoices + refunds in batch 005 verified 03:16: 133 tests, fork E2E on the final MerchantPay: fee on top, part payments, exact-approval refunds)* Customer pay and checkout pages, receipt (FR-PAY-3, 5, 7, 9); merchant invoices, payments table, refund (FR-PAY-1, 2, 8); checkout session API (FR-PAY-4)
-- [ ] `S` `apps/shop` with the ≈20-line integration (FR-PAY-11) · moved to claude-sdk (v2.0); needed for G2's AT-1 shop sale
+- [x] ~~`S` `apps/shop` with the ≈20-line integration (FR-PAY-11)~~ tracked once, in Phase 4 (AT-14); G2's AT-1 ran on the web app's built-in demo checkout (human 05:58)
 - [x] `O` Review the relayer guards: can anyone make us pay gas for nothing? · done 00:42 by claude-review: yes, 3 ways once public (R1, R2, R3); fixes with claude-relayer; human chose Postgres lock + 6 gwei cap
 
 **Gate G2:** AT-1 (gasless sale), AT-2 (refund), AT-10 (relayer rejects a bad call), and the speed budgets NFR-4, NFR-12, NFR-14 measured.
@@ -88,9 +88,9 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 
 - [ ] `F` Payment Links with QR codes (FR-GW-1, FR-GW-3); Payment Pages (FR-GW-2)
 - [ ] `F` Discount vouchers: codes as Arkiv entities that expire, redemptions counted on our server (FR-GW-12, FR-ARK-1–5 now apply to voucher entities)
-- [ ] `F` Multi-currency prices with a locked FX quote at checkout (FR-GW-11)
+- [ ] `F` Multi-currency prices with a locked FX quote at checkout (FR-GW-11) · *batch 006 (06:20): sessions v2 with FX quotes on checkout; switch to the backend quotes module pending*
 - [ ] `F` Reports with a sales chart and CSV, and a Settlements page (FR-GW-9, FR-GW-10)
-- [ ] `F` API keys, webhooks, a `/docs` page and the test-mode badge (FR-GW-6, 7, 8, 14)
+- [ ] `F` API keys, webhooks, a `/docs` page and the test-mode badge (FR-GW-6, 7, 8, 14) · *batch 006 (06:20): test-mode strip, /docs, dashboard shell, payments API done; keys + webhooks screens pending*
 - [x] `S` *(SDK core verified 03:21, batch 005-P4-sdk-core: Gateway sessions/payments/webhooks, zero deps; pay button batch 007 verified 05:57 incl. a DOM-clobbering fix proven in Chrome; PR #8, #9)* SDK + payment-button script in `packages/sdk` (FR-GW-4, FR-GW-5)
 - [x] `C` Capital on chain: AT-6, AT-7, AT-8 live, the E1 event-ABI snapshot and the NFR-10 coverage report (batch 006); then **contracts freeze** · batch 006 verified 03:13: AT-6 investors paid 58.8393 + 39.2262, AT-7 debtor 100.10 → 60 + 40 in one tx, AT-8 canTransfer(A, non-eligible) = false; contracts FROZEN
 - [ ] `S` Rebuild `apps/shop` on the SDK or button in ≤ 20 lines (FR-PAY-11, AT-14)

@@ -14,6 +14,7 @@
   --color-accent-soft: var(--accent-soft);
   --color-on-accent: var(--on-accent);
   --color-scene-night: var(--scene-night);
+  --color-scene-dot: var(--scene-dot);
   --color-glass-fill: var(--glass-fill);
   --color-glass-edge: var(--glass-edge);
   --color-glass-ink: var(--glass-ink);
@@ -47,6 +48,13 @@ body {
   .label { font: 500 12px/16px var(--font-sans); letter-spacing: 0.06em; text-transform: uppercase; }
   .emphasis { font: italic 400 1.05em/1 var(--font-serif); }
   .data { font: 400 13px/20px var(--font-mono); }
+  /* the gateway v2 design's small mono labels (KPI names, sidebar sections, the night band's line) */
+  .eyebrow { font: 400 11px/16px var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; }
+  /* cards and rows that lift on hover with a spring (overshoot then settle). linear() is written out, not through a
+     variable, so a browser without it keeps the cubic-bezier fallback instead of dropping the transition */
+  .lift { transition: transform 300ms var(--ease-spring), border-color 300ms ease; }
+  .lift { transition: transform 700ms linear(0, .009, .035 2.1%, .141, .281 6.7%, .723 12.9%, .938 16.7%, 1.017, 1.077, 1.121, 1.149 24.3%, 1.159, 1.163, 1.161, 1.154 29.9%, 1.129 32.8%, 1.051 39.6%, 1.017 43.1%, .991, .977 51%, .974 53.8%, .975 57.1%, .997 69.8%, 1.003 76.9%, 1.004 83.8%, 1), border-color 300ms ease; }
+  .lift:hover { transform: translateY(-2px); }
   @media (max-width: 960px) {
     .display-xl { font-size: 40px; line-height: 44px; }
   }

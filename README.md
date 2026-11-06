@@ -23,8 +23,9 @@ Repayment is enforced where the money arrives. One customer payment is split, in
 | Requirement | Evidence |
 |---|---|
 | Contracts deployed + verified on 1874 (all full Blockscout matches) | MerchantPay [0xab81…4251](https://explorer.testnet.whitechain.io/address/0xab817593253a0a37de723072827d88fe0ca54251) · CapitalMarket [0xecd6…0abe](https://explorer.testnet.whitechain.io/address/0xecd63a369d23dfddc6bfac921e41a86760c20abe) · ClaimToken [0xce9b…c388](https://explorer.testnet.whitechain.io/address/0xce9b171a5c485a41dced9d7f043733bddc26c388) · InvestorRegistry [0x2934…3e74](https://explorer.testnet.whitechain.io/address/0x293430fae87ca79844c6e3a64e8044078c4d3e74) · (Phase 2 preview MerchantPay 0x83b5…73b7 is paused) |
-| USDT payment in the main flow | Sale split in one tx [0xae155c49…](https://explorer.testnet.whitechain.io/tx/0xae155c49b9e10c098ff3f6146dd29256c75a52acaac85a3367e0c8e30e3cfb1a) (2 USDT → 0.10 fee + 1.90 merchant; payer 0 WBT) · invoice payment ⟨tx⟩ · advance repayment split ⟨tx⟩ |
+| USDT payment in the main flow | Sale split in one tx [0xae155c49…](https://explorer.testnet.whitechain.io/tx/0xae155c49b9e10c098ff3f6146dd29256c75a52acaac85a3367e0c8e30e3cfb1a) (2 USDT → 0.10 fee + 1.90 merchant; payer 0 WBT) · invoice payment ⟨tx⟩ · advance repayment split ⟨tx⟩ · gasless 25 USDT checkout [AT-1](https://explorer.testnet.whitechain.io/tx/0x7e03b5d0c52b6b7d941845b364f78875719c481fc7d4b353187038b504b37a11) |
 | **Operate:** drop-in in ≈20 lines | `apps/shop` integration: ⟨N⟩ lines (⟨file links⟩); merchant view ⟨screenshot⟩, customer view ⟨screenshot⟩; refund [0xbd91e67e…](https://explorer.testnet.whitechain.io/tx/0xbd91e67e672cf3a1c94e0fbf82335be719e2c77a4e0499328a9b767d3347f939); CSV export ⟨link⟩ |
+| **Operate (gateway):** what a merchant gets | Payment links + QR ⟨link⟩ · payment pages ⟨link⟩ · invoices with line items ⟨link⟩ · discount vouchers ⟨link⟩ · multi-currency prices (USD = USDT 1:1; EUR/GBP/INR/SGD at the ECB rate, AED via its peg; quote locked 10 min) ⟨screenshot⟩ · reports + CSV ⟨link⟩ · instant T+0 settlements ⟨link⟩ · signed webhooks (`MC-Signature`) · test-mode API keys · `/docs` with 3 steps ⟨link⟩ |
 | **Scale:** zero crypto steps for the payer | Customer pays with one "Confirm payment" from a wallet the page creates for them (no WBT, no seed phrase, no chain name) ⟨screenshot⟩ |
 | **Scale:** who pays gas / how the relayer gets WBT / what stops draining | The merchant pays a 0.10 USDT fee inside each payment; the relayer swaps fees to WBT on YetiTrade ⟨tx⟩; drain guard: allowlisted calls, simulate first, fee in the tx, gas caps, rate limits, daily WBT budget ⟨code⟩ ⟨tests⟩ |
 | **Tokenize:** real transfer rules + lifecycle | ERC-1155 claim token with ERC-7943 rules (investor allowlist (simulated KYC), ≤8 holders, maturity lock, admin freeze) ⟨code⟩; blocked transfer ⟨revert tx⟩; advance funded [AT-3](https://explorer.testnet.whitechain.io/tx/0x8d4958ebb6c20d1a1e4a269bfd6736c641f62ca02d6521e94b92934c8f3f6810) → a 5 USDT sale repays 1 USDT to the investor in the same tx [AT-4](https://explorer.testnet.whitechain.io/tx/0x9fc06d890b53dde51e469e348fc9b9bdaadfc541f82e9fbb2a833a74edba5ec8) → after the cap the investor gets 0 [AT-5](https://explorer.testnet.whitechain.io/tx/0x0269606d7668b50e5c0b8d6dca43449def7b660e92371ff4090fbff199df4360) · invoice financing: two investors buy a 100 USDT invoice [A 58.84](https://explorer.testnet.whitechain.io/tx/0x6b346413c77effb7f2084103caf93236a47349681729816bb0a850aa95a9ab3c) + [B 39.23](https://explorer.testnet.whitechain.io/tx/0xab395b1dd7c452229661dfab86f7efee79700d87bc00aaa7957390c7627d9744) → the debtor pays 100.10 and both are repaid 60 + 40 in one tx [AT-7](https://explorer.testnet.whitechain.io/tx/0xd9172e76c1f19d2152d10283a84732ac0ef14680698f7279cfc2c10dd71003b1) · transfer to a non-eligible wallet blocked (`canTransfer` = false, AT-8) |
@@ -40,7 +41,7 @@ Private-read proof (Phase 1): the app read Whitechain blocks through Nym (e.g. b
 **CROPS:** C: payment functions are permissionless, so anyone can submit a signed authorization if our relayer is down · O: ⟨license⟩ · P: private reads by default, no personal data on-chain or on Arkiv · S: non-custodial, keys stay on the user's device.
 
 ## Architecture
-Full-stack: Next.js frontend, two TypeScript servers (relayer, web API), Postgres for sessions and rate limits only, and Solidity contracts on Whitechain that hold every money rule.
+Full-stack: Next.js frontend, two TypeScript servers (relayer, web API incl. the gateway API: links, pages, vouchers, quotes, reports, settlements, keys, webhooks), a zero-dependency SDK + one-line pay button (`packages/sdk`), Postgres for sessions and rate limits only, and Solidity contracts on Whitechain that hold every money rule.
 
 ```
 Shop server ──POST /api/v1/sessions──► Web API (apps/web) ──► checkout link
@@ -71,6 +72,12 @@ cd apps/relayer && npm ci && npm test && npm run dev        # GET /health, POST 
 
 # Web app (merchant, investor, customer pages): http://localhost:3000
 cd apps/web && npm ci && npm run typecheck && npm test && npm run dev
+
+# SDK + pay button (zero dependencies)
+cd packages/sdk && npm ci && npm test
+
+# Demo shop on the SDK (≤ 20 integration lines)
+cd apps/shop && npm ci && npm run dev
 ```
 Test funds: claim WBT at faucet.testnet.whitechain.io, then swap some to the prize USDT (`0xcedfB561…f55a7`) on testnet.yetitrade.fi. CI runs the same checks on every push (`.github/workflows/ci.yml`).
 

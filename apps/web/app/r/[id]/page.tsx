@@ -57,6 +57,7 @@ async function Receipt({ params }: Pick<PageProps<"/r/[id]">, "params">) {
       merchantName={session.merchantName}
       paidAt={when(payment.paidAt)}
       reference={session.reference ? { term: "Order", value: session.reference } : null}
+      price={session.priced ? `${formatUsdt(session.priced.amount)} ${session.priced.currency}` : null}
       refund={
         <Suspense fallback={<span className="text-ink-muted">Checking…</span>}>
           <RefundStatus payment={payment} />
@@ -83,6 +84,7 @@ async function PaymentReceipt({ paymentId }: { paymentId: bigint }) {
       merchantName={shop && shop.merchant.toLowerCase() === record.merchant.toLowerCase() ? shop.merchantName : "a merchant"}
       paidAt={log ? when(log.time) : null}
       reference={log && log.invoiceId !== 0n ? { term: "Invoice", value: log.invoiceId.toString() } : null}
+      price={null}
       refund={refundText(record.refunded)}
       txHash={log?.txHash ?? null}
       paymentId={paymentId.toString()}
@@ -97,12 +99,14 @@ interface ReceiptCardProps {
   merchantName: string;
   paidAt: string | null;
   reference: { term: string; value: string } | null;
+  /** The shop's price when it priced in another currency (FR-GW-11), e.g. "20.00 EUR". */
+  price: string | null;
   refund: ReactNode;
   txHash: string | null;
   paymentId: string | null;
 }
 
-function ReceiptCard({ label, amount, merchantName, paidAt, reference, refund, txHash, paymentId }: ReceiptCardProps) {
+function ReceiptCard({ label, amount, merchantName, paidAt, reference, price, refund, txHash, paymentId }: ReceiptCardProps) {
   return (
     <section className="relative grid w-full max-w-[420px] gap-5 rounded-[28px] border border-hairline bg-surface p-8 shadow-float">
       <span className="label text-ink-muted">{label}</span>
@@ -124,6 +128,16 @@ function ReceiptCard({ label, amount, merchantName, paidAt, reference, refund, t
             <dd>{reference.value}</dd>
           </div>
         )}
+        {price && (
+          <div className="flex justify-between gap-4">
+            <dt className="text-ink-muted">Price</dt>
+            <dd>{price}</dd>
+          </div>
+        )}
+        <div className="flex justify-between gap-4">
+          <dt className="text-ink-muted">Network fee</dt>
+          <dd>None: you paid no network fee</dd>
+        </div>
         <div className="flex justify-between gap-4">
           <dt className="text-ink-muted">Refund</dt>
           <dd>{refund}</dd>

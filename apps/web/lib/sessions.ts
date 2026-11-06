@@ -2,13 +2,36 @@
 // a shop asked to be paid and which payment settled it, so the pay page needs no browser chain reads.
 import { randomBytes, randomUUID } from "node:crypto";
 import type { Address, Hex } from "viem";
+import type { Currency } from "./fx.ts";
+import { plainUsdt } from "./usdt.ts";
 
 export const SESSION_TTL_MS = 30 * 60 * 1000;
+const MAX_RETURN_URL = 200;
+export const BAD_RETURN_URL = `returnUrl must be an http or https URL of at most ${MAX_RETURN_URL} characters.`;
+
+/** The URL as the browser will read it (WHATWG-parsed href), if it is http or https and at most 200 characters; else
+ *  null. Storing the href, not the raw text, means what we checked is what the "Back to <shop>" link opens (security
+ *  review 006 F4). */
+export function webUrl(value: unknown): string | null {
+  if (typeof value !== "string" || !URL.canParse(value)) return null;
+  const url = new URL(value);
+  return (url.protocol === "https:" || url.protocol === "http:") && url.href.length <= MAX_RETURN_URL ? url.href : null;
+}
 
 export interface LineItem {
   name: string;
   qty: number;
-  price: bigint; // USDT units
+  price: bigint; // 6-decimal units of the session's currency: USDT, or `priced.currency`
+}
+
+/** A checkout the shop priced in another currency (FR-GW-11): the quote it was converted at, locked at creation. */
+export interface Priced {
+  currency: Exclude<Currency, "USDT">;
+  amount: bigint; // what the shop asked, in 6-decimal units of `currency`
+  rate: string; // units of `currency` per 1 USD
+  rateDate: string; // YYYY-MM-DD
+  fetchedAt: number;
+  source: string;
 }
 
 export interface Payment {
@@ -27,6 +50,10 @@ export interface Session {
   orderRef: Hex; // bytes32 bound into the signed nonce
   reference: string; // the shop's own order label, e.g. "A-1042"
   items: LineItem[];
+  /** Absent for a checkout priced in USDT. */
+  priced?: Priced;
+  /** http(s) only (checked when the shop creates it): the checkout's "Back to <shop>" link. */
+  returnUrl?: string;
   createdAt: number;
   expiresAt: number;
   payment?: Payment;
@@ -39,13 +66,18 @@ export interface Session {
 const globalStore = globalThis as unknown as { __mcSessions?: Map<string, Session>; __mcInvoiceAttempts?: Map<string, InvoiceAttempt> };
 const sessions = (globalStore.__mcSessions ??= new Map<string, Session>());
 
-export function createSession(input: Omit<Session, "id" | "orderRef" | "createdAt" | "expiresAt" | "payment" | "pending">, now = Date.now()): Session {
+/** Every way in (the sessions API, links and pages) passes here, so the returnUrl rule lives here too. Throws on a bad
+ *  returnUrl; the API checks first and answers 400. */
+export function createSession(input: Omit<Session, "id" | "orderRef" | "createdAt" | "expiresAt" | "payment" | "pending">, now = Date.now(), ttlMs = SESSION_TTL_MS): Session {
+  const returnUrl = input.returnUrl === undefined ? undefined : webUrl(input.returnUrl);
+  if (returnUrl === null) throw new Error(BAD_RETURN_URL);
   const session: Session = {
     ...input,
+    returnUrl,
     id: randomUUID(),
     orderRef: `0x${randomBytes(32).toString("hex")}`,
     createdAt: now,
-    expiresAt: now + SESSION_TTL_MS,
+    expiresAt: now + ttlMs,
   };
   sessions.set(session.id, session);
   return session;
@@ -53,6 +85,13 @@ export function createSession(input: Omit<Session, "id" | "orderRef" | "createdA
 
 export function getSession(id: string): Session | undefined {
   return sessions.get(id);
+}
+
+/** A checkout's currency in API replies (FR-GW-11): the currency the shop asked for, and `priced` for any but USDT. */
+export function currencyFields(session: Session) {
+  const p = session.priced;
+  if (!p) return { currency: "USDT" as const };
+  return { currency: p.currency, priced: { currency: p.currency, amount: plainUsdt(p.amount), rate: p.rate, rateAt: p.rateDate, source: p.source } };
 }
 
 

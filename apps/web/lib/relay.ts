@@ -1,6 +1,7 @@
 // Server-only client for the relayer's POST /relay (claude-relayer, ARCHITECTURE §3).
 // The browser never calls the relayer: our server forwards a verified authorization and records the result.
 import type { Address, Hex } from "viem";
+import { NOT_FUNDED } from "./outcome.ts";
 
 interface Signed {
   relayerUrl: string;
@@ -43,9 +44,7 @@ export const relaySale = (sale: RelaySale) => relay(sale, "paySale", { merchant:
  *  until then the relayer answers 400, which maps to "Nothing was charged"). */
 export const relayPayInvoice = (invoice: RelayInvoice) => relay(invoice, "payInvoice", { invoiceId: invoice.invoiceId.toString() });
 
-/** The human's gate decision (batch 004, 01:45): an unfunded guest is a demo limit, so say so plainly. The pay routes
- *  show it after their own balance read; the relayer's insufficient_funds maps to it too. */
-export const NOT_FUNDED = "This is a demo: paying needs test USDT, and this browser doesn't have enough yet. Nothing was charged.";
+export { NOT_FUNDED }; // the routes import it from here with the other relay outcomes
 
 async function relay(signed: Signed, action: "paySale" | "payInvoice", target: Record<string, string>): Promise<RelayResult> {
   const args = { ...target, from: signed.from, amount: signed.amount.toString(), validAfter: "0", validBefore: signed.validBefore.toString(), salt: signed.salt };

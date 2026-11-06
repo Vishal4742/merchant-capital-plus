@@ -2,14 +2,27 @@
 
 // The customer's checkout sheet (FR-PAY-5, FR-PAY-7, FR-PAY-9). Plain words only: no "sign", "gas",
 // "wallet" or chain names. Press and hold to pay (human pick); the guest key signs in the browser and our
-// server checks and relays it.
+// server checks and relays it. Batch 006: the FX line, a countdown, named states, "Back to <shop>".
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { Address, Hex } from "viem";
 import { Confirming } from "@/components/Confirming";
 import { HoldButton } from "@/components/HoldButton";
-import { FAILED, outcome, type PayAnswer } from "@/lib/outcome";
+import { FAILED, NOT_FUNDED, outcome, type PayAnswer } from "@/lib/outcome";
 import { EXPLORER } from "@/lib/usdt";
+
+// The relayer wants an approval to stay valid at least 30 s (lib/pay.ts), and an approval ends with the checkout: in
+// its last 30 s a checkout can't be paid, so the sheet counts down to that moment.
+const LAST_PAYABLE_MS = 30_000;
+
+// A one-second clock for the countdown. null while server rendering, so the sheet hydrates without a clock mismatch.
+const subscribeSeconds = (tick: () => void) => {
+  const id = window.setInterval(tick, 1000);
+  return () => window.clearInterval(id);
+};
+const thisSecond = () => Math.floor(Date.now() / 1000) * 1000;
+const useNow = () => useSyncExternalStore(subscribeSeconds, thisSecond, () => null);
+const mmss = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}`;
 
 // The signer (viem + the guest key) loads after first paint, so it never slows the sheet (NFR-12).
 type Signer = typeof import("@/lib/sign-sale");
@@ -21,6 +34,10 @@ interface CheckoutProps {
   reference: string;
   items: { name: string; qty: number; price: string }[];
   amountText: string;
+  /** Server-rendered for a checkout priced in another currency: "20.00 EUR = 22.50 USDT · rate of 5 Nov 2026 · 1 USDT = 1 USD". */
+  fxLine: string | null;
+  /** The shop's page to go back to (http/https, checked when the shop created the checkout). */
+  returnUrl: string | null;
   /** Null until MerchantPay and the relayer are configured on the server. */
   sale: { merchantPay: Address; merchant: Address; orderRef: Hex; amount: string } | null;
   expiresAt: number;
@@ -35,11 +52,15 @@ type Receipt = { receiptId: string; txHash: Hex | null };
 // button again (002 security D4).
 type Phase = "ready" | "confirming" | "expired";
 
+const pill = "rounded-pill border border-current px-3 py-0.5 text-xs font-medium tracking-wide whitespace-nowrap";
+
 /** The sheet already shows what happened (confirming or expired): no extra error line. */
 class Shown extends Error {}
 
-export function Checkout({ sessionId, merchantName, reference, items, amountText, sale, expiresAt, paid, pending }: CheckoutProps) {
+export function Checkout({ sessionId, merchantName, reference, items, amountText, fxLine, returnUrl, sale, expiresAt, paid, pending }: CheckoutProps) {
   const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [paying, setPaying] = useState(false);
+  const now = useNow();
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>(() => (pending ? "confirming" : Date.now() > expiresAt ? "expired" : "ready"));
   // the page, not the button, owns the payment in flight: a remounted button can't start a second one (R3 D3)
@@ -55,14 +76,23 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
     return () => (hasIdle ? window.cancelIdleCallback(id) : window.clearTimeout(id));
   }, [sale]);
 
-  const pay = () => (inFlight.current ??= submit().finally(() => (inFlight.current = null)));
+  function pay() {
+    if (!inFlight.current) {
+      setPaying(true);
+      inFlight.current = submit().finally(() => {
+        inFlight.current = null;
+        setPaying(false);
+      });
+    }
+    return inFlight.current;
+  }
 
   async function submit() {
     setError(null);
     try {
       if (!sale) throw new Error("Payments aren't live yet.");
       const { signSale } = await (signer.current ??= loadSigner());
-      const approval = await signSale(sale);
+      const approval = await signSale(sale, expiresAt);
       let res: Response;
       try {
         res = await fetch(`/api/v1/sessions/${sessionId}/pay`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(approval) });
@@ -83,6 +113,14 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
   }
 
   const paidId = receipt?.receiptId ?? (paid ? sessionId : null);
+  // the countdown ends the open sheet, never a payment in flight (it may land: security R1 S1)
+  const left = now === null ? null : expiresAt - LAST_PAYABLE_MS - now;
+  const shown: Phase = phase === "ready" && !paying && left !== null && left <= 0 ? "expired" : phase;
+  const back = returnUrl && (
+    <a href={returnUrl} className="inline-flex min-h-11 items-center justify-self-start text-sm font-medium text-accent underline underline-offset-4 hover:text-accent-hover">
+      Back to {merchantName}
+    </a>
+  );
   return (
     <section className="relative w-full max-w-[420px] rounded-[28px] bg-surface p-8 text-ink shadow-float" aria-live="polite">
       {paidId ? (
@@ -120,12 +158,28 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
               </div>
             )}
           </dl>
-          <p className="text-sm text-ink-muted">Keep the receipt link; it shows any refund too.</p>
+          <p className="text-sm text-ink-muted">
+            You paid no network fee.
+            <span className="block">Keep the receipt link; it shows any refund too.</span>
+          </p>
+          {back}
         </div>
       ) : (
         <div className="grid gap-6">
           <div className="grid gap-1">
-            <span className="label text-ink-muted">{reference ? `Order ${reference}` : "Checkout"}</span>
+            <div className="flex items-center justify-between gap-3">
+              <span className="label text-ink-muted">{reference ? `Order ${reference}` : "Checkout"}</span>
+              {/* the sheet's state in words; "Confirming" names itself in its panel below */}
+              {shown === "expired" ? (
+                <span className={`${pill} text-warning`}>Expired</span>
+              ) : paying ? (
+                <span className={`${pill} text-accent`}>Paying</span>
+              ) : shown === "ready" && left !== null && sale ? (
+                <span role="timer" aria-live="off" className={`${pill} text-ink-muted tabular-nums`}>
+                  {mmss(left)} left to pay
+                </span>
+              ) : null}
+            </div>
             <h1 className="title">{merchantName}</h1>
           </div>
           {items.length > 0 && (
@@ -140,25 +194,44 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
               ))}
             </ul>
           )}
-          <p className="flex items-baseline justify-between">
-            <span className="label text-ink-muted">Total</span>
-            <span>
-              <span className="amount-xl">{amountText}</span>
-              <span className="label ml-1.5 text-ink-muted">USDT</span>
-            </span>
-          </p>
-          {phase === "confirming" ? (
-            <Confirming />
-          ) : phase === "expired" ? (
-            // expiry isn't an error: the warning token, not red (UX review 004 R2 L2)
-            <p role="status" className="text-sm text-warning">
-              This checkout has expired. Ask {merchantName} for a new one.
+          <div className="grid gap-1">
+            <p className="flex items-baseline justify-between">
+              <span className="label text-ink-muted">Total</span>
+              <span>
+                <span className="amount-xl">{amountText}</span>
+                <span className="label ml-1.5 text-ink-muted">USDT</span>
+              </span>
             </p>
+            {fxLine && (
+              <p className="text-right text-xs text-ink-muted tabular-nums">
+                {/* wraps between its parts, never inside one */}
+                {fxLine.split(" · ").map((part, i) => (
+                  <Fragment key={part}>
+                    {i > 0 && " · "}
+                    <span className="whitespace-nowrap">{part}</span>
+                  </Fragment>
+                ))}
+              </p>
+            )}
+          </div>
+          {shown === "confirming" ? (
+            <div className="grid gap-2">
+              <Confirming />
+              {back}
+            </div>
+          ) : shown === "expired" ? (
+            // expiry isn't an error: the warning token, not red (UX review 004 R2 L2)
+            <div className="grid gap-2">
+              <p role="status" className="text-sm text-warning">
+                This checkout has expired. Ask {merchantName} for a new one.
+              </p>
+              {back}
+            </div>
           ) : sale ? (
             <div className="grid gap-3">
-              <HoldButton label={`Hold to pay ${amountText}`} busyLabel="Paying" doneLabel="Paid" onConfirm={pay} aria-describedby="pay-hint" className="w-full" />
+              <HoldButton label={`Hold to pay ${amountText} USDT`} busyLabel="Paying" doneLabel="Paid" onConfirm={pay} aria-describedby="pay-hint" className="w-full" />
               <p id="pay-hint" className="text-center text-sm text-ink-muted">
-                You pay exactly {amountText} USDT. No fees for you.
+                Pay exactly {amountText} USDT, no more and no less. No fees for you.
                 <span className="block">Press and hold the button, or press Enter, to pay.</span>
               </p>
             </div>
@@ -168,7 +241,8 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
             </p>
           )}
           {error && (
-            <p role="alert" className="text-sm text-critical">
+            // the demo message explains a limit, it isn't a failure: the warning tone, not red (UX review 005 N3)
+            <p role="alert" className={`text-sm ${error === NOT_FUNDED ? "text-warning" : "text-critical"}`}>
               {error}
             </p>
           )}

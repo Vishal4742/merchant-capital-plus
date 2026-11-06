@@ -20,9 +20,10 @@ export default function Home() {
           <header className="flex items-center justify-between gap-4">
             <span className="title whitespace-nowrap">Merchant Capital+</span>
             <nav className="flex items-center gap-1 text-sm">
-              <Link href="/merchant" className={buttonClasses("glass", "h-10 px-4 text-sm")}>
+              {/* plain <a>: a full load, so /merchant runs under its own CSP (security review 005 F-N4) */}
+              <a href="/merchant" className={buttonClasses("glass", "h-10 px-4 text-sm")}>
                 Dashboard
-              </Link>
+              </a>
             </nav>
           </header>
           <p className="label mt-24 opacity-75">For cafés and shops in Mumbai</p>
@@ -39,9 +40,9 @@ export default function Home() {
             <form method="post" action="/api/demo-checkout">
               <Button type="submit">Try a checkout</Button>
             </form>
-            <Link href="/merchant" className={buttonClasses("glass")}>
+            <a href="/merchant" className={buttonClasses("glass")}>
               Open the dashboard
-            </Link>
+            </a>
           </div>
         </div>
       </section>

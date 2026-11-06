@@ -26,7 +26,7 @@ createServer(async (req, res) => {
     }
     const response = await handler(new Request(`http://127.0.0.1${req.url}`, {
       method: req.method,
-      headers: { 'content-type': req.headers['content-type'] ?? '' },
+      headers: { 'content-type': req.headers['content-type'] ?? '', 'x-relay-secret': String(req.headers['x-relay-secret'] ?? '') },
       body: req.method === 'POST' ? Buffer.concat(chunks) : undefined,
     }));
     res.writeHead(response.status, { 'content-type': response.headers.get('content-type') ?? 'text/plain' });
