@@ -5,10 +5,10 @@
 // left at send time and refuses more (RefundTooLarge), and lib/merchant-wallet.ts dry-runs it before anything is sent.
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
-import { formatUnits, type Address } from "viem";
+import type { Address } from "viem";
 import { Button } from "@/components/Button";
 import { connectMerchant, refund, walletError } from "@/lib/merchant-wallet";
-import { USDT_DECIMALS, formatUsdt, parseUsdt } from "@/lib/usdt";
+import { formatUsdt, parseUsdt, plainUsdt } from "@/lib/usdt";
 
 interface RefundProps {
   merchant: Address;
@@ -21,7 +21,7 @@ interface RefundProps {
 export function Refund({ merchant, merchantPay, paymentId, refundable }: RefundProps) {
   const router = useRouter();
   const left = BigInt(refundable);
-  const all = formatUnits(left, USDT_DECIMALS);
+  const all = plainUsdt(left); // "17.50", not "17.5" (UX review 005 N1); no separators, so parseUsdt reads it back
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState(all);
   const [busy, setBusy] = useState(false);

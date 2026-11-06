@@ -40,6 +40,8 @@ const nextConfig: NextConfig = {
       // the dashboard sends invoices, approvals and refunds, and loads nothing from another origin (security review 005
       // F8); wallet extensions aren't bound by a page's CSP
       { source: "/merchant", headers: csp },
+      // /docs loads nothing third-party either, and hosts "Simulate a payment" (security review 006 F3)
+      { source: "/docs", headers: csp },
     ];
   },
   partialPrefetching: true,
