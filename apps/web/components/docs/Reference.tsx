@@ -1,9 +1,27 @@
-// The data-driven parts of /docs: the API reference, currencies, limits and errors, all rendered from
-// lib/docs-reference.ts (held to the code by test/docs-reference.test.mjs). The FX bands are read from the quotes
-// module itself, so the page can't drift from what the gateway accepts.
-import { AUTH, ERRORS, FX_CURRENCIES, LIMITS, RATE_LIMITS, RESOURCES, type Auth } from "@/lib/docs-reference";
+// The data-driven parts of /docs: the API reference (grouped by who calls it, with full pages for the endpoints a
+// shop's server calls), the checkout statuses, webhook events, currencies, limits, errors and test scenarios, all
+// rendered from lib/docs-reference.ts (held to the code by test/docs-reference.test.mjs and docs-endpoints.test.mjs).
+// The FX bands are read from the quotes module itself, so the page can't drift from what the gateway accepts.
+// Server components only: the closed groups are native <details>, so they open with no script.
+import {
+  AUTH,
+  CHECKOUT_STATUSES,
+  ERRORS,
+  EVENTS,
+  FX_CURRENCIES,
+  GROUPS,
+  LIMITS,
+  RATE_LIMITS,
+  RESOURCES,
+  TEST_SCENARIOS,
+  type Auth,
+  type Endpoint,
+  type Group,
+  type Resource,
+} from "@/lib/docs-reference";
 import { BANDS } from "@/lib/server/quotes";
-import { AuthChip, Code, DocTable, MethodPill, Path, Rich, Snippet, card } from "./ui";
+import { curl } from "./snippets";
+import { AuthChip, Callout, Code, DocTable, MethodPill, Path, Rich, Snippet, card } from "./ui";
 
 const ENDPOINT_COLUMNS = [
   { label: "Endpoint", width: "w-[31%]", stackLabel: false },
@@ -11,6 +29,16 @@ const ENDPOINT_COLUMNS = [
   { label: "Body", width: "w-[27%]" },
   { label: "Reply", width: "w-[27%]" },
 ];
+
+/** The nav's sub-anchors for the reference: the open group's resources, then the closed groups. */
+export const API_ANCHORS = [
+  ...RESOURCES.filter((r) => r.group === "server").map((r) => ({ id: `api-${r.id}`, label: r.title })),
+  { id: "api-dashboard", label: GROUPS.dashboard.title },
+  { id: "api-hosted-pages", label: GROUPS.hosted.title },
+];
+
+const inGroup = (group: Group) => RESOURCES.filter((r) => r.group === group);
+const endpointCount = (group: Group) => inGroup(group).reduce((n, r) => n + r.endpoints.length, 0);
 
 export function ApiReference() {
   return (
@@ -25,37 +53,249 @@ export function ApiReference() {
           </li>
         ))}
       </ul>
-      {RESOURCES.map((resource) => (
-        <div key={resource.id} id={`api-${resource.id}`} className="grid min-w-0 scroll-mt-24 gap-4 md:scroll-mt-10">
-          <div className="grid gap-1">
-            <h3 className="title">{resource.title}</h3>
-            <p className="max-w-[62ch] text-sm text-ink-muted">
-              <Rich text={resource.about} />
-            </p>
-          </div>
-          <DocTable
-            caption={`${resource.title} endpoints`}
-            columns={ENDPOINT_COLUMNS}
-            rows={resource.endpoints.map((e) => ({
-              key: `${e.method} ${e.path}`,
-              cells: [
-                <span key="endpoint" className="flex flex-wrap items-center gap-2">
-                  <MethodPill method={e.method} />
-                  <Path path={e.path} />
-                </span>,
-                <AuthChip key="auth" auth={e.auth} />,
-                <span key="body" className="text-ink-muted">
-                  <Rich text={e.body} />
-                </span>,
-                <span key="reply" className="text-ink-muted">
-                  <Rich text={e.reply} />
-                </span>,
-              ],
-            }))}
-          />
+      <Callout>
+        Amounts are decimal strings, like <Code>&quot;25.00&quot;</Code>, in what you send and what you get back. Never send a float, and compare amounts
+        with the SDK&apos;s <Code>sameAmount</Code>, not <Code>===</Code>.
+      </Callout>
+      <section id="api-server" aria-labelledby="api-server-title" className="grid min-w-0 scroll-mt-24 gap-12 md:scroll-mt-10">
+        <div className="grid gap-1 border-t border-hairline pt-4">
+          <h3 id="api-server-title" className="text-[26px] leading-tight font-medium tracking-[-0.03em]">
+            {GROUPS.server.title}
+          </h3>
+          <p className="text-sm text-ink-muted">{GROUPS.server.about}</p>
         </div>
+        {inGroup("server").map((resource) => (
+          <ResourceBlock key={resource.id} resource={resource} />
+        ))}
+      </section>
+      {(["dashboard", "hosted"] as const).map((group) => (
+        <details key={group} id={group === "hosted" ? "api-hosted-pages" : "api-dashboard"} className="group min-w-0 scroll-mt-24 md:scroll-mt-10">
+          {/* a heading may sit straight in <summary>; a grid places the count beside it with no wrapper */}
+          <summary className="lift grid min-h-14 cursor-pointer list-none grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 rounded-[20px] border border-hairline bg-surface px-5 py-4 hover:border-accent md:px-6 [&::-webkit-details-marker]:hidden">
+            <h3 className="title col-start-1">{GROUPS[group].title}</h3>
+            <span className="eyebrow col-start-2 row-span-2 row-start-1 flex items-center gap-2 text-accent">
+              <span className="max-sm:sr-only">{endpointCount(group)} endpoints</span>
+              <span aria-hidden className="inline-block text-base leading-none transition-transform group-open:rotate-45">
+                +
+              </span>
+            </span>
+            <span className="col-start-1 text-sm text-ink-muted">{GROUPS[group].about}</span>
+          </summary>
+          <div className="mt-10 grid gap-12">
+            {inGroup(group).map((resource) => (
+              <ResourceBlock key={resource.id} resource={resource} />
+            ))}
+          </div>
+        </details>
       ))}
     </div>
+  );
+}
+
+/** A resource: a full page for each endpoint that has one, a summary table row for the rest. */
+function ResourceBlock({ resource }: { resource: Resource }) {
+  const rows = resource.endpoints.filter((e) => !e.detail);
+  return (
+    <div id={`api-${resource.id}`} className="grid min-w-0 scroll-mt-24 gap-6 md:scroll-mt-10">
+      <div className="grid gap-1">
+        <h4 className="title">{resource.title}</h4>
+        <p className="max-w-[62ch] text-sm text-ink-muted">
+          <Rich text={resource.about} />
+        </p>
+      </div>
+      {resource.endpoints.filter((e) => e.detail).map((e) => (
+        <EndpointPage key={`${e.method} ${e.path}`} endpoint={e} />
+      ))}
+      {resource.id === "checkouts" && <Lifecycle />}
+      {rows.length > 0 && (
+        <DocTable
+          caption={`${resource.title} endpoints`}
+          columns={ENDPOINT_COLUMNS}
+          rows={rows.map((e) => ({
+            key: `${e.method} ${e.path}`,
+            cells: [
+              <span key="endpoint" className="flex flex-wrap items-center gap-2">
+                <MethodPill method={e.method} />
+                <Path path={e.path} />
+              </span>,
+              <AuthChip key="auth" auth={e.auth} />,
+              <span key="body" className="text-ink-muted">
+                <Rich text={e.body} />
+              </span>,
+              <span key="reply" className="text-ink-muted">
+                <Rich text={e.reply} />
+              </span>,
+            ],
+          }))}
+        />
+      )}
+    </div>
+  );
+}
+
+const IN_LABEL = { body: "Body", header: "Header", path: "Path", query: "Query" } as const;
+
+/** One endpoint in full: what it returns, its parameters, and an example request and response. */
+function EndpointPage({ endpoint: e }: { endpoint: Endpoint }) {
+  const detail = e.detail!;
+  const name = `${e.method} ${e.path}`;
+  return (
+    <article aria-label={name} className="grid min-w-0 gap-4 rounded-[20px] border border-hairline p-4 md:p-6">
+      <div className="flex flex-wrap items-center gap-2">
+        <MethodPill method={e.method} />
+        <h5 className="text-[17px] leading-6 font-medium">
+          <Path path={e.path} />
+        </h5>
+        <AuthChip auth={e.auth} />
+      </div>
+      <p className="max-w-[70ch] text-sm text-ink-muted">
+        <span className="font-medium text-ink">Returns </span>
+        <Rich text={e.reply} />
+      </p>
+      <DocTable
+        caption={`${name} parameters`}
+        columns={[
+          { label: "Name", width: "w-[24%]", stackLabel: false },
+          { label: "Type", width: "w-[13%]", phoneHidden: true },
+          { label: "Required", width: "w-[13%]", phoneHidden: true },
+          { label: "Description", width: "w-[50%]" },
+        ]}
+        rows={detail.params.map((p) => ({
+          key: p.name,
+          cells: [
+            <span key="name" className="grid gap-0.5">
+              <code className="data font-medium break-all text-ink">{p.name}</code>
+              <span className="eyebrow text-ink-muted">
+                {IN_LABEL[p.in]}
+                {/* a phone's card has no Type or Required cell: they ride on this line */}
+                <span className="md:hidden">
+                  {" · "}
+                  {p.type} · <span className={p.required ? "text-ink" : undefined}>{p.required ? "Required" : "Optional"}</span>
+                </span>
+              </span>
+            </span>,
+            <span key="type" className="data text-ink-muted">
+              {p.type}
+            </span>,
+            <span key="required" className={p.required ? "font-medium text-ink" : "text-ink-muted"}>
+              {p.required ? "Required" : "Optional"}
+            </span>,
+            <span key="about" className="text-ink-muted">
+              <Rich text={p.about} />
+            </span>,
+          ],
+        }))}
+      />
+      {/* stacked, not side by side: the responses have lines too long for half the column */}
+      <Snippet code={curl(e)} name={`the ${name} example request`} file="Example request · curl" />
+      <Snippet code={JSON.stringify(detail.response, null, 2)} name={`the ${name} example response`} file={`Example response · ${detail.status}`} />
+    </article>
+  );
+}
+
+/** A checkout's statuses in the order they move, and which one to fulfil on. */
+function Lifecycle() {
+  return (
+    <div className="grid min-w-0 gap-4">
+      <h5 className="title">How a checkout&apos;s status moves</h5>
+      <ol className="grid gap-0 sm:grid-cols-4" aria-label="Checkout statuses">
+        {CHECKOUT_STATUSES.map((s, i) => (
+          <li key={s.status} className="relative grid content-start gap-1 border-hairline py-3 max-sm:border-l max-sm:pl-4 sm:border-t sm:pt-4 sm:pr-4">
+            <span
+              aria-hidden
+              className={`absolute size-2.5 rounded-full max-sm:top-4 max-sm:-left-[5.5px] sm:-top-[5.5px] sm:left-0 ${s.status === "paid" ? "bg-positive" : s.status === "expired" ? "bg-ink-muted" : "bg-accent"}`}
+            />
+            <span className="data font-medium text-ink">
+              {s.status}
+              {i === CHECKOUT_STATUSES.length - 1 && <span className="font-normal text-ink-muted"> (from open)</span>}
+            </span>
+            <span className="text-sm text-ink-muted">{s.means}</span>
+          </li>
+        ))}
+      </ol>
+      <p className="text-sm text-ink-muted">open → pending → paid, or open → expired when nobody pays.</p>
+      <Callout tone="warning">
+        The customer&apos;s browser coming back to your <Code>returnUrl</Code> isn&apos;t proof of payment. Fulfil on payment.succeeded, or when the
+        checkout reads <Code>paid</Code> and the amount is yours.
+      </Callout>
+    </div>
+  );
+}
+
+/** The events we send, and when. */
+export function Events() {
+  const later = EVENTS.filter((e) => !e.sent);
+  return (
+    <div className="grid gap-3">
+      <DocTable
+        caption="Webhook events"
+        columns={[
+          { label: "Event", width: "w-[26%]" },
+          { label: "When", width: "w-[44%]" },
+          { label: "Extra data fields", width: "w-[30%]" },
+        ]}
+        rows={EVENTS.filter((e) => e.sent).map((e) => ({
+          key: e.type,
+          cells: [
+            <code key="type" className="data font-medium text-ink">
+              {e.type}
+            </code>,
+            <span key="when" className="text-ink-muted">
+              {e.when}
+            </span>,
+            <span key="extra" className="text-ink-muted">
+              <Rich text={e.extra} />
+            </span>,
+          ],
+        }))}
+      />
+      {later.map((e) => (
+        <p key={e.type} className="text-sm text-ink-muted">
+          <Code>{e.type}</Code> isn&apos;t sent yet. Read <Code>refunded</Code> from <Code>GET /api/v1/sessions/{"{id}"}</Code> or{" "}
+          <Code>GET /api/v1/payments</Code> instead.
+        </p>
+      ))}
+    </div>
+  );
+}
+
+/** How to make each outcome happen in test mode, and what you get back. */
+export function TestScenarios() {
+  return (
+    <DocTable
+      caption="Test scenarios"
+      columns={[
+        { label: "Scenario", width: "w-[18%]" },
+        { label: "How to trigger it", width: "w-[38%]" },
+        { label: "What you get", width: "w-[44%]" },
+      ]}
+      rows={TEST_SCENARIOS.map((t) => ({
+        key: t.id,
+        cells: [
+          <span key="scenario" className="font-medium text-ink">
+            {t.scenario}
+          </span>,
+          <span key="how" className="text-ink-muted">
+            <Rich text={t.how} />
+          </span>,
+          <span key="result" className="grid gap-1.5">
+            {t.status && (
+              <span className="flex flex-wrap items-baseline gap-x-2">
+                <span className="data font-medium text-ink">{t.status}</span>
+                {t.messages?.map((m) => (
+                  <span key={m} className="text-ink">
+                    &ldquo;{m}&rdquo;
+                  </span>
+                ))}
+              </span>
+            )}
+            <span className="text-ink-muted">
+              <Rich text={t.result} />
+            </span>
+          </span>,
+        ],
+      }))}
+    />
   );
 }
 
@@ -187,9 +427,10 @@ export function Errors() {
       <DocTable
         caption="Error status codes"
         columns={[
-          { label: "Status", width: "w-[12%]" },
-          { label: "Means", width: "w-[38%]" },
-          { label: "What we say", width: "w-[50%]" },
+          { label: "Status", width: "w-[9%]" },
+          { label: "Means", width: "w-[27%]" },
+          { label: "What we say", width: "w-[34%]" },
+          { label: "What to do", width: "w-[30%]" },
         ]}
         rows={ERRORS.map((e) => ({
           key: String(e.status),
@@ -207,6 +448,9 @@ export function Errors() {
                 </li>
               ))}
             </ul>,
+            <span key="fix" className="text-ink-muted">
+              <Rich text={e.fix} />
+            </span>,
           ],
         }))}
       />

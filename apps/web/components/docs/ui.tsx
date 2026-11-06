@@ -51,7 +51,7 @@ export function Section({ id, number, label, title, lede, children }: { id: stri
 /** One line per span, so whole-line comments can be dimmed; the copied text is the code as written. */
 function Lines({ code }: { code: string }) {
   return code.split("\n").map((line, i) => (
-    <span key={i} className={/^\s*(\/\/|<!--)/.test(line) ? "text-glass-ink/60" : undefined}>
+    <span key={i} className={/^\s*(\/\/|<!--|#)/.test(line) ? "text-glass-ink/60" : undefined}>
       {line}
       {"\n"}
     </span>
@@ -90,6 +90,36 @@ export const MiniCode = ({ code }: { code: string }) => (
       <Lines code={code} />
     </code>
   </pre>
+);
+
+const CALLOUT = {
+  note: { label: "Note", box: "border-accent/40 bg-accent-soft", ink: "text-accent", icon: "M12 11v6m0-10h.01" },
+  warning: { label: "Warning", box: "border-warning/50 bg-warning/10", ink: "text-warning", icon: "M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" },
+} as const;
+
+/** A rule worth stopping for: an aside the screen reader announces as a note, named by its label and an icon as well
+ *  as its colour. */
+export function Callout({ tone = "note", children }: { tone?: keyof typeof CALLOUT; children: ReactNode }) {
+  const c = CALLOUT[tone];
+  return (
+    <aside role="note" aria-label={c.label} className={`flex min-w-0 gap-3 rounded-[14px] border p-4 text-sm ${c.box}`}>
+      <svg aria-hidden viewBox="0 0 24 24" className={`mt-0.5 size-4 shrink-0 ${c.ink}`} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        {tone === "note" && <circle cx="12" cy="12" r="10" />}
+        <path d={c.icon} />
+      </svg>
+      <p className="min-w-0 text-ink">
+        <strong className={`eyebrow mr-2 font-normal ${c.ink}`}>{c.label}</strong>
+        {children}
+      </p>
+    </aside>
+  );
+}
+
+/** Where a step runs. Words, not only a colour. */
+export const WhereTag = ({ where }: { where: "Server" | "Browser" }) => (
+  <span className={`inline-flex w-fit rounded-pill px-2.5 py-0.5 text-xs font-medium whitespace-nowrap ${where === "Server" ? "bg-accent-soft text-accent" : "border border-hairline text-ink"}`}>
+    {where === "Server" ? "On your server" : "In the browser"}
+  </span>
 );
 
 const METHOD_TONE: Record<Method, string> = {
@@ -133,6 +163,7 @@ export interface Column {
   label: string;
   width?: string; // a Tailwind width for the desktop table, like "w-[30%]"
   stackLabel?: boolean; // show the label over the cell on a phone (default true)
+  phoneHidden?: boolean; // leave the cell out of a phone's card (another cell shows it there)
 }
 
 const stackLabel =
@@ -166,7 +197,7 @@ export function DocTable({ caption, columns, rows }: { caption: string; columns:
                   key={columns[i].label}
                   role="cell"
                   data-label={columns[i].label}
-                  className={`min-w-0 px-4 py-3 break-words max-md:block max-md:p-0 ${columns[i].stackLabel === false ? "" : stackLabel}`}
+                  className={`min-w-0 px-4 py-3 break-words max-md:block max-md:p-0 ${columns[i].stackLabel === false ? "" : stackLabel} ${columns[i].phoneHidden ? "max-md:hidden" : ""}`}
                 >
                   {cell}
                 </td>

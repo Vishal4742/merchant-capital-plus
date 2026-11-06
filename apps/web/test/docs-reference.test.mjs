@@ -1,7 +1,10 @@
 // claude-frontend docs-drift checks for /docs (FR-GW-8): what lib/docs-reference.ts documents (and the page renders)
 // is what the code does. Every path is a route file under app/api/v1 that exports the method, the currencies are the
 // quotes module's, the limits are the code's constants, and every error message quoted is one the code sends.
-// The limits only a request can show (rate limits, field lengths, webhook retries) are in docs-limits.test.mjs.
+// The limits only a request can show (rate limits, field lengths, webhook retries) are in docs-limits.test.mjs; the
+// full endpoint pages' example replies and the test scenarios, from the real handlers, are in docs-endpoints.test.mjs.
+// Here: each full endpoint page lists exactly the fields its route reads, each event documented as sent has a caller
+// in the app (and one documented as not sent has none), and the checkout statuses are the SDK's.
 // Run from apps/web: npm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -9,7 +12,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const ROOT = new URL("..", import.meta.url).pathname;
-const { ENDPOINTS, RESOURCES, RATE_LIMITS, FX_CURRENCIES, LIMITS, ERRORS } = await import("../lib/docs-reference.ts");
+const { ENDPOINTS, RESOURCES, GROUPS, RATE_LIMITS, FX_CURRENCIES, LIMITS, ERRORS, EVENTS, CHECKOUT_STATUSES, TEST_SCENARIOS } = await import("../lib/docs-reference.ts");
 const { CURRENCIES, MAX_PAYMENT, MIN_PAYMENT, HttpError } = await import("../lib/server/http.ts");
 const { BANDS, QUOTE_TTL_MS, RATE_CACHE_MS, toUsdtUnits } = await import("../lib/server/quotes.ts");
 const { MAX_KEYS } = await import("../lib/server/keys.ts");
@@ -114,4 +117,84 @@ test("every error message the docs quote is one the code sends, word for word", 
   for (const { status, examples } of ERRORS) {
     for (const message of examples) assert.ok(sources.some((text) => text.includes(message)), `${status}: "${message}" isn't in the code`);
   }
+});
+
+/** Every .ts/.tsx source file under these folders, as [path, text]. */
+const sourcesIn = (...dirs) =>
+  dirs.flatMap((dir) =>
+    readdirSync(join(ROOT, dir), { recursive: true })
+      .filter((file) => /\.tsx?$/.test(file))
+      .map((file) => [join(dir, file), readFileSync(join(ROOT, dir, file), "utf8")]),
+  );
+const namesOf = (params, where) => params.filter((p) => p.in === where).map((p) => p.name.toLowerCase()).sort();
+const readsOf = (text, pattern) => [...new Set([...text.matchAll(pattern)].map((m) => m[1].toLowerCase()))].sort();
+
+test("the reference is in three groups, your server's first, and every one of its endpoints has a full page", () => {
+  assert.deepEqual(Object.keys(GROUPS), ["server", "dashboard", "hosted"]);
+  assert.deepEqual([...new Set(RESOURCES.map((r) => r.group))], ["server", "dashboard", "hosted"], "grouped, in that order");
+  const server = RESOURCES.filter((r) => r.group === "server").flatMap((r) => r.endpoints);
+  assert.deepEqual(
+    server.map((e) => `${e.method} ${e.path}`),
+    ["POST /api/v1/sessions", "GET /api/v1/sessions/{id}", "GET /api/v1/payments"],
+  );
+  for (const e of server) assert.ok(e.detail, `${e.method} ${e.path} has a full page`);
+  for (const e of ENDPOINTS.filter((e) => e.detail)) assert.equal(e.auth, "secret", `${e.path}: full pages are for the secret-key calls`);
+});
+
+test("each full endpoint page lists exactly the body fields, headers, query and path parameters its route reads", () => {
+  for (const e of ENDPOINTS.filter((e) => e.detail)) {
+    const text = readFileSync(routeFile(e.path), "utf8");
+    const at = `${e.method} ${e.path}`;
+    const { params } = e.detail;
+    assert.deepEqual(namesOf(params, "body"), readsOf(text, /\bbody\.(\w+)/g), `${at}: body`);
+    assert.deepEqual(namesOf(params, "header"), readsOf(text, /headers\.get\("([\w-]+)"\)/g), `${at}: headers (Authorization is read by shopCaller)`);
+    assert.deepEqual(namesOf(params, "query"), readsOf(text, /(?:query|searchParams)\.get\("(\w+)"\)/g), `${at}: query`);
+    assert.deepEqual(namesOf(params, "path"), readsOf(e.path, /\{(\w+)\}/g), `${at}: path`);
+    assert.equal(new Set(params.map((p) => p.name)).size, params.length, `${at}: no parameter twice`);
+    // the example only sends documented parameters, and every required one
+    const sent = [...Object.keys(e.detail.body ?? {}), ...Object.keys(e.detail.headers ?? {})].map((n) => n.toLowerCase());
+    const known = new Set(params.filter((p) => p.in === "body" || p.in === "header").map((p) => p.name.toLowerCase()));
+    for (const name of sent) assert.ok(known.has(name), `${at}: the example sends ${name}, which isn't documented`);
+    for (const p of params.filter((p) => p.required && p.in === "body")) assert.ok(sent.includes(p.name.toLowerCase()), `${at}: the example leaves out ${p.name}`);
+  }
+});
+
+test("each webhook event documented as sent has a caller in the app, and one documented as not sent has none", () => {
+  const events = readFileSync(join(ROOT, "lib/server/events.ts"), "utf8");
+  // the event types lib/server/events.ts defines are the ones documented
+  const defined = events.match(/type EventType = ([^;]+);/)[1].match(/"[\w.]+"/g).map((t) => t.slice(1, -1));
+  assert.deepEqual(EVENTS.map((e) => e.type).sort(), [...defined].sort());
+  // which exported function sends which type
+  const senders = new Map([...events.matchAll(/export async function (\w+)\([\s\S]*?\n}/g)].flatMap(([body, name]) => [...body.matchAll(/"(payment\.\w+)"/g)].map((m) => [m[1], name])));
+  const app = sourcesIn("app", "lib", "components").filter(([path]) => path !== join("lib", "server", "events.ts"));
+  // a use outside an import line: the default argument in lib/announce-paid.ts counts, a test file never does
+  const callers = (name) => app.filter(([, text]) => text.split("\n").some((line) => !/^\s*import\b/.test(line) && new RegExp(`\\b${name}\\b`).test(line))).map(([path]) => path);
+  for (const { type, sent } of EVENTS) {
+    const sender = senders.get(type);
+    assert.ok(sender, `no function in lib/server/events.ts sends ${type}`);
+    if (sent) assert.ok(callers(sender).length > 0, `${type} is documented as sent, but nothing in the app calls ${sender}`);
+    else assert.deepEqual(callers(sender), [], `${type} is documented as not sent yet, but ${sender} is called: document it`);
+  }
+  // both are sent since claude-contracts' refunds/sync (lib/server/refunds.ts) calls onRefund in production
+  assert.deepEqual(EVENTS.filter((e) => e.sent).map((e) => e.type), ["payment.succeeded", "payment.refunded"]);
+});
+
+test("the checkout statuses are the SDK's, in the order a checkout moves", () => {
+  const sdkText = readFileSync(new URL("../../../packages/sdk/index.ts", import.meta.url), "utf8");
+  const union = sdkText.match(/status: ("\w+"(?: \| "\w+")+);/)[1].match(/\w+/g);
+  assert.deepEqual(CHECKOUT_STATUSES.map((s) => s.status), union);
+});
+
+test("every test scenario message is one the code sends, word for word, and each id is unique", () => {
+  const code = sourcesIn("app/api", "lib").filter(([path]) => !path.endsWith("docs-reference.ts")).map(([, text]) => text);
+  // "This payment link is ${status}." is a template: the scenario quotes it filled in
+  const filled = code.map((text) => text.replaceAll("This payment link is ${status}.", "This payment link is paid."));
+  for (const { id, messages = [] } of TEST_SCENARIOS) {
+    for (const message of messages) assert.ok(filled.some((text) => text.includes(message)), `${id}: "${message}" isn't in the code`);
+  }
+  assert.equal(new Set(TEST_SCENARIOS.map((t) => t.id)).size, TEST_SCENARIOS.length);
+});
+
+test("every error status says what to do", () => {
+  for (const { status, fix } of ERRORS) assert.ok(fix && fix.length > 10, `${status} has a fix`);
 });
