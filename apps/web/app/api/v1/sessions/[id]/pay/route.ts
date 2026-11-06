@@ -3,6 +3,8 @@
 // so the amount, merchant and order can't be changed by the browser, and a bad signature costs no gas.
 // A link or page checkout may carry a discount code (FR-GW-12): its price is claimed (the hold frozen) under the
 // in-flight lock, and that one price is verified, relayed, read on chain and recorded (batch-009 security F1-F3).
+// Batch 021 (NFR-4): the sheet sends the units it signed as `amount`; one that isn't the claimed price is a 409 with the
+// amount due (the sheet shows it), so the sheet no longer reads the voucher route before every approval.
 import { verifyTypedData, type Address, type Hex } from "viem";
 import { payConfig } from "../../../../../../lib/config.ts";
 import { parseApproval, saleAuthorization, type Approval } from "../../../../../../lib/pay.ts";
@@ -10,9 +12,11 @@ import { readUsdtBalance, saleSettled } from "../../../../../../lib/onchain.ts";
 import { announcePaid } from "../../../../../../lib/announce-paid.ts";
 import { BUSY, NOT_FUNDED, UNKNOWN, relaySale } from "../../../../../../lib/relay.ts";
 import { findPayment, gatewayCheckout, releaseClaim, settlePending } from "../../../../../../lib/settle.ts";
+import type { Checkout } from "../../../../../../lib/server/checkouts.ts";
 import { HttpError } from "../../../../../../lib/server/http.ts";
 import { claimAmountDue } from "../../../../../../lib/server/vouchers.ts";
 import { claimPayment, getSession, isInFlight, markPending, recordPayment, releasePayment, type Session } from "../../../../../../lib/sessions.ts";
+import { formatUsdt, plainUsdt } from "../../../../../../lib/usdt.ts";
 
 const fail = (status: number, error: string) => Response.json({ error }, { status });
 const LONGER_THAN_CHECKOUT = "This approval would last longer than the checkout, which expires sooner. Nothing was charged. Please try again.";
@@ -34,16 +38,19 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const pay = payConfig();
   if (!pay) return fail(503, "Payments aren't live on this server yet.");
 
-  const approval = parseApproval(await request.json().catch(() => null));
-  if ("error" in approval) return fail(400, approval.error);
   // a link or page checkout prices through its voucher hold; a database we can't read refuses before anything is
-  // locked or relayed (its price is unknown)
-  const isCheckout = await gatewayCheckout(id).then(Boolean, (error: unknown) => {
+  // locked or relayed (its price is unknown). Read while the body arrives (NFR-4); it never rejects, so a bad body's
+  // 400 below leaves nothing unhandled.
+  const checkoutRead = gatewayCheckout(id).catch((error: unknown) => {
     console.error(`checkout ${id}: checkout read failed: ${error instanceof Error ? error.name : "error"}`);
-    return null;
+    return undefined;
   });
-  if (isCheckout === null) return fail(503, BUSY);
-  return isCheckout ? payCheckout(id, session, pay, approval) : payShopSession(id, session, pay, approval);
+  const body: unknown = await request.json().catch(() => null);
+  const approval = parseApproval(body);
+  if ("error" in approval) return fail(400, approval.error);
+  const checkout = await checkoutRead;
+  if (checkout === undefined) return fail(503, BUSY);
+  return checkout ? payCheckout(id, session, pay, approval, checkout, (body as { amount?: unknown }).amount) : payShopSession(id, session, pay, approval);
 }
 
 /** A shop's own session (created with its key): today's path, at the session's amount. */
@@ -85,8 +92,11 @@ async function payShopSession(id: string, session: Session, pay: Pay, { from: pa
  * lock and the open-state check, and one claimed price is verified, relayed, read and recorded (F3). The hold is
  * released only by this attempt, under the lock, when nothing can settle at that price: a refusal before the relay,
  * or a relayer answer that says nothing was sent. Never on an unknown outcome or an order the chain shows paid.
+ * `shown` is the units the sheet signed (absent from an older sheet: then the verify alone decides).
  */
-async function payCheckout(id: string, session: Session, pay: Pay, { from: payer, salt, signature, validBefore }: Approval): Promise<Response> {
+async function payCheckout(id: string, session: Session, pay: Pay, { from: payer, salt, signature, validBefore }: Approval, checkout: Checkout, shown: unknown): Promise<Response> {
+  const signedFor = typeof shown === "string" && /^\d{1,30}$/.test(shown) ? BigInt(shown) : undefined;
+  if (shown !== undefined && signedFor === undefined) return fail(400, "amount must be USDT units.");
   if (validBefore > BigInt(Math.floor(session.expiresAt / 1000))) return fail(400, LONGER_THAN_CHECKOUT);
   if (!claimPayment(id)) return fail(409, "This checkout is already being paid.");
   try {
@@ -109,6 +119,14 @@ async function payCheckout(id: string, session: Session, pay: Pay, { from: payer
     if ("error" in claimed) return claimed.error instanceof HttpError && claimed.error.status === 410 ? fail(410, claimed.error.message) : refuse(503, BUSY);
     const price = claimed.value;
     if (price === null) return refuse(503, BUSY);
+    // the sheet showed and signed another total (a code changed in another tab): unlike the lock's 409 and
+    // STILL_PENDING, this attempt claimed and stops before the relay, so its claim is released (F1 (i)); the reply
+    // carries the amount due for the sheet to show
+    if (signedFor !== undefined && signedFor !== price) {
+      await releaseClaim(id);
+      const due = { amountDue: plainUsdt(price), discount: plainUsdt(checkout.usdtAmount - price), amountUnits: price.toString() };
+      return Response.json({ error: `The total is now ${formatUsdt(price)} USDT. Check it, then hold to pay again.`, ...due }, { status: 409 });
+    }
     const sale = { merchantPay: pay.merchantPay, merchant: session.merchant, orderRef: session.orderRef, amount: price };
     const valid = await verifyTypedData({ ...saleAuthorization(sale, payer, salt, validBefore), address: payer, signature }).catch(() => false);
     if (!valid) return refuse(400, MISMATCH);

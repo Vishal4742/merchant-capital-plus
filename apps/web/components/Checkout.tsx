@@ -3,8 +3,9 @@
 // The customer's checkout sheet (FR-PAY-5, FR-PAY-7, FR-PAY-9). Plain words only: no "sign", "gas",
 // "wallet" or chain names. Press and hold to pay (human pick); the guest key signs in the browser and our
 // server checks and relays it. Batch 006: the FX line, a countdown, named states, "Back to <shop>".
-// Batch 015: a discount code on link and page checkouts (FR-GW-12). The payer approves the amount due as our server
-// reads it right before approving, never one remembered here.
+// Batch 015: a discount code on link and page checkouts (FR-GW-12). Batch 021 (NFR-4): the payer approves exactly the
+// units the sheet shows (the server-rendered amount due, then each code reply's), sent with the payment; if the server's
+// claimed price differs it answers 409 with the amount due, and the sheet shows that and stops (security 015 INFO 8).
 import Link from "next/link";
 import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { Address, Hex } from "viem";
@@ -64,14 +65,19 @@ const pill = "rounded-pill border border-current px-3 py-0.5 text-xs font-medium
 class Shown extends Error {}
 
 const CODE_FAILED = "We couldn't check that code. Try again.";
-type Due = { amountText: string; discountText: string | null };
+/** amountUnits is what the payer approves: always the units behind amountText, never a parse of the text. */
+type Due = { amountText: string; discountText: string | null; amountUnits: string };
+type DueReply = { amountDue: string; discount: string; amountUnits: string };
+/** The amount due as the code route and the pay route's 409 send it. */
+const isDue = (data: { amountDue?: unknown; discount?: unknown; amountUnits?: unknown }): data is DueReply =>
+  typeof data.amountDue === "string" && typeof data.discount === "string" && typeof data.amountUnits === "string" && /^\d+$/.test(data.amountUnits);
 // the code route sends plain decimals ("1000.00"); the sheet groups thousands like the server-rendered amounts
 const grouped = (plain: string) => plain.replace(/^\d+/, (whole) => Number(whole).toLocaleString("en-US"));
-const dueFrom = (data: { amountDue: string; discount: string }): Due => ({ amountText: grouped(data.amountDue), discountText: /^0+(\.0+)?$/.test(data.discount) ? null : grouped(data.discount) });
+const dueFrom = (data: DueReply): Due => ({ amountText: grouped(data.amountDue), discountText: /^0+(\.0+)?$/.test(data.discount) ? null : grouped(data.discount), amountUnits: data.amountUnits });
 
 export function Checkout({ sessionId, merchantName, reference, items, amountText, code, fxLine, returnUrl, sale, expiresAt, paid, pending }: CheckoutProps) {
   const [receipt, setReceipt] = useState<Receipt | null>(null);
-  const [due, setDue] = useState<Due>({ amountText, discountText: code?.discountText ?? null });
+  const [due, setDue] = useState<Due>({ amountText, discountText: code?.discountText ?? null, amountUnits: sale?.amount ?? "" });
   const [codeError, setCodeError] = useState<string | null>(null);
   const [codeBusy, setCodeBusy] = useState(false);
   const [codeOpenAtStart] = useState(() => Boolean(code?.discountText)); // then the payer opens and closes it
@@ -119,7 +125,7 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
     try {
       const res = await fetch(`/api/v1/sessions/${sessionId}/voucher`, { method, headers: { "content-type": "application/json" }, body: body && JSON.stringify(body) });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) return setCodeError(typeof data.error === "string" ? data.error : CODE_FAILED);
+      if (!res.ok || !isDue(data)) return setCodeError(typeof data.error === "string" ? data.error : CODE_FAILED);
       focusAfterCode.current = true;
       setDue(dueFrom(data));
     } catch {
@@ -129,36 +135,29 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
     }
   }
 
-  /** The amount to approve, read from our server now (security 009 F1: the server charges what it claims, so a stale
-   *  amount here would only fail). If it moved since the payer saw the button, show it and stop. */
-  async function currentTerms(terms: NonNullable<typeof sale>, shown: Due) {
-    if (!code) return terms;
-    const res = await fetch(`/api/v1/sessions/${sessionId}/voucher`, { cache: "no-store" });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || typeof data.amountUnits !== "string") throw new Error(typeof data.error === "string" ? data.error : FAILED);
-    const now = dueFrom(data);
-    if (now.amountText !== shown.amountText) {
-      setDue(now);
-      throw new Error(`The total is now ${now.amountText} USDT. Check it, then hold to pay again.`);
-    }
-    return { ...terms, amount: data.amountUnits as string };
-  }
-
   async function submit() {
     setError(null);
     try {
       if (!sale) throw new Error("Payments aren't live yet.");
       const { signSale } = await (signer.current ??= loadSigner());
-      const approval = await signSale(await currentTerms(sale, due), expiresAt);
+      // the units on the button; the server charges what it claims and refuses any other (security 009 F1)
+      const approval = await signSale({ ...sale, amount: due.amountUnits }, expiresAt);
       let res: Response;
       try {
-        res = await fetch(`/api/v1/sessions/${sessionId}/pay`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(approval) });
+        res = await fetch(`/api/v1/sessions/${sessionId}/pay`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...approval, amount: due.amountUnits }) });
       } catch {
         // the request may have reached our server before the connection dropped (plan review, batch 004)
         setPhase("confirming");
         throw new Shown();
       }
-      const result = outcome(res.status, (await res.json().catch(() => ({}))) as PayAnswer);
+      const data = await res.json().catch(() => ({}));
+      // the total moved since the payer saw it (a code changed elsewhere): nothing was relayed, so show it and stop
+      if (res.status === 409 && isDue(data)) {
+        const now = dueFrom(data);
+        setDue(now);
+        throw new Error(`The total is now ${now.amountText} USDT. Check it, then hold to pay again.`);
+      }
+      const result = outcome(res.status, data as PayAnswer);
       if (result.kind === "paid") return setReceipt({ receiptId: result.receiptId ?? sessionId, txHash: result.txHash });
       if (result.kind === "error") throw new Error(result.message);
       setPhase(result.kind === "closed" ? "expired" : "confirming");

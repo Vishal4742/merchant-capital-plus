@@ -1,0 +1,4 @@
+# Vercel runtime log, merchant-capital-shop /api/webhook (fetched 09:37 IST, vercel logs -p merchant-capital-shop --json)
+verified payment.succeeded evt_mpDRG5QQpaqIocma session=2fba8bad-750b-4489-9c4d-4037c986d1d1 status=paid amount=1.00
+verified payment.succeeded evt_kbTWs8jaPum1DSm6 session=b50ff04a-b077-4030-9e0e-1734f5b2c454 status=paid amount=2.00
+verified payment.succeeded evt_Tk4VyDPSQre5kgO4 session=undefined status=undefined amount=undefined
