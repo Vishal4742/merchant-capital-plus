@@ -374,8 +374,28 @@ async function ownReceipt(client: RelayerClient, hash: Hash) {
   }
 }
 
+type Step = 'checks' | 'queue' | 'presend' | 'send' | 'receipt';
+
+/** Wall time per step in whole ms (NFR-4 on the deployed relayer): each lap is the time since the previous one. */
+function stopwatch() {
+  const start = performance.now();
+  let last = start;
+  let laps: Partial<Record<Step, number>> = {};
+  return {
+    lap(step: Step) {
+      const now = performance.now();
+      laps = { ...laps, [step]: Math.round(now - last) };
+      last = now;
+    },
+    read: () => ({ ...laps, total: Math.round(performance.now() - start) }),
+  };
+}
+type Stopwatch = ReturnType<typeof stopwatch>;
+let relays = 0; // the first /relay of this process is the cold one
+
 /** Runs inside the send lock: re-simulate on fresh state, sign with capped fees, send once, poll our receipt. */
-async function send(client: RelayerClient, p: Payment): Promise<Reject | Sent> {
+async function send(client: RelayerClient, p: Payment, clock: Stopwatch): Promise<Reject | Sent> {
+  clock.lap('queue');
   if (tooLate(p)) return EXPIRED; // queue time counts
   if (sentAuthorizations.has(sentKey(p))) return REPLAY;
   let nonce: number;
@@ -397,9 +417,12 @@ async function send(client: RelayerClient, p: Payment): Promise<Reject | Sent> {
   });
   const txHash = keccak256(signed);
   sentAuthorizations.add(sentKey(p)); // kept even if the send fails: the tx may still be pending, so a re-POST must not pay twice
+  clock.lap('presend');
   try {
     await client.sendRawTransaction({ serializedTransaction: signed });
+    clock.lap('send');
     const receipt = await ownReceipt(client, txHash);
+    clock.lap('receipt');
     if (!receipt) {
       recordSend(client, p, CAP_FEE_WEI, false, txHash); // may still be mined: count the worst case
       return reject(502, 'rpc_error', 'not mined within 8 s; poll the txHash', txHash);
@@ -431,6 +454,8 @@ async function send(client: RelayerClient, p: Payment): Promise<Reject | Sent> {
  * Every rejection happens before a transaction exists (AT-10), and only MerchantPay paySale/payInvoice are called (FR-REL-2).
  */
 export async function relay(body: string, client: RelayerClient): Promise<Response> {
+  const clock = stopwatch();
+  const cold = relays++ === 0;
   const parsed = parsePayment(body);
   if ('error' in parsed) return respond(reject(400, 'bad_request', parsed.error));
   let p = parsed.payment;
@@ -441,11 +466,14 @@ export async function relay(body: string, client: RelayerClient): Promise<Respon
   } catch (e) {
     return respond(reject(502, 'rpc_error', reason(e)));
   }
-  const result = await serialized(() => send(client, p));
+  clock.lap('checks');
+  const result = await serialized(() => send(client, p, clock));
   if ('code' in result) return respond(result);
+  const timings = { cold, ...clock.read() };
+  console.info(`relayed ${result.txHash} timings ${JSON.stringify(timings)}`); // the web app gets the body; this is ours
   return Response.json({
     txHash: result.txHash, blockNumber: result.blockNumber.toString(), paymentId: result.paymentId?.toString(),
-    gasUsed: result.gasUsed.toString(), gasCostWei: result.gasCostWei.toString(),
+    gasUsed: result.gasUsed.toString(), gasCostWei: result.gasCostWei.toString(), timings,
   });
 }
 
