@@ -125,8 +125,23 @@ async function challenge(nonce: unknown, purpose: "receiving" | "approval", busi
   return c;
 }
 
+const NOT_ENROLLED =
+  "Approve with an enrolled approval wallet for this workspace. A wallet you linked later must first be endorsed by an enrolled approval wallet of an Owner (Settings, Approval wallets).";
+
+/** H1: may this Owner approve with `wallet`? Only an enrolled approval wallet of theirs, or any of their Privy wallets
+ *  for the workspace's first activation (no policy, none enrolled: that activation pins it). SQL_ACTIVATE re-checks. */
+async function approvalWalletAllowed(businessId: string, principalId: string, wallet: string): Promise<boolean> {
+  const [r] = await query<{ ok: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM wf_approval_wallets WHERE business_id = $1 AND principal_id = $2 AND wallet = $3)
+       OR (NOT EXISTS (SELECT 1 FROM wf_approval_wallets WHERE business_id = $1)
+           AND NOT EXISTS (SELECT 1 FROM wf_settlement_policies WHERE business_id = $1)) AS ok`,
+    [businessId, principalId, wallet],
+  );
+  return r?.ok === true;
+}
+
 /** Step 2 (Owner): the approval challenge for a pending proof, to be signed by `wallet`, which must be one Privy
- *  verified for this Owner. Shows the exact terms the Owner approves. */
+ *  verified for this Owner and (H1) one of their enrolled approval wallets. Shows the exact terms approved. */
 export async function issueOwnerApproval(ctx: AuthContext, input: { proofNonce: unknown; wallet: unknown }, now = Date.now()) {
   ownerCtx(ctx);
   const proof = await challenge(input.proofNonce, "receiving", ctx.businessId, now);
@@ -134,6 +149,7 @@ export async function issueOwnerApproval(ctx: AuthContext, input: { proofNonce: 
   const wallet = input.wallet.toLowerCase();
   const [mine] = await query("SELECT 1 FROM wf_principal_wallets WHERE principal_id = $1 AND address = $2", [ctx.principalId, wallet]);
   if (!mine) throw new HttpError(403, "Approve with a wallet linked to your WhiteFlow sign-in. Link one in the sign-in dialog, then sign in again.");
+  if (!(await approvalWalletAllowed(ctx.businessId, ctx.principalId, wallet))) throw new HttpError(403, NOT_ENROLLED);
   await sharedRateLimit(`wf-challenge:${ctx.principalId}`, CHALLENGES_PER_MINUTE, 60_000, "closed");
   const origin = publicOrigin();
   const [biz] = await query<{ display_name: string }>("SELECT display_name FROM wf_businesses WHERE id = $1", [ctx.businessId]);
@@ -186,6 +202,9 @@ const SQL_ACTIVATE = `WITH actor AS (
       AND EXISTS (SELECT 1 FROM wf_challenges WHERE nonce = $5 AND purpose = 'approval' AND business_id = $1 AND principal_id = $2
                   AND consumed_at IS NULL AND expires_at > $6 AND payload->>'proofNonce' = $4 AND address = $11)
       AND EXISTS (SELECT 1 FROM wf_principal_wallets WHERE principal_id = $2 AND address = $11)
+      -- H1: the approver is an enrolled approval wallet of this Owner, or this is the first activation (none enrolled)
+      AND (EXISTS (SELECT 1 FROM wf_approval_wallets WHERE business_id = $1 AND principal_id = $2 AND wallet = $11)
+           OR ((SELECT v FROM cur) = 0 AND NOT EXISTS (SELECT 1 FROM wf_approval_wallets WHERE business_id = $1)))
   ), used AS (
     UPDATE wf_challenges SET consumed_at = $6 WHERE nonce IN ($4, $5) AND consumed_at IS NULL AND EXISTS (SELECT 1 FROM ok) RETURNING nonce
   ), pol AS (
@@ -193,6 +212,10 @@ const SQL_ACTIVATE = `WITH actor AS (
                                         approval_nonce, approval_wallet, v1_obligations, created_at)
     SELECT $1, $3::int + 1, $7, $9, $8, $10, $2, $4, $5, $11, $12, $6 WHERE (SELECT count(*) FROM used) = 2
     RETURNING ${POLICY_COLUMNS}
+  ), pin AS (
+    -- H1: the first activation pins its approval wallet (later ones need an endorsement: approval-wallets.ts)
+    INSERT INTO wf_approval_wallets (business_id, wallet, principal_id, enrolled_at, endorsed_by)
+    SELECT $1, $11, $2, $6, NULL FROM pol WHERE (SELECT v FROM cur) = 0 ON CONFLICT DO NOTHING
   ), n AS (
     INSERT INTO wf_notifications (id, business_id, principal_id, kind, detail, created_at)
     SELECT $13 || '_' || m.principal_id, $1, m.principal_id, 'policy.activated', jsonb_build_object('version', $3::int + 1, 'policyHash', $10::text), $6

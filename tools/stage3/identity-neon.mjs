@@ -60,7 +60,7 @@ if (wf.length) await sql.query(`DROP TABLE IF EXISTS ${wf.map((r) => r.t).join("
 const files = readdirSync(DB_DIR).filter((f) => /^\d{3}_.+\.sql$/.test(f)).sort();
 for (const pass of [1, 2]) for (const f of files) for (const s of sqlStatements(readFileSync(new URL(f, DB_DIR), "utf8"))) await sql.query(s);
 const tables = (await sql.query("SELECT string_agg(table_name, ',' ORDER BY table_name) AS t FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE 'wf\\_%'"))[0].t;
-check("schema: all web migrations (through 053) applied twice on the production driver", tables.split(",").length === 10, `wf tables: ${tables}`);
+check("schema: all web migrations (through 053) applied twice on the production driver", tables.split(",").length === 11, `wf tables: ${tables}`); // 11 with wf_approval_wallets (round 2 H1)
 
 // the services in this process (to issue challenges) use the same target through the production adapter
 process.env.DATABASE_URL = TARGET;

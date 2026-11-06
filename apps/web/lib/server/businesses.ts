@@ -249,7 +249,8 @@ export async function setMemberRole(ctx: AuthContext, input: { principalId: unkn
   const response = { principalId: target, role };
   const forms =
     role === "owner"
-      ? [`done AS (UPDATE wf_memberships SET role = 'owner' WHERE business_id = $1 AND principal_id = $10 AND role <> 'owner' AND EXISTS (SELECT 1 FROM actor) RETURNING 1),
+      ? // $11 (= 'owner') keeps the parameter list the same for every form: an unused $11 failed every promotion (08P01)
+        [`done AS (UPDATE wf_memberships SET role = $11 WHERE business_id = $1 AND principal_id = $10 AND role <> 'owner' AND EXISTS (SELECT 1 FROM actor) RETURNING 1),
           c AS (UPDATE wf_businesses SET owner_count = owner_count + 1 WHERE id = $1 AND EXISTS (SELECT 1 FROM done))`]
       : [
           `done AS (UPDATE wf_memberships SET role = $11 WHERE business_id = $1 AND principal_id = $10 AND role = 'owner' AND EXISTS (SELECT 1 FROM actor) RETURNING 1),
