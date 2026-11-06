@@ -38,13 +38,19 @@ test("syncRefund: a 502 then 200 succeeds on the second try", async () => {
   assert.equal(calls.length, 2);
 });
 
-for (const status of [400, 401, 404, 429]) {
+for (const status of [400, 401, 429]) {
   test(`syncRefund: a ${status} is not retried`, async () => {
     const { calls, fetcher } = fakeFetch([status]);
     assert.equal(await syncRefund("42", TX, fetcher, async () => {}), false);
     assert.equal(calls.length, 1);
   });
 }
+
+test("syncRefund: a 404 (no checkout record, e.g. an invoice) is done, not a failure, and not retried", async () => {
+  const { calls, fetcher } = fakeFetch([404]);
+  assert.equal(await syncRefund("42", TX, fetcher, async () => {}), true);
+  assert.equal(calls.length, 1);
+});
 
 test("syncRefund: a network error is retried like a 502 and never throws", async () => {
   let n = 0;

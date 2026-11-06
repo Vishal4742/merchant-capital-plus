@@ -43,6 +43,9 @@ const usdtAbi = parseAbi([
   "function balanceOf(address owner) view returns (uint256)",
 ]);
 const NOT_ENOUGH_USDT = "Your wallet doesn't have enough USDT for this refund.";
+/** The tx was sent but its receipt couldn't be read: it may still land, so the merchant must not simply send it again
+ *  (security review 027 F1). */
+export const SENT_UNCONFIRMED = "It was sent, but it isn't confirmed yet. Check the table before you try again.";
 
 const COPY: Record<string, string> = {
   NotMerchant: "Switch to the wallet that received this payment.",
@@ -139,7 +142,9 @@ type Call = Parameters<MerchantWallet["reader"]["simulateContract"]>[0];
 async function send(w: MerchantWallet, call: Call) {
   const { request } = await w.reader.simulateContract({ ...call, account: w.account } as Call);
   const hash = await w.wallet.writeContract(request as Parameters<MerchantWallet["wallet"]["writeContract"]>[0]);
-  const receipt = await w.reader.waitForTransactionReceipt({ hash });
+  const receipt = await w.reader.waitForTransactionReceipt({ hash }).catch(() => {
+    throw new Error(SENT_UNCONFIRMED);
+  });
   if (receipt.status !== "success") throw new Error("That didn't go through, and nothing changed. Try again.");
   return receipt;
 }
