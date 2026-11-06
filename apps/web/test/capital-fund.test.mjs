@@ -3,14 +3,28 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
+import { encodeAbiParameters, keccak256 } from "viem";
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+
 const { fundOffer } = await import("../lib/server/capital-fund.ts");
 const { BUSY, UNKNOWN, NOT_FUNDED } = await import("../lib/relay.ts");
+const { usdtDomain, receiveTypes } = await import("../lib/usdt.ts");
 
 const NOW = Math.floor(Date.now() / 1000);
 const M = "0x37F9315EDF71d9C27b0F650c59e4c96aD6a442B1";
-const INVESTOR = "0x2222222222222222222222222222222222222222";
+const investorKey = privateKeyToAccount(generatePrivateKey());
+const INVESTOR = investorKey.address;
+const MARKET = "0xecd63a369d23dfddc6bfac921e41a86760c20abe";
 const TX = `0x${"ab".repeat(32)}`;
-const body = { claim_id: "1", investor: INVESTOR, units: "10000000", valid_after: "0", valid_before: String(NOW + 600), salt: `0x${"cd".repeat(32)}`, sig: `0x${"11".repeat(65)}` };
+// CapitalMarket.fundingNonce = keccak256(abi.encode(chainid, market, claimId, investor, units, salt)), written out
+// here independently of lib/server/capital.ts; value = quote(claimId, units) = ceil(units × price / face)
+const nonceOf = (claimId, units, salt) => keccak256(encodeAbiParameters([{ type: "uint256" }, { type: "address" }, { type: "uint256" }, { type: "address" }, { type: "uint256" }, { type: "bytes32" }], [1874n, MARKET, claimId, INVESTOR, units, salt]));
+async function signed({ units = 10_000_000n, validBefore = BigInt(NOW + 600), salt = `0x${"cd".repeat(32)}`, signer = investorKey, value } = {}) {
+  const cost = value ?? (units * 100_000_000n + 110_000_000n - 1n) / 110_000_000n;
+  const sig = await signer.signTypedData({ domain: usdtDomain, types: receiveTypes, primaryType: "ReceiveWithAuthorization", message: { from: INVESTOR, to: MARKET, value: cost, validAfter: 0n, validBefore, nonce: nonceOf(1n, units, salt) } });
+  return { claim_id: "1", investor: INVESTOR, units: units.toString(), valid_after: "0", valid_before: validBefore.toString(), salt, sig };
+}
+const body = await signed();
 const offer = (o = {}) => ({ kind: 2, merchant: M, offerDeadline: NOW + 3600, bps: 2000, cancelled: false, settled: false, invoiceId: 0n, face: 110_000_000n, price: 100_000_000n, maturity: NOW + 86400 * 30, sold: 0n, ...o });
 const tuple = (o) => [o.kind, o.merchant, BigInt(o.offerDeadline), o.bps, o.cancelled, o.settled, o.invoiceId, o.face, o.price, BigInt(o.maturity), o.sold];
 
@@ -62,10 +76,33 @@ test("refused before any relay: not a verified investor (403), offer not open (4
   }
 });
 
+test("a signature that isn't the investor's authorization for exactly this funding never reaches the relayer (400)", async () => {
+  const other = privateKeyToAccount(generatePrivateKey());
+  for (const bad of [
+    { ...body, sig: `0x${"11".repeat(65)}` }, // junk
+    await signed({ signer: other }), // someone else's key
+    { ...(await signed({ units: 20_000_000n })), units: "10000000" }, // signed for other units
+    await signed({ value: 1_000_000n }), // signed for another amount
+  ]) {
+    const w = world();
+    await assert.rejects(fundOffer(bad, w.deps), (e) => e.status === 400, bad.sig.slice(0, 12));
+    assert.equal(w.posts.length, 0);
+  }
+});
+
+test("a validBefore outside the relayer's 30 s – 15 min window is refused before any read or relay", async () => {
+  for (const validBefore of [BigInt(NOW + 10), BigInt(NOW + 1000)]) {
+    const w = world();
+    await assert.rejects(fundOffer(await signed({ validBefore }), w.deps), (e) => e.status === 400 && /window/i.test(e.message));
+    assert.equal(w.posts.length, 0);
+  }
+});
+
 test("the relayer's refusals become the web's plain messages", async () => {
   const cases = [
     [{ reply: { status: 422, json: { code: "insufficient_funds" } } }, 400, NOT_FUNDED],
     [{ reply: { status: 422, json: { code: "bad_signature" } } }, 400, /approval didn't work/],
+    [{ reply: { status: 422, json: { code: "replay" } } }, 409, /already sent/],
     [{ reply: { status: 503, json: { code: "gas_price_cap" } } }, 503, BUSY],
     [{ reply: { status: 429, json: { code: "rate_limited" } } }, 503, BUSY],
     [{ reply: { status: 403, json: {}, headers: { "x-vercel-mitigated": "challenge" } } }, 503, BUSY],

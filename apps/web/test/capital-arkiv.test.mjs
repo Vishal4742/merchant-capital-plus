@@ -54,11 +54,14 @@ test("the book joins chain offers with our Arkiv entities; an offer missing from
 test("an Arkiv outage keeps the book on screen with Buy disabled, and the error never leaks", async (t) => {
   const logged = [];
   t.mock.method(console, "error", (...a) => logged.push(a.join(" ")));
+  process.env.ARKIV_ACCESS_KEY = "SECRET-KEY";
   const { deps } = fakes({ failRows: true });
   const book = await arkiv.offerBook(deps);
   assert.equal(book.length, 1);
   assert.deepEqual(book[0].arkiv, { entity_key: null, matches: false });
   assert.ok(logged.length === 1);
+  assert.doesNotMatch(logged[0], /SECRET-KEY/, "the access key is redacted from the log");
+  delete process.env.ARKIV_ACCESS_KEY;
 });
 
 test("publish: only the offer's merchant; creates once with expiry = deadline, then patches (FR-ARK-1, FR-ARK-5)", async () => {
@@ -77,4 +80,21 @@ test("publish refuses a cancelled or expired offer that isn't on Arkiv yet", asy
   await assert.rejects(arkiv.publishOffer(M, 1n, cancelled.deps), (e) => e.status === 409);
   const expired = fakes({ offers: { 1: offer({ offerDeadline: NOW - 5 }) } });
   await assert.rejects(arkiv.publishOffer(M, 1n, expired.deps), (e) => e.status === 409);
+});
+
+test("publish and the book pick the same row for a claim, and an unchanged offer isn't rewritten (security F2, F5)", async () => {
+  const o = offer();
+  const ours = rowOf(o, "0xours");
+  const stale = { entityKey: "0xstale", terms: { ...arkiv.offerTerms(o), priceUsdt: "1" } };
+  const w = fakes({ rows: [ours, stale] });
+  const book = await arkiv.offerBook(w.deps);
+  const published = await arkiv.publishOffer(M, 1n, w.deps);
+  assert.equal(book[0].arkiv.entity_key, published.entity_key, "one rule picks the row in both places");
+  assert.equal(w.writes.length, 0, "the terms already match: no Arkiv write");
+});
+
+test("Arkiv write failures reach the client as a fixed message, never the SDK's text", async () => {
+  const w = fakes();
+  w.deps.arkiv.create = async () => { throw new Error("rpc https://rabdi/abc-internal failed"); };
+  await assert.rejects(arkiv.publishOffer(M, 1n, w.deps), (e) => e.status === 502 && !/rabdi|internal/.test(e.message));
 });
