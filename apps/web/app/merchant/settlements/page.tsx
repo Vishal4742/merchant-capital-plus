@@ -3,7 +3,8 @@
 // On top, the USDT already in the merchant's wallet and the Withdraw form (FR-GW-15), read apart from the history so
 // Withdraw still works when the log index is down.
 import { isHex } from "viem";
-import { readTxFee, readUsdtBalance } from "@/lib/onchain";
+import { readUsdtBalance } from "@/lib/onchain";
+import { cachedTxFee } from "@/lib/server/tx-fee";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { Account, EditorialHeader, Problem, SignedOut } from "@/components/gateway/Frame";
@@ -24,12 +25,12 @@ const header = (
 
 const one = (v: string | string[] | undefined) => (typeof v === "string" ? v : "");
 
-const FEE_ROWS = 50; // ponytail: one receipt read per row; page or cache them if ranges grow
+const FEE_ROWS = 50; // one receipt read per row, each kept once read (a mined tx's fee never changes, batch 044)
 
 /** The network fee the relayer covered for each settlement's transaction (the newest FEE_ROWS), from its receipt. */
 async function coveredFees(data: Settlements): Promise<Map<string, bigint | null>> {
   const hashes = data.settlements.map((s) => s.tx_hash).filter((h): h is `0x${string}` => typeof h === "string" && isHex(h)).slice(0, FEE_ROWS);
-  return new Map(await Promise.all(hashes.map(async (h) => [h, await readTxFee(h).catch(() => null)] as const)));
+  return new Map(await Promise.all(hashes.map(async (h) => [h, await cachedTxFee(h).catch(() => null)] as const)));
 }
 
 export default function SettlementsPage({ searchParams }: PageProps<"/merchant/settlements">) {
