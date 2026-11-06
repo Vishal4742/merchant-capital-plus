@@ -6,3 +6,5 @@ Request (verbatim): G4 phase review part 1 (code) CHANGES for claude-contracts (
 Agent ids (builders, for SendMessage resumes): Builder X links/pages, Builder Y vouchers/checkouts (BUILDERS-015.md)
 Log:
 - 08:2x spec.
+
+- 09:2x after merging main: two over-reaches fixed (USD rounds to the cent, back-off only after a timeout) and the creation check made best effort; full suite 419 / 0 fail; migration 048 applied (standing approval).
