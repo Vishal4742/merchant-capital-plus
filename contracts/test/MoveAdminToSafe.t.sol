@@ -3,6 +3,7 @@ pragma solidity 0.8.38;
 
 import {Test} from "forge-std/Test.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {MerchantPay} from "../src/MerchantPay.sol";
 import {InvestorRegistry} from "../src/InvestorRegistry.sol";
 import {ClaimToken} from "../src/ClaimToken.sol";
@@ -10,7 +11,7 @@ import {MoveAdminToSafe, ISafe} from "../script/MoveAdminToSafe.s.sol";
 
 /// @notice Batch 048: every admin role moves from the deployer to a 2-of-3 Safe on the live contracts (fork of 1874).
 contract MoveAdminToSafeForkTest is Test {
-    uint256 constant FORK_BLOCK = 12_303_386; // same block as the other fork tests: Safe 1.4.1 is deployed there
+    uint256 constant FORK_BLOCK = 12_382_404; // 20:58 IST: the live contracts (owner = deployer) and Safe 1.4.1 exist
     address constant DEPLOYER = 0xb4E7eDe967E108858DDb5d88B25FDc70723B714D;
     MerchantPay constant PAY = MerchantPay(0xAb817593253A0A37de723072827D88fE0ca54251);
     InvestorRegistry constant REGISTRY = InvestorRegistry(0x293430faE87CA79844c6E3A64E8044078c4d3E74);
@@ -32,11 +33,9 @@ contract MoveAdminToSafeForkTest is Test {
         ISafe safe = script.move(DEPLOYER, owners);
         address[3] memory t = [address(PAY), address(REGISTRY), address(CLAIMS)];
         for (uint256 i; i < 3; ++i) {
-            assertEq(Ownable(t[i]).owner(), address(safe), "owner is the Safe");
-            assertEq(PAY.pendingOwner(), address(0), "nothing pending");
+            assertEq(Ownable2Step(t[i]).owner(), address(safe), "owner is the Safe");
+            assertEq(Ownable2Step(t[i]).pendingOwner(), address(0), "nothing pending");
         }
-        assertEq(REGISTRY.pendingOwner(), address(0));
-        assertEq(CLAIMS.pendingOwner(), address(0));
         assertEq(safe.getThreshold(), 2);
         assertEq(safe.getOwners().length, 3);
         for (uint256 i; i < 3; ++i) {
@@ -77,8 +76,9 @@ contract MoveAdminToSafeForkTest is Test {
         address investor = makeAddr("investor");
         bytes memory eligible = abi.encodeCall(InvestorRegistry.setEligible, (investor, type(uint64).max));
 
+        bytes memory oneSig = _sign(safe, address(REGISTRY), eligible, 1); // signed first: expectRevert takes the next call
         vm.expectRevert(bytes("GS020")); // signatures too short: 1 of the 2 needed
-        _exec(safe, address(REGISTRY), eligible, _sign(safe, address(REGISTRY), eligible, 1));
+        _exec(safe, address(REGISTRY), eligible, oneSig);
 
         _exec(safe, address(REGISTRY), eligible, _sign(safe, address(REGISTRY), eligible, 2));
         assertTrue(REGISTRY.isEligible(investor), "2 of 3 run setEligible");
