@@ -1,6 +1,9 @@
 // Preview of the gateway screens before claude-contracts' backend is on main: with GATEWAY_PREVIEW=1 (never on Vercel)
 // our server answers the links and pages reads from these fixtures, in the API's own shapes (API.md). Nothing here can
 // be paid: every checkout answers 503. The tests use the same fixtures.
+import { paymentsIn, rangeOf, report, usdt, type ChainPayment, type History } from "./server/reports.ts"; // batch 012
+import { HttpError } from "./server/http.ts"; // batch 012
+import { EXPLORER } from "./usdt.ts"; // batch 012
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const T0 = Date.UTC(2026, 10, 6, 3, 0); // a fixed clock, so screenshots don't drift
@@ -89,6 +92,8 @@ export const previewFetch: typeof fetch = async (input, init) => {
   const path = new URL(String(input), "http://preview.invalid").pathname;
   const reply = (body: unknown, status = 200) => Response.json(body, { status });
   if ((init?.method ?? "GET") !== "GET") return reply({ error: "This is a preview: nothing can be created or paid here." }, 503);
+  const money = moneyPreview(String(input)); // batch 012
+  if (money) return money;
   if (path === "/api/v1/links") return reply({ links: PREVIEW_LINKS });
   if (path === "/api/v1/pages") return reply({ pages: PREVIEW_PAGES });
   const [, kind, slug] = path.match(/^\/api\/v1\/public\/(links|pages)\/([^/]+)$/) ?? [];
@@ -96,3 +101,83 @@ export const previewFetch: typeof fetch = async (input, init) => {
   if (!found) return reply({ error: kind === "pages" ? "No such payment page." : "No such payment link." }, 404);
   return reply(kind === "links" ? publicLink(found as (typeof PREVIEW_LINKS)[number]) : publicPage(found as (typeof PREVIEW_PAGES)[number]));
 };
+
+// ── batch 012 (claude-frontend): vouchers, reports and settlements ──
+// The report and its range rules are the gateway's own (lib/server/reports.ts) run over a fixed sales history, so the
+// preview's shapes and its 400s are the real ones; settlement rows are mapped as lib/server/settlements.ts maps them.
+
+const voucher = (code: string, fields: Record<string, unknown>) => ({
+  id: `vch_${code}`,
+  code,
+  kind: "percent",
+  value: "10",
+  expires_at: at(24),
+  max_redemptions: 100,
+  times_redeemed: 0,
+  min_amount: null,
+  active: true,
+  arkiv_entity_key: null,
+  created_at: at(-1),
+  ...fields,
+});
+
+export const PREVIEW_VOUCHERS = [
+  voucher("FLAT5", { kind: "fixed", value: "5", min_amount: "20", max_redemptions: 50, times_redeemed: 12, expires_at: at(10), arkiv_entity_key: "0x4c65053b8a7b0dd5ab462ee6fb0d2e943267cf3bcdbe7340fcb2d06b068fc9cc", created_at: at(-3) }),
+  voucher("SAVE10", { times_redeemed: 59, arkiv_entity_key: "0x0b5674c54b61fe65062dadcc70ffb94dcb83a6e6d379bed01e149f0870697c5c", created_at: at(-12) }),
+  voucher("MONSOON25", { value: "25", max_redemptions: 20, times_redeemed: 20, arkiv_entity_key: "0xb88a0454bcd6c12d919bf651e04b2c9af18e60fd0dd929c02ef762ac8d05441b", created_at: at(-20) }),
+  voucher("DIWALI15", { value: "15", max_redemptions: 200, times_redeemed: 34, expires_at: at(-2), created_at: at(-30) }),
+  voucher("STAFF50", { value: "50", max_redemptions: 5, times_redeemed: 1, active: false, created_at: at(-40) }),
+];
+
+const PAYERS: `0x${string}`[] = [
+  "0xff219fb7669580b3508e8232fa98f355d1b40d2f",
+  "0xb5f0cc488b88a3f261f3095f3321ea334c068688",
+  "0x7fab0e7c0d629a9e9d3bd0b36a1dda4c6fb32f74",
+  "0x4d05ccc0695eb3ad88f7596c162cef15400ef776",
+  "0x30d86b85e481eefc611422ad391d6939bbcbe259",
+];
+const SALES_PER_DAY = [4, 2, 5, 3, 0, 6, 3, 2, 4, 1, 5, 2, 3, 0, 4, 2, 3, 1, 2, 4, 3]; // today first
+const PRICES = [5_000_000n, 12_500_000n, 3_500_000n, 21_500_000n, 8_000_000n, 18_000_000n];
+const RELAY_FEE = 100_000n; // MerchantPay's 0.10 USDT
+const MINUTE_MS = 60_000;
+
+const PREVIEW_PAYMENTS: ChainPayment[] = SALES_PER_DAY.flatMap((n, daysAgo) => Array.from({ length: n }, (_, j) => ({ daysAgo, j })))
+  .sort((a, b) => b.daysAgo - a.daysAgo || a.j - b.j)
+  .map(({ daysAgo, j }, i) => {
+    const gross = PRICES[(daysAgo + j) % PRICES.length];
+    const toInvestors = daysAgo < 3 && j === 0 ? gross / 5n : 0n; // an advance is open: its investors take their share
+    const txHash: `0x${string}` = `0x${(i + 1).toString(16).padStart(64, "0")}`;
+    return { paymentId: BigInt(i + 1), payer: PAYERS[(daysAgo * 3 + j) % PAYERS.length], gross, fee: RELAY_FEE, toInvestors, toMerchant: gross - RELAY_FEE - toInvestors, refunded: 0n, txHash, time: T0 - daysAgo * DAY_MS + j * 47 * MINUTE_MS };
+  });
+const REFUNDED = PREVIEW_PAYMENTS[PREVIEW_PAYMENTS.length - 6];
+const PREVIEW_HISTORY: History = {
+  payments: PREVIEW_PAYMENTS.map((p) => (p === REFUNDED ? { ...p, refunded: 3_500_000n } : p)),
+  refunds: [{ paymentId: REFUNDED.paymentId, amount: 3_500_000n, time: REFUNDED.time + 120 * MINUTE_MS }],
+};
+
+const settlementJson = (p: ChainPayment) => ({
+  payment_id: p.paymentId.toString(),
+  gross: usdt(p.gross),
+  fee: usdt(p.fee),
+  to_investors: usdt(p.toInvestors),
+  net: usdt(p.toMerchant),
+  tx_hash: p.txHash,
+  settled_at: new Date(p.time).toISOString(),
+  explorer_url: p.txHash ? `${EXPLORER}/tx/${p.txHash}` : null,
+});
+
+/** The vouchers, reports and settlements reads; null for any other path. */
+function moneyPreview(input: string): Response | null {
+  const url = new URL(input, "http://preview.invalid");
+  const reply = (body: unknown, status = 200) => Response.json(body, { status });
+  try {
+    if (url.pathname === "/api/v1/vouchers") return reply({ vouchers: PREVIEW_VOUCHERS });
+    if (url.pathname === "/api/v1/reports") return reply(report(PREVIEW_HISTORY, rangeOf(new Request(url), T0)));
+    if (url.pathname === "/api/v1/settlements") return reply({ balance: "1284.35", settlements: [...paymentsIn(PREVIEW_HISTORY, rangeOf(new Request(url), T0))].reverse().map(settlementJson) });
+  } catch (error) {
+    if (error instanceof HttpError) return reply({ error: error.message }, error.status);
+    throw error;
+  }
+  return null;
+}
+// ── end batch 012 ──
