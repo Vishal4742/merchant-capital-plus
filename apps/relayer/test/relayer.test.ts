@@ -563,6 +563,15 @@ test('health reports the relayer WBT balance, nothing spent yet and the full 0.1
   assert.equal((await health(down.client)).status, 502);
 });
 
+// Batch 018 security F1: /health now runs in the signing instance and the web pings it on every checkout open, so a
+// burst must not fan out balance reads onto the RPC quota a sale's receipt poll needs.
+test('concurrent /health calls on a cold cache share one balance read', async () => {
+  const node = fakeNode();
+  const replies = await Promise.all(Array.from({ length: 10 }, () => health(node.client)));
+  assert.ok(replies.every((r) => r.status === 200));
+  assert.equal(node.calls.filter((c) => c === 'eth_getBalance').length, 1);
+});
+
 // Human 23:27: NFR-14 /health ≤ 300 ms p95 via a balance at most 5 s old, re-read after every send.
 test('health caches the WBT balance for 5 s and re-reads it after a send or once 5 s pass', async () => {
   const node = fakeNode();
