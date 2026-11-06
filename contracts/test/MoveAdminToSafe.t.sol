@@ -147,16 +147,30 @@ contract MoveAdminToSafeForkTest is Test {
         assertEq(CLAIMS.owner(), predicted);
     }
 
+    /// @dev A broadcast that stopped after all three handovers: the re-run sends only the create.
+    function test_AllHandedOverOnlyCreateLeft() public {
+        address predicted = address(script.predict(owners));
+        Ownable2Step[3] memory t = script.targets();
+        for (uint256 i; i < 3; ++i) {
+            vm.prank(DEPLOYER);
+            t[i].transferOwnership(predicted);
+        }
+        ISafe safe = script.move(DEPLOYER, owners, proofs);
+        for (uint256 i; i < 3; ++i) {
+            assertEq(t[i].owner(), address(safe));
+        }
+    }
+
     /// @dev Creating the Safe before every handover fails (its setup's accept reverts), so nobody can squat it.
     function test_SafeCantBeCreatedBeforeTheHandover() public {
         bytes memory init = script.initializer(owners);
         address predicted = address(script.predict(owners));
-        vm.expectRevert(); // setup's accept reverts (GS000); the 1.4.1 factory re-raises it with no data
+        vm.expectRevert(bytes("")); // setup's accept reverts (GS000); the 1.4.1 factory re-raises it with no data
         FACTORY.createProxyWithNonce(SAFE_L2, init, SALT);
 
         vm.prank(DEPLOYER);
         PAY.transferOwnership(predicted);
-        vm.expectRevert(); // two of the three are still not handed over
+        vm.expectRevert(bytes("")); // two of the three are still not handed over
         FACTORY.createProxyWithNonce(SAFE_L2, init, SALT);
 
         assertEq(predicted.code.length, 0, "no Safe");
