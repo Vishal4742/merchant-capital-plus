@@ -3,12 +3,12 @@
 // EIP-1193 provider; nothing is sent to a real chain. Run from apps/web: npm test
 import { mock, test } from "node:test";
 import assert from "node:assert/strict";
-import { decodeFunctionData, encodeAbiParameters, encodeErrorResult, getAddress, parseAbi, toHex } from "viem";
+import { decodeFunctionData, encodeAbiParameters, encodeErrorResult, encodeEventTopics, getAddress, parseAbi, toHex } from "viem";
 
 // lib/merchant-wallet.ts imports the Nym harness; these tests never boot it
 mock.module("@anon-rpc/browser-harness", { exports: { AnonRpcWorker: class {} } });
 
-const { CAPITAL_MARKET, CLAIM_TOKEN, INVESTOR_REGISTRY, MERCHANT_PAY, NOT_ENOUGH_WBT, NOT_THROUGH, UNCONFIRMED, WRONG_NETWORK, checkAmount, checkDestination, quoteWithdraw, sendStatus, withdraw, withdrawError } = await import("../lib/withdraw.ts");
+const { CANCELLED, CAPITAL_MARKET, CLAIM_TOKEN, INVESTOR_REGISTRY, MERCHANT_PAY, NOT_ENOUGH_WBT, NOT_THROUGH, REPLACED, UNCONFIRMED, WRONG_NETWORK, checkAmount, checkDestination, quoteWithdraw, sendStatus, withdraw, withdrawError } = await import("../lib/withdraw.ts");
 const { connectMerchant, SENT_UNCONFIRMED } = await import("../lib/merchant-wallet.ts");
 const { readUsdtBalance } = await import("../lib/onchain.ts");
 const { USDT, plainUsdt } = await import("../lib/usdt.ts");
@@ -21,6 +21,7 @@ const abi = parseAbi([
   "function transfer(address to, uint256 amount) returns (bool)",
   "function balanceOf(address owner) view returns (uint256)",
   "error Error(string)",
+  "event Transfer(address indexed from, address indexed to, uint256 value)",
 ]);
 
 const refused = (result) => (assert.equal(result.ok, false, `expected a refusal, got ${JSON.stringify(result, (_, v) => (typeof v === "bigint" ? `${v}n` : v))}`), result.error);
@@ -100,7 +101,7 @@ test("the balance read is USDT.balanceOf(merchant) on chain, as an exact bigint,
 
 // The fake wallet: transfer behaves like TetherTokenV2 (OZ ERC20: "exceeds balance"), every eth_sendTransaction is
 // recorded and mined at once unless the receipt is lost; `state.chainId` can change under the page like a real wallet.
-function fakeWallet({ balance = 70_710_000n, wbt = 10n ** 18n, rejectSend = false, noGas = false, lostReceipt = false, returnsFalse = false } = {}) {
+function fakeWallet({ balance = 70_710_000n, wbt = 10n ** 18n, rejectSend = false, noGas = false, lostReceipt = false, returnsFalse = false, noTransferLog = false } = {}) {
   const sent = [];
   const receipts = new Map();
   const state = { chainId: 1874 };
@@ -130,7 +131,9 @@ function fakeWallet({ balance = 70_710_000n, wbt = 10n ** 18n, rejectSend = fals
         const call = { to: params[0].to, from: params[0].from, ...decodeFunctionData({ abi, data: params[0].data }) };
         sent.push(call);
         const hash = `0x${sent.length.toString(16).padStart(64, "0")}`;
-        if (!lostReceipt) receipts.set(hash, { transactionHash: hash, status: "0x1", blockNumber: "0x10", blockHash: `0x${"01".repeat(32)}`, logs: [], transactionIndex: "0x0", from: MERCHANT, to: call.to, cumulativeGasUsed: "0x1", gasUsed: "0x1", effectiveGasPrice: "0x1", contractAddress: null, logsBloom: `0x${"00".repeat(256)}`, type: "0x2" });
+        // TetherTokenV2's Transfer(from, to, value), as a mined transfer logs it
+        const logs = noTransferLog ? [] : [{ address: USDT.toLowerCase(), topics: encodeEventTopics({ abi, eventName: "Transfer", args: { from: call.from, to: call.args[0] } }), data: encodeAbiParameters([{ type: "uint256" }], [call.args[1]]), blockNumber: "0x10", transactionHash: hash, logIndex: "0x0", blockHash: `0x${"01".repeat(32)}`, transactionIndex: "0x0", removed: false }];
+        if (!lostReceipt) receipts.set(hash, { transactionHash: hash, status: "0x1", blockNumber: "0x10", blockHash: `0x${"01".repeat(32)}`, logs, transactionIndex: "0x0", from: MERCHANT, to: call.to, cumulativeGasUsed: "0x1", gasUsed: "0x1", effectiveGasPrice: "0x1", contractAddress: null, logsBloom: `0x${"00".repeat(256)}`, type: "0x2" });
         return hash;
       }
       case "wallet_sendTransaction": // what MetaMask answers, so viem rethrows the eth_sendTransaction error
@@ -243,6 +246,52 @@ test("Check again after an unconfirmed send: pending while there's no receipt, t
   const reverted = { ...w2, reader: { getTransactionReceipt: async () => ({ status: "reverted" }) } };
   assert.equal(await sendStatus(reverted, hash), "failed");
   assert.equal(NOT_THROUGH, "That didn't go through, and nothing moved. Try again.");
+});
+
+// viem 2.57's waitForTransactionReceipt resolves with the REPLACEMENT's receipt when the wallet replaces the tx, and
+// calls onReplaced first. These stub that one call on a real connected wallet (security review of #35, MEDIUM).
+const H2 = `0x${"ab".repeat(32)}`;
+function replacedWith(w, reason, logs = []) {
+  const receipt = { transactionHash: H2, status: "success", logs };
+  const waitForTransactionReceipt = async ({ onReplaced }) => {
+    onReplaced?.({ reason, replacedTransaction: {}, transaction: { hash: H2 }, transactionReceipt: receipt });
+    return receipt;
+  };
+  return { ...w, reader: { ...w.reader, waitForTransactionReceipt } };
+}
+
+test("Cancel in the wallet (a 0-value self-tx on the same nonce) is never shown as Sent", async () => {
+  const { provider, sent } = fakeWallet();
+  const seen = [];
+  const error = await withdraw(replacedWith(await connect(provider), "cancelled"), EXCHANGE, ONE_USDT, (h) => seen.push(h)).catch((e) => e);
+  assert.equal(withdrawError(error), CANCELLED);
+  assert.equal(error.hash, undefined, "no hash: nothing moved, so Send is offered again");
+  assert.equal(sent.length, 1);
+  assert.equal(seen.length, 1);
+});
+
+test("a transfer replaced by a different transaction is never shown as Sent", async () => {
+  const { provider } = fakeWallet();
+  const error = await withdraw(replacedWith(await connect(provider), "replaced"), EXCHANGE, ONE_USDT).catch((e) => e);
+  assert.equal(withdrawError(error), REPLACED);
+});
+
+test("a repriced transfer (same call, higher fee) counts once its receipt has the Transfer, and links the new hash", async () => {
+  const { provider } = fakeWallet();
+  const w = await connect(provider);
+  const transfer = { address: USDT, topics: encodeEventTopics({ abi, eventName: "Transfer", args: { from: MERCHANT, to: EXCHANGE } }), data: encodeAbiParameters([{ type: "uint256" }], [ONE_USDT]), blockNumber: 16n, transactionHash: H2, logIndex: 0, blockHash: `0x${"01".repeat(32)}`, transactionIndex: 0, removed: false };
+  assert.equal(await withdraw(replacedWith(w, "repriced", [transfer]), EXCHANGE, ONE_USDT), H2);
+  const wrongAmount = { ...transfer, data: encodeAbiParameters([{ type: "uint256" }], [ONE_USDT - 1n]) };
+  assert.equal(withdrawError(await withdraw(replacedWith(w, "repriced", [wrongAmount]), EXCHANGE, ONE_USDT).catch((e) => e)), NOT_THROUGH);
+  const otherToken = { ...transfer, address: CAPITAL_MARKET };
+  assert.equal(withdrawError(await withdraw(replacedWith(w, "repriced", [otherToken]), EXCHANGE, ONE_USDT).catch((e) => e)), NOT_THROUGH);
+});
+
+test("a success receipt without USDT's Transfer(merchant → to, amount) is not shown as Sent", async () => {
+  const { provider } = fakeWallet({ noTransferLog: true });
+  const error = await withdraw(await connect(provider), EXCHANGE, ONE_USDT).catch((e) => e);
+  assert.equal(withdrawError(error), NOT_THROUGH);
+  assert.equal(error.hash, undefined);
 });
 
 test("a transfer whose dry run returns false is refused before the wallet is asked (033 L2)", async () => {
