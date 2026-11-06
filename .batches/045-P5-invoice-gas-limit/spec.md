@@ -5,7 +5,7 @@
   - The minimum is 400k, so no invoice that fits today gets a lower limit than it has today.
   - The 1.2 margin covers state that changes between the estimate and the block, for example a holder's USDT balance going from 0 to non-zero.
   - An estimate above 600k is still `422 too_much_gas`.
-  - A failed estimate (an RPC error, not a revert) uses 600k, and the gas-capped simulation decides.
+  - A failed estimate uses 600k, and the gas-capped simulation decides. That covers an RPC error and also a reverting estimate (security 045 INFO-2: the simulation is still the judge, as in batch 022).
   - Measured by claude-contracts: up to 504,115 gas for 2 invoice holders plus a 1-holder advance, all holders at 0 USDT.
 - `paySale` and `fundWithAuthorization` don't change: they keep a fixed 400k limit, and an estimate above 400k is `too_much_gas`.
 - **Budget and worst case (FR-REL-5, FR-REL-10):**

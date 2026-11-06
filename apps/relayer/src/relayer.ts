@@ -43,17 +43,19 @@ const DAILY_BUDGET_WEI = 100_000_000_000_000_000n; // 0.1 WBT per UTC day
 // Gas limits. Sales and funding: a fixed 400k (≥ 335k: a sale that repays an advance used 278k, claude-review 01:07).
 // Invoices (batch 045, claude-contracts M3): ceil(estimate × 1.2) within 400k–600k, since a half-sold invoice repaid
 // while an advance runs needs 406,587–504,115 (forge, all holders at 0 USDT). Above its kind's maximum a payment is refused.
-const GAS_LIMIT = 400_000n;
+const GAS_MIN = 400_000n; // every limit, and a sale's or a funding's only one
 const INVOICE_GAS_MAX = 600_000n;
-const maxGas = (p: Payment) => (p.call.functionName === 'payInvoice' ? INVOICE_GAS_MAX : GAS_LIMIT);
+const maxGas = (p: Payment) => (p.call.functionName === 'payInvoice' ? INVOICE_GAS_MAX : GAS_MIN);
+/** The limit this payment is simulated, signed and reserved with: chosen after the pre-check estimate, until then its maximum. */
+const gasOf = (p: Payment) => p.gas ?? maxGas(p);
 /** The most one send can cost: its gas limit × 6 gwei (0.0024 WBT; up to 0.0036 for an invoice). */
-const worstFee = (p: Payment) => (p.gas ?? maxGas(p)) * FEES.maxFeePerGas;
-/** The limit the tx is signed with: 400k, or for an invoice ceil(estimate × 1.2) clamped to 400k–600k (600k without an estimate). */
+const worstFee = (p: Payment) => gasOf(p) * FEES.maxFeePerGas;
+/** ceil(estimate × 1.2) clamped to 400k..the kind's maximum (so a sale or funding is always 400k); no estimate: the maximum. */
 function gasLimit(p: Payment, estimate: bigint | undefined): bigint {
-  if (p.call.functionName !== 'payInvoice') return GAS_LIMIT;
-  if (estimate === undefined) return INVOICE_GAS_MAX;
+  const max = maxGas(p);
+  if (estimate === undefined) return max;
   const padded = (estimate * 12n + 9n) / 10n;
-  return padded < GAS_LIMIT ? GAS_LIMIT : padded > INVOICE_GAS_MAX ? INVOICE_GAS_MAX : padded;
+  return padded < GAS_MIN ? GAS_MIN : padded > max ? max : padded;
 }
 const PAYER_SENDS_PER_HOUR = 10;
 const MERCHANT_SENDS_PER_HOUR = 200;
@@ -334,7 +336,7 @@ async function localChecks(client: RelayerClient, p: Payment): Promise<Reject | 
 }
 
 function simulateCall(client: RelayerClient, p: Payment) {
-  const fees = { ...FEES, gas: p.gas ?? maxGas(p) }; // the limit it will be signed with (before the lock: the kind's maximum)
+  const fees = { ...FEES, gas: gasOf(p) }; // the limit it will be signed with (before the lock: the kind's maximum)
   switch (p.call.functionName) {
     case 'paySale': return client.simulateContract({ address: MERCHANT_PAY, abi: merchantPayAbi, functionName: 'paySale', args: p.call.args, ...fees });
     case 'payInvoice': return client.simulateContract({ address: MERCHANT_PAY, abi: merchantPayAbi, functionName: 'payInvoice', args: p.call.args, ...fees });
@@ -473,7 +475,7 @@ async function send(client: RelayerClient, p: Payment, clock: Stopwatch, holder:
   if (tooLate(p)) return EXPIRED; // and so does a slow simulate/nonce step: never sign what could expire unmined
   if (tooOld(clock)) return QUEUED_TOO_LONG; // and the simulate/nonce round may have been slow too
   const signed = await client.account.signTransaction({
-    chainId: whitechainSepolia.id, type: 'eip1559', to: p.target, data: calldata(p), nonce, ...FEES, gas: p.gas ?? maxGas(p),
+    chainId: whitechainSepolia.id, type: 'eip1559', to: p.target, data: calldata(p), nonce, ...FEES, gas: gasOf(p),
   });
   const txHash = keccak256(signed);
   // Written before the broadcast with the worst-case fee and never deleted: the tx may still be pending after a failed
@@ -498,6 +500,8 @@ async function send(client: RelayerClient, p: Payment, clock: Stopwatch, holder:
     const l1Fee = 'l1Fee' in receipt && typeof receipt.l1Fee === 'bigint' ? receipt.l1Fee : 0n;
     const gasCostWei = receipt.gasUsed * receipt.effectiveGasPrice + l1Fee;
     const reverted = receipt.status !== 'success';
+    // out of gas: state changed between the in-lock simulation and the block (security 045 L1); the payer may be innocent
+    if (reverted && receipt.gasUsed >= gasOf(p)) process.stderr.write(`ALERT out of gas ${txHash}: payer ${p.from} is banned; unban by hand if it didn't cause it\n`);
     await settleSend(p, gasCostWei, reverted, txHash);
     if (reverted) return reject(502, 'reverted', 'the transaction was mined and reverted', txHash);
     const paid = parseEventLogs({ abi: merchantPayAbi, eventName: 'Paid', logs: receipt.logs })

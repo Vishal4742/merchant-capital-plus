@@ -11,7 +11,7 @@ import {
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { addresses, capitalMarketAbi, merchantPayAbi } from '../src/contracts.ts';
 import { health, makeClient, relay, relayerClient, startBalanceRefresh, TIMING, USDT_ABI, USDT_DOMAIN } from '../src/relayer.ts';
-import { setDb, type Db } from '../src/store.ts';
+import { counters, setDb, type Db } from '../src/store.ts';
 import { memoryDb } from '../db/pglite.ts';
 
 // FR-REL-10 (batch 037): every test runs on the shared Postgres store (PGlite here, Neon in production). Each fake node
@@ -1247,7 +1247,7 @@ const GWEI6 = 6_000_000_000n;
 const authOf = (m: { from: Address; nonce: Hex }) => `${lc(m.from)}:${lc(m.nonce)}`;
 
 test('M3: an invoice is signed at clamp(ceil(estimate x 1.2), 400k, 600k); simulated at 600k before the lock, at its limit inside', async () => {
-  const cases: [bigint, bigint][] = [[457_214n, 548_657n], [504_115n, 600_000n], [500_000n, 600_000n], [421_338n, 505_606n], [310_000n, 400_000n]];
+  const cases: [bigint, bigint][] = [[457_214n, 548_657n], [504_115n, 600_000n], [500_000n, 600_000n], [421_338n, 505_606n], [450_000n, 540_000n], [310_000n, 400_000n]];
   for (const [estimate, limit] of cases) {
     const node = fakeNode({ estimate });
     const { status, out } = await post((await signedInvoice()).body, node);
@@ -1266,6 +1266,7 @@ test('M3: an invoice estimated above 600k is 422 too_much_gas and never sent; a 
   const failed = fakeNode({ on: { eth_estimateGas: () => { throw rpcError(-32000, 'header not found'); } } });
   assert.equal((await post((await signedInvoice()).body, failed)).status, 200);
   assert.equal(parseTransaction(failed.sent[0]).gas, 600_000n);
+  assert.deepEqual(failed.simulations.map((c) => BigInt(c.gas as string)), [600_000n, 600_000n]);
 });
 
 test('M3: sales and funding keep the fixed 400k: 421,338 estimated is too_much_gas, and they simulate at 400k', async () => {
@@ -1277,6 +1278,10 @@ test('M3: sales and funding keep the fixed 400k: 421,338 estimated is too_much_g
   assert.equal((await post((await signedSale()).body, ok)).status, 200);
   assert.equal(parseTransaction(ok.sent[0]).gas, 400_000n);
   assert.deepEqual(ok.simulations.map((c) => c.gas), ['0x61a80', '0x61a80']);
+  const funded = fakeNode({ estimate: 390_000n, quote: 2_000_000n });
+  assert.equal((await post((await signedFunding({ quote: 2_000_000n })).body, funded)).status, 200);
+  assert.equal(parseTransaction(funded.sent[0]).gas, 400_000n);
+  assert.deepEqual(funded.simulations.map((c) => c.gas), ['0x61a80', '0x61a80']);
 });
 
 test('M3: an unmined invoice reserves its own limit x 6 gwei; the budget holds an invoice to 0.0036 WBT and a sale to 0.0024', async () => {
@@ -1285,7 +1290,12 @@ test('M3: an unmined invoice reserves its own limit x 6 gwei; the budget holds a
   await post(inv.body, node);
   const [row] = await sql('SELECT fee_wei::text AS fee FROM rel_sent WHERE auth_key = $1', [authOf(inv.message)]);
   assert.equal(row.fee, String(548_657n * GWEI6));
-  const spentElsewhere = 100_000_000_000_000_000n - 3_000_000_000_000_000n; // 0.097 WBT: a sale fits, an invoice doesn't
+  // exactly 0.1 − 0.0036 spent: an invoice still fits; 1 wei more and it doesn't (the pre-lock check counts 600k)
+  const room = 100_000_000_000_000_000n - 600_000n * GWEI6;
+  const fits = fakeNode();
+  await otherInstanceRow(fits.relayer.address, { feeWei: room });
+  assert.equal((await post((await signedInvoice()).body, fits)).status, 200);
+  const spentElsewhere = room + 1n;
   const forInvoice = fakeNode();
   await otherInstanceRow(forInvoice.relayer.address, { feeWei: spentElsewhere });
   const refused = await post((await signedInvoice()).body, forInvoice);
@@ -1294,4 +1304,20 @@ test('M3: an unmined invoice reserves its own limit x 6 gwei; the budget holds a
   const forSale = fakeNode();
   await otherInstanceRow(forSale.relayer.address, { feeWei: spentElsewhere });
   assert.equal((await post((await signedSale()).body, forSale)).status, 200);
+});
+
+test('M3: a mined invoice revert above 400k bans the payer, records the full fee and raises an out-of-gas alert', async () => {
+  const node = fakeNode({ estimate: 457_214n, minedRevert: true, gasUsed: 548_657n });
+  const inv = await signedInvoice();
+  const alerts: string[] = [];
+  const write = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: string) => { alerts.push(String(chunk)); return true; }) as typeof process.stderr.write;
+  let res;
+  try { res = await post(inv.body, node); } finally { process.stderr.write = write; }
+  assert.deepEqual([res.status, res.out.code], [502, 'reverted']);
+  const [row] = await sql('SELECT fee_wei::text AS fee, reverted FROM rel_sent WHERE auth_key = $1', [authOf(inv.message)]);
+  assert.deepEqual(row, { fee: String(548_657n * GAS_PRICE + L1_FEE), reverted: true });
+  assert.ok(alerts.some((a) => a.startsWith('ALERT out of gas')), alerts.join(''));
+  const c = await counters(node.relayer.address, inv.message.from, undefined, 'none');
+  assert.equal(c.banned, true);
 });
