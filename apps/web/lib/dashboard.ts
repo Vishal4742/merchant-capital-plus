@@ -99,16 +99,18 @@ export function chartPaths(values: number[], w: number, h: number, p: number) {
   const points = values.map((v, i) => [p + i * step, h - p - (v / max) * (h - p * 2)] as const);
   const line = points.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`).join(" ");
   const [lastX, lastY] = points[points.length - 1];
-  return { line, area: `${line} L${lastX.toFixed(1)} ${h - p} L${p} ${h - p} Z`, last: { x: lastX, y: lastY } };
+  return { line, area: `${line} L${lastX.toFixed(1)} ${h - p} L${p} ${h - p} Z`, last: { x: lastX, y: lastY }, points: points.map(([x, y]) => ({ x, y })) };
 }
 
 const WEI_PER_STEP = 10n ** 12n; // 6 decimals of WBT (18 decimals)
 
-/** WBT for a merchant's eyes: rounded half up to 6 decimals, trailing zeros dropped, never an exponent; a fee under
- *  0.000001 reads "<0.000001" rather than a misleading 0. */
+/** One line on what WBT is, next to every fee figure (G4 UX review F1). */
+export const WBT_HINT = "WBT is Whitechain's own coin, used to pay network fees. The relayer pays them, so your customers never need any.";
+
+/** WBT for a merchant's eyes: rounded half up to a fixed 6 decimals (so a column lines up; G4 UX review F1), never an
+ *  exponent; a fee under 0.000001 reads "<0.000001" rather than a misleading 0. */
 export function formatWbt(wei: bigint): string {
   if (wei > 0n && wei < WEI_PER_STEP / 2n) return "<0.000001";
   const steps = (wei + WEI_PER_STEP / 2n) / WEI_PER_STEP;
-  const frac = (steps % 1_000_000n).toString().padStart(6, "0").replace(/0+$/, "");
-  return frac ? `${steps / 1_000_000n}.${frac}` : `${steps / 1_000_000n}`;
+  return `${steps / 1_000_000n}.${(steps % 1_000_000n).toString().padStart(6, "0")}`;
 }
