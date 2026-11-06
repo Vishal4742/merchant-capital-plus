@@ -5,4 +5,8 @@ Mode: phase mode
 Money: yes (price path: applyVoucher decides whether a discount is taken off the checkout)
 Agent ids (builders, for SendMessage resumes): built directly by the batch agent in its own worktree
 Log:
-- 16:3x batch started from origin/main 1f92783; spec written; tests first.
+- 16:3x batch started from origin/main 1f92783; spec written; tests first (6 red, 2 green: 628f69b).
+- 16:4x built (8bea066) + landing copy (3dc6499). ci PASS: typecheck 0, lint 0, tests 594/592/0 fail, build 0.
+  reviewer-security launched in parallel (Money: yes).
+- Note for the human: the landing card is a revenue advance, and HOLDER_CAP.advance is 1 (capital.ts; security 026
+  INFO), so "2 investors" (as asked) still doesn't match an advance. Needs a copy decision.
