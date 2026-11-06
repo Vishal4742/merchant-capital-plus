@@ -24,7 +24,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const session = getSession(id) ?? found;
   // idempotent: re-announcing on each poll of a paid checkout recovers a payment.succeeded lost to a database blip
   // (security review 012 F2); the backend sends it once per checkout
-  if (session.payment) announcePaid(session);
+  if (session.payment) announcePaid(session, session.payment.amount ?? session.amount); // the price it was paid at (F3)
   const open = state === "open" && isInFlight(id) ? "pending" : state; // a payment is being relayed right now
   const status = open === "open" && Date.now() > session.expiresAt ? "expired" : open;
   const paymentId = session.payment?.paymentId ?? null;

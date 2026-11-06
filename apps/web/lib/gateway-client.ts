@@ -1,7 +1,8 @@
 // A typed client for the gateway's links and pages routes (claude-contracts, batch 007 API.md; SRS FR-GW-1, FR-GW-2).
-// Used in the browser (same origin: the sign-in cookie goes along) and on our server (a base URL and forwarded headers).
-// Every answer is checked against the contract before use, since it comes from another lane, and every failure becomes
-// one plain sentence. Field names stay snake_case, as on the wire.
+// Used in the browser (same origin: the sign-in cookie goes along); our server reads lib/server directly
+// (lib/gateway-server.ts) and narrows its JSON with the parsers here. Every answer is checked against the contract
+// before use, since it comes from another lane, and every failure becomes one plain sentence. Field names stay
+// snake_case, as on the wire.
 
 export const PRICE_CURRENCIES = ["USD", "EUR", "GBP", "INR", "AED", "SGD"] as const; // what a merchant prices in (FR-GW-11)
 export type Currency = "USDT" | (typeof PRICE_CURRENCIES)[number];
@@ -91,7 +92,6 @@ const UNREADABLE = "The gateway sent an answer we couldn't read. Try again in a 
 const OFFLINE = "We couldn't reach the gateway. Check your connection and try again.";
 const MAX_MESSAGE = 300;
 const TIMEOUT_MS = 10_000;
-const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ── parsing: the contract's shapes or nothing ──
 const bad = (): never => {
@@ -118,7 +118,7 @@ function items(v: unknown): PageItem[] {
   return v.map((raw) => ({ name: text(record(raw).name), price: decimal(record(raw).price) }));
 }
 
-function linkOf(v: unknown): Link {
+export function linkOf(v: unknown): Link {
   const r = record(v);
   return {
     id: text(r.id),
@@ -149,21 +149,13 @@ function pageFields(r: Record<string, unknown>): PageFields {
   return (fields.items === null) === (fields.open_amount === null) ? bad() : fields; // exactly one of the two
 }
 
-const pageOf = (v: unknown): Page => {
+export const pageOf = (v: unknown): Page => {
   const r = record(v);
   return { id: text(r.id), slug: slug(r.slug), ...pageFields(r), created_at: text(r.created_at), payments: count(r.payments) };
 };
-const publicLinkOf = (v: unknown): PublicLink => {
-  const r = record(v);
-  return { slug: slug(r.slug), merchant_name: text(r.merchant_name), amount: nullable(r.amount, decimal), currency: currency(r.currency), description: text(r.description), status: status(r.status) };
-};
-const publicPageOf = (v: unknown): PublicPage => {
+export const publicPageOf = (v: unknown): PublicPage => {
   const r = record(v);
   return { slug: slug(r.slug), ...pageFields(r), merchant_name: text(r.merchant_name) };
-};
-const listOf = <T>(v: unknown, key: string, read: (v: unknown) => T): T[] => {
-  const list = record(v)[key];
-  return Array.isArray(list) ? list.map(read) : bad();
 };
 
 /** One sentence for a failed answer: the gateway's own (its errors are plain sentences by contract), else by status. */
@@ -178,20 +170,18 @@ function plainError(status: number, data: unknown, what: string): GatewayError {
   return new GatewayError(status, "That didn't work. Check the details and try again.");
 }
 
+/** Same origin only; tests pass their own fetch. */
 export interface Transport {
-  /** "" in the browser (same origin); our own origin on the server. */
-  base?: string;
   fetch?: typeof fetch;
-  headers?: Record<string, string>;
 }
 
-export function gatewayClient({ base = "", fetch: send = fetch, headers = {} }: Transport = {}) {
+export function gatewayClient({ fetch: send = fetch }: Transport = {}) {
   async function call(path: string, what: string, body?: unknown): Promise<unknown> {
     let res: Response;
     try {
-      res = await send(`${base}${path}`, {
+      res = await send(path, {
         method: body === undefined ? "GET" : "POST",
-        headers: { accept: "application/json", ...(body === undefined ? {} : { "content-type": "application/json" }), ...headers },
+        headers: { accept: "application/json", ...(body === undefined ? {} : { "content-type": "application/json" }) },
         body: body === undefined ? undefined : JSON.stringify(body),
         cache: "no-store",
         signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -205,18 +195,9 @@ export function gatewayClient({ base = "", fetch: send = fetch, headers = {} }: 
   }
 
   return {
-    listLinks: async () => listOf(await call("/api/v1/links", "Links"), "links", linkOf),
     createLink: async (body: LinkBody) => linkOf(await call("/api/v1/links", "Links", body)),
     cancelLink: async (id: string) => void (await call(`/api/v1/links/${encodeURIComponent(id)}/cancel`, "Links", {})),
-    listPages: async () => listOf(await call("/api/v1/pages", "Pages"), "pages", pageOf),
     createPage: async (body: PageBody) => pageOf(await call("/api/v1/pages", "Pages", body)),
-    publicLink: async (s: string) => publicLinkOf(await call(`/api/v1/public/links/${encodeURIComponent(s)}`, "Payment links")),
-    publicPage: async (s: string) => publicPageOf(await call(`/api/v1/public/pages/${encodeURIComponent(s)}`, "Payment pages")),
-    /** Opens a checkout and returns its session id; the URL in the answer is never used (we build our own path). */
-    checkout: async (kind: "links" | "pages", s: string, body: CheckoutBody) => {
-      const id = record(await call(`/api/v1/public/${kind}/${encodeURIComponent(s)}/checkout`, "Payment links", body)).session_id;
-      return typeof id === "string" && SESSION_ID.test(id) ? id : bad();
-    },
   };
 }
 
@@ -226,4 +207,4 @@ export type GatewayClient = ReturnType<typeof gatewayClient>;
 export const errorText = (error: unknown) => (error instanceof GatewayError ? error.message : "Something went wrong. Try again in a minute.");
 
 /** The parsers, the error rule and the transport limits, for the other dashboard clients (lib/gateway-money.ts). */
-export const wire = { bad, record, text, nullable, decimal, count, flag, listOf, plainError, OFFLINE, TIMEOUT_MS };
+export const wire = { bad, record, text, nullable, decimal, count, flag, plainError, OFFLINE, TIMEOUT_MS };

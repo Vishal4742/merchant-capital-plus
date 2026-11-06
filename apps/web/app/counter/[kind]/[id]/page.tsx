@@ -1,14 +1,13 @@
 // "Show at the counter" (FR-GW-3): a link, page or invoice as one large QR code on a full screen, with the amount and
 // the shop's name, for a customer to scan with a phone camera. Public, like the page it points to; every figure is read
 // on our server (no browser chain reads, FR-PRIV-1). The test-mode strip comes from the root layout.
-import { headers } from "next/headers";
-import { notFound } from "next/navigation";
+import { notFound, unstable_rethrow } from "next/navigation";
+import { connection } from "next/server";
 import { Suspense } from "react";
 import { rangeText } from "@/components/gateway/Hosted";
 import { merchantConfig, payConfig } from "@/lib/config";
-import { GatewayError } from "@/lib/gateway-client";
 import { amountText, closedLinkCopy } from "@/lib/gateway-forms";
-import { gatewayFor } from "@/lib/gateway-server";
+import { logFailure, publicLink, publicPage } from "@/lib/gateway-server";
 import { readInvoice, readRelayFee } from "@/lib/onchain";
 import { qrTarget, type QrKind } from "@/lib/qr";
 import { isShopInvoice } from "@/lib/settle";
@@ -38,12 +37,14 @@ export default function CounterPage({ params }: PageProps<"/counter/[kind]/[id]"
 
 async function viewOf(kind: QrKind, id: string): Promise<View | null> {
   if (kind === "l") {
-    const link = await gatewayFor(await headers()).publicLink(id);
+    const link = await publicLink(id);
+    if (!link) notFound();
     const closed = link.status === "active" ? null : closedLinkCopy(link.status, link.merchant_name).title;
     return { merchant: link.merchant_name, title: link.description, amount: link.amount && `${amountText(link.amount)} ${link.currency}`, hint: link.amount ? "Scan to pay" : "Scan, then enter the amount", closed };
   }
   if (kind === "p") {
-    const page = await gatewayFor(await headers()).publicPage(id);
+    const page = await publicPage(id);
+    if (!page) notFound();
     return { merchant: page.merchant_name, title: page.title, amount: page.open_amount && rangeText(page.open_amount, page.currency), hint: page.items ? "Scan to choose and pay" : "Scan, then enter the amount", closed: null };
   }
   const pay = payConfig(), shop = merchantConfig();
@@ -56,13 +57,15 @@ async function viewOf(kind: QrKind, id: string): Promise<View | null> {
 }
 
 async function Counter({ params }: Pick<PageProps<"/counter/[kind]/[id]">, "params">) {
+  await connection(); // read on every request, never in a prerender pass
   const { kind, id } = await params;
   if (!qrTarget(kind, id)) notFound();
   let view: View | null;
   try {
     view = await viewOf(kind as QrKind, id);
   } catch (error) {
-    if (error instanceof GatewayError && error.status === 404) notFound();
+    unstable_rethrow(error); // viewOf's notFound() is Next's to handle, not a failed read
+    logFailure("counter view", error);
     view = null;
   }
   const done = (

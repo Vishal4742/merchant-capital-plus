@@ -1,15 +1,15 @@
 // Hosted payment page (FR-GW-2, FR-PAY-7): the merchant's logo and colour (an accent only), fixed items with quantity
-// fields or an open amount. Server component: the page comes from the gateway through our server (no browser chain
+// fields or an open amount. Server component: our server reads the page from the gateway's own module (no browser chain
 // reads, FR-PRIV-1), and the total for the chosen quantities is worked out here ("Update total" reloads it, no JS).
 // The form posts to /p/{slug}/checkout, which answers 303 to the checkout. Still scene only (NFR-12).
-import { headers } from "next/headers";
 import { notFound } from "next/navigation";
+import { connection } from "next/server";
 import { Suspense } from "react";
 import { HostedNotice, PageSheet } from "@/components/gateway/Hosted";
 import { StaticScene } from "@/components/StaticScene";
-import { GatewayError, SLUG, type PublicPage } from "@/lib/gateway-client";
+import { SLUG, type PublicPage } from "@/lib/gateway-client";
 import { amountText, checkoutMessage, pageQuantities, pageTotal } from "@/lib/gateway-forms";
-import { gatewayFor } from "@/lib/gateway-server";
+import { logFailure, publicPage } from "@/lib/gateway-server";
 
 export default function HostedPage({ params, searchParams }: PageProps<"/p/[slug]">) {
   return (
@@ -23,19 +23,21 @@ export default function HostedPage({ params, searchParams }: PageProps<"/p/[slug
 }
 
 async function PageLoader({ params, searchParams }: PageProps<"/p/[slug]">) {
+  await connection(); // read on every request, never in a prerender pass
   const [{ slug }, raw] = await Promise.all([params, searchParams]);
   if (!SLUG.test(slug)) notFound();
-  let page: PublicPage;
+  let page: PublicPage | null;
   try {
-    page = await gatewayFor(await headers()).publicPage(slug);
+    page = await publicPage(slug);
   } catch (error) {
-    if (error instanceof GatewayError && error.status === 404) notFound();
+    logFailure("hosted payment page", error);
     return (
       <HostedNotice eyebrow="Payment page" title="We can't open this page right now" action={{ href: `/p/${slug}`, label: "Try again" }}>
         Nothing was charged. Try again in a minute.
       </HostedNotice>
     );
   }
+  if (!page) notFound();
   const query = new URLSearchParams(Object.entries(raw).flatMap(([key, value]) => (typeof value === "string" ? [[key, value]] : [])));
   const chosen = page.items && pageQuantities(query, page.items);
   return (

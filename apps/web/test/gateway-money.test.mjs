@@ -1,12 +1,11 @@
 // claude-frontend checks for lib/gateway-money.ts (SRS FR-GW-12 vouchers, FR-GW-9 reports, FR-GW-10 settlements):
-// the client parses claude-contracts' snake_case answers and refuses malformed ones, the voucher form and the report
-// range are checked before any call, the CSV link carries the same range and tz, and the tiles show exactly what the
-// API sent. fetch is faked; the preview fixtures go through the real report code. Run from apps/web: npm test
+// the browser's voucher calls parse claude-contracts' snake_case answers and refuse malformed ones, the voucher form and
+// the report range are checked before any call, the CSV link carries the same range and tz, and the tiles show exactly
+// what the API sent. fetch is faked; test/gateway-server.test.mjs reads real reports and vouchers. Run: npm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { GatewayError } from "../lib/gateway-client.ts";
 import { MAX_REPORT_DAYS, csvHref, moneyClient, reportRange, reportTiles, voucherBody, voucherStatus } from "../lib/gateway-money.ts";
-import { PREVIEW_VOUCHERS, previewFetch } from "../lib/gateway-preview.ts";
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const html = (status) => new Response("<!doctype html><title>404</title>", { status, headers: { "content-type": "text/html" } });
@@ -44,41 +43,26 @@ const REPORT = {
   totals: { gross: "42.5", fees: "0.3", net: "40", refunds: "3.5", count: 3 },
   kpis: { new_payers: 1, returning_payers: 2 },
 };
-const SETTLEMENTS = {
-  balance: "1284.35",
-  settlements: [
-    { payment_id: "41", gross: "12.5", fee: "0.1", to_investors: "2.5", net: "9.9", tx_hash: `0x${"ab".repeat(32)}`, settled_at: "2026-11-06T03:00:00.000Z", explorer_url: `https://explorer.testnet.whitechain.io/tx/0x${"ab".repeat(32)}` },
-    { payment_id: "40", gross: "5", fee: "0.1", to_investors: "0", net: "4.9", tx_hash: null, settled_at: "2026-11-05T03:00:00.000Z", explorer_url: null },
-  ],
-};
+// the API's voucher shape (API.md)
+const VOUCHER = { id: "vch_FLAT5", code: "FLAT5", kind: "fixed", value: "5", expires_at: "2026-11-16T03:00:00.000Z", max_redemptions: 50, times_redeemed: 12, min_amount: "20", active: true, arkiv_entity_key: `0x${"4c".repeat(32)}`, created_at: "2026-11-03T03:00:00.000Z" };
+const VOUCHER_BODY = { code: "SAVE10", kind: "percent", value: "10", expires_at: "2026-12-01T00:00:00.000Z", max_redemptions: 100 };
 
 // ── client parsing ──
 
-test("lists vouchers and reads every snake_case field", async () => {
-  const { client, calls } = fake(() => json({ vouchers: PREVIEW_VOUCHERS }));
-  const vouchers = await client.listVouchers();
-  assert.equal(calls[0].url, "/api/v1/vouchers");
-  assert.equal(calls[0].init.method, "GET");
-  assert.equal(vouchers.length, PREVIEW_VOUCHERS.length);
-  assert.deepEqual(Object.keys(vouchers[0]).sort(), ["active", "arkiv_entity_key", "code", "created_at", "expires_at", "id", "kind", "max_redemptions", "min_amount", "times_redeemed", "value"]);
-  assert.ok(vouchers.some((v) => v.kind === "percent") && vouchers.some((v) => v.kind === "fixed"));
-  assert.ok(vouchers.some((v) => v.min_amount === null) && vouchers.some((v) => v.arkiv_entity_key === null));
-});
-
 test("refuses a malformed voucher answer", async () => {
-  const good = PREVIEW_VOUCHERS[0];
+  const good = VOUCHER;
   for (const broken of [{ ...good, kind: "bogo" }, { ...good, value: "-5" }, { ...good, times_redeemed: "3" }, { ...good, active: "yes" }, { ...good, arkiv_entity_key: "<script>" }, { ...good, expires_at: "soon" }]) {
-    const error = await refused(fake(() => json({ vouchers: [broken] })).client.listVouchers());
+    const error = await refused(fake(() => json(broken, 201)).client.createVoucher(VOUCHER_BODY));
     assert.equal(error.status, 502);
   }
-  assert.equal((await refused(fake(() => json({ list: [] })).client.listVouchers())).status, 502);
+  assert.equal((await refused(fake(() => json({ list: [] }, 201)).client.createVoucher(VOUCHER_BODY))).status, 502);
 });
 
 test("creates and deactivates a voucher with the right calls", async () => {
-  const { client, calls } = fake((url) => (url.endsWith("/deactivate") ? json({ id: "vch_a/b", active: false }) : json(PREVIEW_VOUCHERS[0], 201)));
-  const body = { code: "SAVE10", kind: "percent", value: "10", expires_at: "2026-12-01T00:00:00.000Z", max_redemptions: 100 };
+  const { client, calls } = fake((url) => (url.endsWith("/deactivate") ? json({ id: "vch_a/b", active: false }) : json(VOUCHER, 201)));
+  const body = VOUCHER_BODY;
   const created = await client.createVoucher(body);
-  assert.equal(created.code, PREVIEW_VOUCHERS[0].code);
+  assert.deepEqual(created, VOUCHER, "every snake_case field read");
   assert.equal(calls[0].url, "/api/v1/vouchers");
   assert.equal(calls[0].init.method, "POST");
   assert.deepEqual(JSON.parse(calls[0].init.body), body);
@@ -87,49 +71,13 @@ test("creates and deactivates a voucher with the right calls", async () => {
   assert.equal(calls[1].init.method, "POST");
 });
 
-test("reads a report and sends the range with tz=Asia/Kolkata", async () => {
-  const { client, calls } = fake(() => json(REPORT));
-  const report = await client.report(RANGE);
-  const url = new URL(calls[0].url, "http://x.invalid");
-  assert.equal(url.pathname, "/api/v1/reports");
-  assert.deepEqual(Object.fromEntries(url.searchParams), { from: "2026-10-31", to: "2026-11-06", tz: "Asia/Kolkata" });
-  assert.deepEqual(report, REPORT);
-});
-
-test("refuses a malformed report", async () => {
-  for (const broken of [
-    { ...REPORT, days: "none" },
-    { ...REPORT, days: [{ ...REPORT.days[0], date: "31/10/2026" }] },
-    { ...REPORT, totals: { ...REPORT.totals, net: 40 } },
-    { ...REPORT, kpis: { new_payers: -1, returning_payers: 2 } },
-    { ...REPORT, kpis: undefined },
-  ]) {
-    assert.equal((await refused(fake(() => json(broken)).client.report(RANGE))).status, 502);
-  }
-});
-
-test("reads settlements; the tx link is built from a checked hash, never taken from the answer", async () => {
-  const { client, calls } = fake(() => json(SETTLEMENTS));
-  const result = await client.settlements(RANGE);
-  assert.match(calls[0].url, /^\/api\/v1\/settlements\?from=2026-10-31&to=2026-11-06&tz=Asia%2FKolkata$/);
-  assert.equal(result.balance, "1284.35");
-  assert.deepEqual(Object.keys(result.settlements[0]).sort(), ["fee", "gross", "net", "payment_id", "settled_at", "to_investors", "tx_hash"]);
-  assert.equal(result.settlements[1].tx_hash, null);
-  const evil = { ...SETTLEMENTS, settlements: [{ ...SETTLEMENTS.settlements[0], tx_hash: "javascript:alert(1)" }] };
-  assert.equal((await refused(fake(() => json(evil)).client.settlements(RANGE))).status, 502);
-  const noId = { ...SETTLEMENTS, settlements: [{ ...SETTLEMENTS.settlements[0], payment_id: "abc" }] };
-  assert.equal((await refused(fake(() => json(noId)).client.settlements(RANGE))).status, 502);
-});
-
 test("a 404 page says the screen isn't on this server yet; 401 says sign in; the gateway's own sentence wins", async () => {
-  const missing = await refused(fake(() => html(404)).client.listVouchers());
+  const missing = await refused(fake(() => html(404)).client.createVoucher(VOUCHER_BODY));
   assert.equal(missing.status, 503);
   assert.equal(missing.message, "Vouchers aren't available on this server yet.");
-  assert.equal((await refused(fake(() => html(404)).client.report(RANGE))).message, "Reports aren't available on this server yet.");
-  assert.equal((await refused(fake(() => html(404)).client.settlements(RANGE))).message, "Settlements aren't available on this server yet.");
-  assert.equal((await refused(fake(() => json({}, 401)).client.listVouchers())).message, "Sign in to your merchant dashboard first.");
-  assert.equal((await refused(fake(() => json({ error: "A report covers at most 92 days." }, 400)).client.report(RANGE))).message, "A report covers at most 92 days.");
-  const offline = await refused(moneyClient({ fetch: async () => { throw new TypeError("fetch failed: 10.0.0.1"); } }).listVouchers());
+  assert.equal((await refused(fake(() => json({}, 401)).client.deactivateVoucher("vch_a"))).message, "Sign in to your merchant dashboard first.");
+  assert.equal((await refused(fake(() => json({ error: "You already have a code SAVE10." }, 409)).client.createVoucher(VOUCHER_BODY))).message, "You already have a code SAVE10.");
+  const offline = await refused(moneyClient({ fetch: async () => { throw new TypeError("fetch failed: 10.0.0.1"); } }).createVoucher(VOUCHER_BODY));
   assert.equal(offline.status, 0);
   assert.doesNotMatch(offline.message, /10\.0\.0\.1/);
 });
@@ -184,7 +132,7 @@ test("the voucher form refuses bad values, expiries, limits and minimums with on
 });
 
 test("a voucher's status: deactivated, expired and used up beat active", () => {
-  const v = { ...PREVIEW_VOUCHERS[0], active: true, expires_at: "2026-12-01T00:00:00.000Z", times_redeemed: 3, max_redemptions: 10 };
+  const v = { ...VOUCHER, active: true, expires_at: "2026-12-01T00:00:00.000Z", times_redeemed: 3, max_redemptions: 10 };
   assert.equal(voucherStatus(v, NOW), "active");
   assert.equal(voucherStatus({ ...v, active: false }, NOW), "off");
   assert.equal(voucherStatus({ ...v, expires_at: "2026-11-06T02:59:59.000Z" }, NOW), "expired");
@@ -237,22 +185,4 @@ test("the tiles show exactly what the API sent, formatted for display only", () 
   );
   const big = reportTiles({ ...REPORT, totals: { ...REPORT.totals, gross: "1234567.123456" } });
   assert.equal(big.money[0].value, "1,234,567.123456"); // never rounded
-});
-
-// ── the preview fixtures go through the client like the real routes ──
-
-test("the preview answers vouchers, reports and settlements in the API's shapes, range included", async () => {
-  const client = moneyClient({ fetch: previewFetch });
-  assert.equal((await client.listVouchers()).length, PREVIEW_VOUCHERS.length);
-  const report = await client.report(RANGE);
-  assert.equal(report.days.length, 7);
-  assert.ok(report.totals.count > 0 && report.kpis.returning_payers > 0);
-  const settled = await client.settlements(RANGE);
-  assert.equal(settled.settlements.length, report.totals.count);
-  assert.ok(settled.settlements.some((s) => s.to_investors !== "0"));
-  const old = await client.report({ from: "2025-01-01", to: "2025-01-07" });
-  assert.equal(old.totals.count, 0);
-  assert.equal((await client.settlements({ from: "2025-01-01", to: "2025-01-07" })).settlements.length, 0);
-  assert.equal((await refused(client.report({ from: "2026-01-01", to: "2026-11-06" }))).message, "A report covers at most 92 days.");
-  assert.equal((await refused(client.createVoucher({}))).status, 503);
 });

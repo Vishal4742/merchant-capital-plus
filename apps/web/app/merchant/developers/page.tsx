@@ -1,7 +1,6 @@
 // Developers (FR-GW-6, FR-GW-7) in the dashboard Shell: API keys and webhooks. Behind sign-in. The lists are read on
 // our server straight from the gateway's own modules (claude-contracts' backend is on main), never with a key or a
-// signing secret in them, so this page's HTML and RSC payload can't carry one. GATEWAY_PREVIEW=1 off Vercel reads
-// fixtures instead (lib/gateway-dev-preview.ts).
+// signing secret in them, so this page's HTML and RSC payload can't carry one.
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { Shell } from "@/components/dashboard/Shell";
@@ -9,12 +8,9 @@ import { ApiKeys, type KeyRow } from "@/components/gateway/ApiKeys";
 import { Account, EditorialHeader, Problem, SignedOut } from "@/components/gateway/Frame";
 import { Webhooks, type WebhookRow } from "@/components/gateway/Webhooks";
 import { authSecret } from "@/lib/auth";
-import { merchantConfig } from "@/lib/config";
 import { keyOf, webhookOf } from "@/lib/gateway-dev";
-import { previewDev } from "@/lib/gateway-dev-preview";
-import { previewOn } from "@/lib/gateway-preview";
+import { readFailure } from "@/lib/gateway-server";
 import { currentMerchant } from "@/lib/merchant-session";
-import { DbUnavailable } from "@/lib/server/db";
 import { keyJson, listKeys } from "@/lib/server/keys";
 import { listWebhooks } from "@/lib/server/webhooks";
 
@@ -45,17 +41,12 @@ export default function DevelopersPage() {
 
 type Read<T> = { rows: T[] } | { error: string };
 
-/** One plain sentence for a failed read; logs only the error's name (it can hold SQL or URLs, NFR-8). */
-const readError = (what: string) => (error: unknown) => {
-  if (error instanceof DbUnavailable) return { error: `${what} aren't available on this server yet.` };
-  console.error(`developers page (${what}):`, error instanceof Error ? error.name : typeof error);
-  return { error: `We couldn't read your ${what.toLowerCase()} right now. Try again in a minute.` };
-};
+/** One plain sentence for a failed read (logged by the error's name only, NFR-8). */
+const readError = (what: string) => (error: unknown) => ({ error: readFailure(what, error) });
 
 async function read(merchant: `0x${string}`): Promise<{ keys: Read<KeyRow>; webhooks: Read<WebhookRow> }> {
-  const preview = previewOn() ? previewDev(merchant, merchantConfig()?.merchant) : null;
-  const keys = preview ? Promise.resolve(preview.keys) : listKeys(merchant).then((list) => list.map(keyJson));
-  const hooks = preview ? Promise.resolve(preview.webhooks) : listWebhooks(merchant);
+  const keys = listKeys(merchant).then((list) => list.map(keyJson));
+  const hooks = listWebhooks(merchant);
   // both reads run at once, each with its own error, so one failing still shows the other
   const keyRows = keys
     .then((list): Read<KeyRow> => ({ rows: list.map(keyOf).map((k) => ({ ...k, createdText: ist(k.created_at), lastUsedText: k.last_used_at && ist(k.last_used_at) })) }))

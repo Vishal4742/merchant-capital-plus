@@ -26,8 +26,9 @@ const when = (ms: number) => new Date(ms).toLocaleString("en-IN", { day: "numeri
 const cellLink = "inline-flex min-h-11 items-center text-accent underline underline-offset-4";
 const FEE_ROWS = 50;
 
+// the error's name only: an RPC error's message can carry its URL, and a keyed RPC URL would leak (security 016 F2)
 const logged = (what: string) => (error: unknown) => {
-  console.error(`payments: ${what} failed: ${error instanceof Error ? error.message : String(error)}`);
+  console.error(`payments: ${what} failed: ${error instanceof Error ? error.name : "error"}`);
   return null;
 };
 
@@ -66,10 +67,12 @@ async function Payments() {
   const payments = confirmed(candidates, records, merchant);
   // the network fee the relayer paid per payment (human 07:39): merchants only, never on a customer page (FR-PAY-7)
   // ponytail: one receipt read per payment, the newest FEE_ROWS; page or cache them if the list grows long
+  // null: the read failed; undefined: not read (past the newest FEE_ROWS, or no transaction)
   const fees = await Promise.all(
-    payments.map(({ row }, i) => (i < FEE_ROWS && row.txHash && isHex(row.txHash) ? readTxFee(row.txHash).catch(logged(`fee of ${row.txHash}`)) : null)),
+    payments.map(({ row }, i) => (i < FEE_ROWS && row.txHash && isHex(row.txHash) ? readTxFee(row.txHash).catch(logged(`fee of ${row.txHash}`)) : undefined)),
   );
-  const known = fees.filter((fee): fee is bigint => fee !== null);
+  const known = fees.filter((fee): fee is bigint => typeof fee === "bigint");
+  const failed = fees.filter((fee) => fee === null).length;
   const covered = known.reduce((sum, fee) => sum + fee, 0n);
 
   return (
@@ -82,7 +85,8 @@ async function Payments() {
           <p className="text-sm text-ink-muted">
             Your customers paid no network fee. We covered <span className="data text-ink">{formatWbt(covered)} WBT</span> across {known.length}{" "}
             {known.length === 1 ? "payment" : "payments"}
-            {known.length < payments.length ? `; the fee of ${payments.length - known.length} more couldn't be read just now` : ""}. {WBT_HINT}
+            {failed > 0 ? `; the fee of ${failed} more couldn't be read just now` : ""}
+            {payments.length > FEE_ROWS ? `; fees shown for the newest ${FEE_ROWS}` : ""}. {WBT_HINT}
           </p>
         )}
         <section aria-labelledby="all-payments" className={`${card} p-0 md:p-0`}>
@@ -121,7 +125,7 @@ async function Payments() {
                     </span>
                     <span className="text-ink-muted tabular-nums md:table-cell md:px-6 md:py-3 md:text-right md:align-middle">
                       <span className="md:hidden">Network fee </span>
-                      {fee === null ? "—" : `${formatWbt(fee)} WBT`}
+                      {typeof fee === "bigint" ? `${formatWbt(fee)} WBT` : "—"}
                     </span>
                     <span className="text-right md:table-cell md:px-6 md:py-3 md:align-middle">
                       <span className={`inline-flex rounded-pill border border-current px-3 py-0.5 text-xs font-medium ${cell.status === "Paid" ? "text-positive" : "text-ink-muted"}`}>{cell.status}</span>
