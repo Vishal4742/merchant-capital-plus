@@ -74,20 +74,30 @@ function checked(currency: (typeof QUOTED)[number], row: { date?: unknown; rate?
   return { ...fraction(text), rate: text, rateAt: date, source: "Frankfurter (ECB and central-bank reference rates)", fetchedAt };
 }
 
+const RETRY_AFTER_MS = 60_000; // after a failed fetch (F6): don't make every request wait out the 5 s timeout
+const UNAVAILABLE = "Exchange rates are unavailable right now. Price in USD or USDT, or try again in a minute.";
+
 // ponytail: per-instance cache; each serverless instance fetches at most once per 15 min.
 let cache: { fetchedAt: number; rates: Map<string, Rate> } | undefined;
+let failedAt: number | undefined;
 
 async function fetchRates(now: number): Promise<Map<string, Rate>> {
   if (cache && now - cache.fetchedAt < RATE_CACHE_MS) return cache.rates;
+  if (failedAt !== undefined && now - failedAt < RETRY_AFTER_MS) {
+    if (cache) return cache.rates; // usdRate still re-checks each rate's date
+    throw new HttpError(503, UNAVAILABLE);
+  }
   let rows: unknown;
   try {
     const res = await fetch(FRANKFURTER, { signal: AbortSignal.timeout(FX_TIMEOUT_MS), cache: "no-store" });
     if (!res.ok) throw new Error(`status ${res.status}`);
     rows = await res.json();
   } catch {
+    failedAt = now;
     if (cache) return cache.rates; // a stale-but-checked rate beats none; each row was band- and date-checked
-    throw new HttpError(503, "Exchange rates are unavailable right now. Price in USD or USDT, or try again in a minute.");
+    throw new HttpError(503, UNAVAILABLE);
   }
+  failedAt = undefined;
   const rates = new Map<string, Rate>();
   for (const row of Array.isArray(rows) ? rows : []) {
     const quote = typeof row?.quote === "string" ? row.quote.toUpperCase() : "";
@@ -108,9 +118,11 @@ export async function usdRate(currency: Currency, now = Date.now()): Promise<Rat
   return rate;
 }
 
-/** USDT units for `amount` of a currency at `rate` (per 1 USD), rounded UP to the cent: the merchant is never short. */
+/** USDT units for `amount` of a currency at `rate` (per 1 USD), rounded UP to the cent: the merchant is never short.
+ *  A rate of exactly 1 (USD, USDT) converts exactly: nothing to round (G4 review H1: 10.123456 USDT stays 10.123456). */
 export function toUsdtUnits(amount: string, rate: Pick<Rate, "num" | "den">): bigint {
   if (!/^\d+(\.\d{1,6})?$/.test(amount)) throw new HttpError(400, 'amount must be a decimal string like "20.00".');
+  if (rate.num === rate.den) return parseUnits(amount, 6);
   const scaled = parseUnits(amount, 6) * rate.den; // = USDT units × num
   const step = rate.num * CENT;
   return ((scaled + step - 1n) / step) * CENT;
@@ -159,4 +171,5 @@ export const pricedJson = (q: Quote) => ({ currency: q.currency, amount: q.amoun
 /** Tests only: forget the cached rates. */
 export const resetRateCache = () => {
   cache = undefined;
+  failedAt = undefined;
 };
