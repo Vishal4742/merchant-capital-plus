@@ -8,7 +8,7 @@ import { Suspense } from "react";
 import { HostedNotice, PageSheet } from "@/components/gateway/Hosted";
 import { StaticScene } from "@/components/StaticScene";
 import { SLUG, type PublicPage } from "@/lib/gateway-client";
-import { amountText, checkoutMessage, pageQuantities, pageTotal } from "@/lib/gateway-forms";
+import { amountText, checkoutMessage, pageQuantities } from "@/lib/gateway-forms";
 import { logFailure, publicPage } from "@/lib/gateway-server";
 
 export default function HostedPage({ params, searchParams }: PageProps<"/p/[slug]">) {
@@ -43,8 +43,7 @@ async function PageLoader({ params, searchParams }: PageProps<"/p/[slug]">) {
   return (
     <PageSheet
       page={page}
-      rows={chosen && chosen.map((item) => ({ name: item.name, priceText: amountText(item.price), qty: item.qty }))}
-      totalText={chosen ? pageTotal(chosen) : ""}
+      rows={chosen && chosen.map((item) => ({ name: item.name, price: item.price, priceText: amountText(item.price), qty: item.qty }))}
       amount={query.get("amount")}
       error={checkoutMessage(query.get("error"))}
     />

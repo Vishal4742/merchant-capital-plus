@@ -172,3 +172,20 @@ export function closedLinkCopy(status: Exclude<LinkStatus, "active">, merchant: 
   };
   return copy[status];
 }
+
+const MAX_PAGE_QTY = 100; // the page form's own limit; the server refuses more
+
+/** A payment page's order total in 6-decimal units, as the customer types quantities (G4 UX review M1). A blank,
+ *  fractional, negative or over-limit quantity counts as 0 here; the server is the one that refuses it. */
+export function liveTotal(prices: readonly string[], quantities: readonly string[]): bigint {
+  return prices.reduce((sum, price, i) => {
+    const qty = Number(quantities[i]);
+    if (!Number.isInteger(qty) || qty <= 0 || qty > MAX_PAGE_QTY) return sum;
+    try {
+      return sum + parseUsdt(price) * BigInt(qty);
+    } catch {
+      return sum;
+    }
+  }, 0n);
+}
+

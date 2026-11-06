@@ -1,6 +1,7 @@
 // The hosted link and page sheets (FR-GW-1, FR-GW-2) over the night scene, in the checkout's own sheet style. Plain
 // HTML forms that post to our server (no JS needed), which answers 303 to the checkout. No hooks: /l and /p render
 // them on the server, and the dashboard renders the page sheet as its live preview. Plain words only (FR-PAY-7).
+import { LiveTotal } from "@/components/gateway/LiveTotal";
 import type { ReactNode } from "react";
 import { buttonClasses } from "@/components/Button";
 import type { Currency, OpenAmount, PublicLink } from "@/lib/gateway-client";
@@ -113,7 +114,7 @@ function logoHref(url: string | null): string | null {
 }
 
 /** `rows`: an items page's items with the quantities shown and their price text; null for an open-amount page. */
-export function PageSheet({ page, rows, totalText, amount, error, preview = false }: { page: SheetPage; rows: { name: string; priceText: string; qty: number }[] | null; totalText: string; amount: string | null; error: string | null; preview?: boolean }) {
+export function PageSheet({ page, rows, amount, error, preview = false }: { page: SheetPage; rows: { name: string; price: string; priceText: string; qty: number }[] | null; amount: string | null; error: string | null; preview?: boolean }) {
   const accent = page.color ? { backgroundColor: page.color } : undefined;
   const logo = logoHref(page.logo_url);
   return (
@@ -139,6 +140,13 @@ export function PageSheet({ page, rows, totalText, amount, error, preview = fals
       <form method="post" action={`/p/${page.slug}/checkout`} className="grid gap-4" inert={preview}>
         {rows ? (
           <>
+            <LiveTotal
+              prices={rows.map((row) => row.price)}
+              quantities={rows.map((row) => String(row.qty))}
+              currency={page.currency}
+              updateAction={`/p/${page.slug}`}
+              alert={<Alert error={error} />}
+            >
             <ul className="grid divide-y divide-hairline border-y border-hairline">
               {rows.map((row, i) => (
                 <li key={`${i}:${row.name}`} className="flex items-center justify-between gap-3 py-3">
@@ -152,22 +160,7 @@ export function PageSheet({ page, rows, totalText, amount, error, preview = fals
                 </li>
               ))}
             </ul>
-            <p className="flex items-baseline justify-between gap-3">
-              <span className="eyebrow text-ink-muted">Total</span>
-              <span>
-                <b className="text-[32px] leading-none font-medium tracking-[-0.03em] tabular-nums">{totalText}</b> <span className="eyebrow text-ink-muted">{page.currency}</span>
-              </span>
-            </p>
-            <Alert error={error} />
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-              {/* first in the form, so Enter in a quantity updates the total instead of paying */}
-              <button type="submit" formMethod="get" formAction={`/p/${page.slug}`} formNoValidate className={buttonClasses("quiet")}>
-                Update total
-              </button>
-              <button type="submit" className={buttonClasses("primary", "flex-1")}>
-                Continue to pay
-              </button>
-            </div>
+            </LiveTotal>
           </>
         ) : (
           <>
