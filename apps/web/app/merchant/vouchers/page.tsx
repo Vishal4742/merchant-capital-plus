@@ -1,15 +1,13 @@
-// Vouchers (FR-GW-12) in the dashboard Shell. Behind sign-in; the codes are read on our server from the gateway
-// (claude-contracts' routes) with the merchant's own sign-in cookie.
+// Vouchers (FR-GW-12) in the dashboard Shell. Behind sign-in; our server reads the signed-in merchant's codes from the
+// gateway's own module (claude-contracts' lib/server/vouchers.ts).
 import { connection } from "next/server";
-import { headers } from "next/headers";
 import { Suspense } from "react";
 import { Account, EditorialHeader, Problem, SignedOut } from "@/components/gateway/Frame";
 import { VouchersScreen, type VoucherRow } from "@/components/gateway/Vouchers";
 import { Shell } from "@/components/dashboard/Shell";
 import { authSecret } from "@/lib/auth";
-import { errorText } from "@/lib/gateway-client";
-import { istText, moneyClient, voucherStatus } from "@/lib/gateway-money";
-import { transportFor } from "@/lib/gateway-server";
+import { istText, voucherStatus } from "@/lib/gateway-money";
+import { merchantVouchers, readFailure } from "@/lib/gateway-server";
 import { currentMerchant } from "@/lib/merchant-session";
 
 const header = (
@@ -37,12 +35,10 @@ async function Vouchers() {
   await connection(); // live data on every request, never a build-time snapshot
   const merchant = await currentMerchant();
   if (!merchant) return <SignedOut available={Boolean(authSecret())} />;
-  const result = await moneyClient(transportFor(await headers()))
-    .listVouchers()
-    .then(
-      (vouchers): { rows: VoucherRow[] } => ({ rows: vouchers.map((v) => ({ ...v, expiresText: istText(v.expires_at), status: voucherStatus(v) })) }),
-      (error: unknown) => ({ error: errorText(error) }),
-    );
+  const result = await merchantVouchers(merchant).then(
+    (vouchers): { rows: VoucherRow[] } => ({ rows: vouchers.map((v) => ({ ...v, expiresText: istText(v.expires_at), status: voucherStatus(v) })) }),
+    (error: unknown) => ({ error: readFailure("Vouchers", error) }),
+  );
   return (
     <Shell active="vouchers" account={<Account merchant={merchant} />}>
       {header}

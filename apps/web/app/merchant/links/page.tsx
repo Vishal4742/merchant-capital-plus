@@ -1,5 +1,5 @@
-// Payment links (FR-GW-1, FR-GW-3) in the dashboard Shell. Behind sign-in; the list is read on our server from the
-// gateway (claude-contracts' routes) with the merchant's own sign-in cookie.
+// Payment links (FR-GW-1, FR-GW-3) in the dashboard Shell. Behind sign-in; our server reads the signed-in merchant's
+// list from the gateway's own module (claude-contracts' lib/server/links.ts).
 import { connection } from "next/server";
 import { headers } from "next/headers";
 import { Suspense } from "react";
@@ -7,9 +7,8 @@ import { Account, EditorialHeader, Problem, SignedOut } from "@/components/gatew
 import { LinksScreen, type LinkRow } from "@/components/gateway/Links";
 import { Shell } from "@/components/dashboard/Shell";
 import { authSecret } from "@/lib/auth";
-import { errorText } from "@/lib/gateway-client";
 import { publicOrigin } from "@/lib/config";
-import { gatewayFor, originOf } from "@/lib/gateway-server";
+import { merchantLinks, originOf, readFailure } from "@/lib/gateway-server";
 import { currentMerchant } from "@/lib/merchant-session";
 
 const ist = (iso: string) => new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata" });
@@ -40,12 +39,10 @@ async function Links() {
   const merchant = await currentMerchant();
   if (!merchant) return <SignedOut available={Boolean(authSecret())} />;
   const h = await headers();
-  const result = await gatewayFor(h)
-    .listLinks()
-    .then(
-      (links): { rows: LinkRow[] } => ({ rows: links.map((link) => ({ ...link, expiresText: link.expires_at && ist(link.expires_at) })) }),
-      (error: unknown) => ({ error: errorText(error) }),
-    );
+  const result = await merchantLinks(merchant).then(
+    (links): { rows: LinkRow[] } => ({ rows: links.map((link) => ({ ...link, expiresText: link.expires_at && ist(link.expires_at) })) }),
+    (error: unknown) => ({ error: readFailure("Links", error) }),
+  );
   return (
     <Shell active="links" account={<Account merchant={merchant} />}>
       {header}

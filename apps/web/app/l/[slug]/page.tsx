@@ -1,14 +1,14 @@
-// Hosted payment link page (FR-GW-1, FR-PAY-7). Server component: the link comes from the gateway through our server,
-// so the browser makes no chain reads (FR-PRIV-1). The form posts to /l/{slug}/checkout (no JS needed), which answers
+// Hosted payment link page (FR-GW-1, FR-PAY-7). Server component: our server reads the link from the gateway's own
+// module, so the browser makes no chain reads (FR-PRIV-1). The form posts to /l/{slug}/checkout (no JS needed), which answers
 // 303 to the checkout. Still scene only: no three.js and no Nym here (NFR-12).
-import { headers } from "next/headers";
 import { notFound } from "next/navigation";
+import { connection } from "next/server";
 import { Suspense } from "react";
 import { HostedNotice, LinkSheet, LinkSummary } from "@/components/gateway/Hosted";
 import { StaticScene } from "@/components/StaticScene";
-import { GatewayError, SLUG, type PublicLink } from "@/lib/gateway-client";
+import { SLUG, type PublicLink } from "@/lib/gateway-client";
 import { checkoutMessage, closedLinkCopy } from "@/lib/gateway-forms";
-import { gatewayFor } from "@/lib/gateway-server";
+import { logFailure, publicLink } from "@/lib/gateway-server";
 
 // The night and the frame prerender; the link streams in (Cache Components needs params inside Suspense).
 export default function LinkPage({ params, searchParams }: PageProps<"/l/[slug]">) {
@@ -25,19 +25,21 @@ export default function LinkPage({ params, searchParams }: PageProps<"/l/[slug]"
 const one = (value: string | string[] | undefined) => (typeof value === "string" ? value : null);
 
 async function LinkLoader({ params, searchParams }: PageProps<"/l/[slug]">) {
+  await connection(); // read on every request, never in a prerender pass
   const [{ slug }, query] = await Promise.all([params, searchParams]);
   if (!SLUG.test(slug)) notFound();
-  let link: PublicLink;
+  let link: PublicLink | null;
   try {
-    link = await gatewayFor(await headers()).publicLink(slug);
+    link = await publicLink(slug);
   } catch (error) {
-    if (error instanceof GatewayError && error.status === 404) notFound();
+    logFailure("hosted link page", error);
     return (
       <HostedNotice eyebrow="Payment link" title="We can't open this link right now" action={{ href: `/l/${slug}`, label: "Try again" }}>
         Nothing was charged. Try again in a minute.
       </HostedNotice>
     );
   }
+  if (!link) notFound();
   if (link.status !== "active") {
     const copy = closedLinkCopy(link.status, link.merchant_name);
     // ponytail: the public link has no paid time or receipt id yet (asked of claude-contracts), so no receipt link here
