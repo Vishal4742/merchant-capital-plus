@@ -123,7 +123,11 @@ test("an invoice claim takes no 3rd investor by transfer either: the 2-investor 
   assert.equal(out.allowed, false);
   assert.match(out.reason, /2 investors/);
   assert.equal((await capital.transferCheck({ from: ALICE, to: BOB, claimId: 1n, amount: 10n }, chain(opts))).allowed, true, "moving everything keeps it at 2");
-  assert.equal((await capital.transferCheck({ from: ALICE, to: BOB, claimId: 1n, amount: 5n }, chain({ ...opts, offers: { 1: advance() } }))).allowed, true, "advances keep the contract's own cap");
+  const adv = { offers: { 1: advance() }, balances: { [`${ALICE}:1`]: 10n }, holders: { 1: [ALICE] } };
+  const split = await capital.transferCheck({ from: ALICE, to: BOB, claimId: 1n, amount: 5n }, chain(adv));
+  assert.equal(split.allowed, false, "an advance takes 1 holder (contracts 11:26)");
+  assert.match(split.reason, /1 investor/);
+  assert.equal((await capital.transferCheck({ from: ALICE, to: BOB, claimId: 1n, amount: 10n }, chain(adv))).allowed, true, "moving the whole advance keeps it at 1");
 });
 
 test("the transfer check reads the lock against the server clock", async () => {

@@ -122,8 +122,13 @@ export async function quoteCost(claimId: bigint, units: bigint, { read = default
   return plainUsdt((await market(read, "quote", [claimId, units])) as bigint);
 }
 
-/** Investors per invoice claim: a full repayment pays them all in one tx under the relayer's 400k gas (contracts Q19). */
-export const MAX_INVOICE_HOLDERS = 2;
+/** Investors per claim, by kind: every sale (advance) or repayment (invoice) pays all holders in one tx, and must fit the
+ *  relayer's 400k gas. claude-contracts' fork table (11:26): 2 advance holders at 0 USDT clearing the cap need 420,381. */
+export const HOLDER_CAP = { advance: 1, invoice: 2 } as const satisfies Record<ChainOffer["kind"], number>;
+export const holderCapMessage = (kind: ChainOffer["kind"]) => {
+  const n = HOLDER_CAP[kind];
+  return `This ${kind} already has ${n} investor${n === 1 ? "" : "s"}, the most one ${kind} can have.`;
+};
 
 export interface TransferCheck { allowed: boolean; reason: string | null }
 
@@ -155,8 +160,8 @@ export async function transferCheck(t: { from: Address; to: Address; claimId: bi
   if (t.amount > balance) return no(`The sender's balance is too small: it holds ${balance} units.`);
   const fits = (cap: bigint) => t.amount === 0n || toBalance !== 0n || BigInt(holders.length) < cap || t.amount === balance;
   if (!fits(maxHolders)) return no(`This claim already has the maximum of ${maxHolders} holders.`);
-  // the product's own rule after the contract's (security 022 M1): an invoice repayment pays every holder in one tx
-  if (offer?.kind === "invoice" && !fits(BigInt(MAX_INVOICE_HOLDERS))) return no(`This invoice already has ${MAX_INVOICE_HOLDERS} investors, the most one invoice can have.`);
+  // the product's own rule after the contract's (security 022 M1): each payout pays every holder in one tx
+  if (offer && !fits(BigInt(HOLDER_CAP[offer.kind]))) return no(holderCapMessage(offer.kind));
   return { allowed: true, reason: null };
 }
 

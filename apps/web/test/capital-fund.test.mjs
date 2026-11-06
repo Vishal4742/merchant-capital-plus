@@ -19,13 +19,13 @@ const TX = `0x${"ab".repeat(32)}`;
 // CapitalMarket.fundingNonce = keccak256(abi.encode(chainid, market, claimId, investor, units, salt)), written out
 // here independently of lib/server/capital.ts; value = quote(claimId, units) = ceil(units × price / face)
 const nonceOf = (claimId, units, salt) => keccak256(encodeAbiParameters([{ type: "uint256" }, { type: "address" }, { type: "uint256" }, { type: "address" }, { type: "uint256" }, { type: "bytes32" }], [1874n, MARKET, claimId, INVESTOR, units, salt]));
-async function signed({ units = 10_000_000n, validBefore = BigInt(NOW + 600), salt = `0x${"cd".repeat(32)}`, signer = investorKey, value } = {}) {
-  const cost = value ?? (units * 100_000_000n + 110_000_000n - 1n) / 110_000_000n;
+async function signed({ units = 11_000_000n, validBefore = BigInt(NOW + 600), salt = `0x${"cd".repeat(32)}`, signer = investorKey, value } = {}) {
+  const cost = value ?? (units * 10_000_000n + 11_000_000n - 1n) / 11_000_000n;
   const sig = await signer.signTypedData({ domain: usdtDomain, types: receiveTypes, primaryType: "ReceiveWithAuthorization", message: { from: INVESTOR, to: MARKET, value: cost, validAfter: 0n, validBefore, nonce: nonceOf(1n, units, salt) } });
   return { claim_id: "1", investor: INVESTOR, units: units.toString(), valid_after: "0", valid_before: validBefore.toString(), salt, sig };
 }
 const body = await signed();
-const offer = (o = {}) => ({ kind: 2, merchant: M, offerDeadline: NOW + 3600, bps: 2000, cancelled: false, settled: false, invoiceId: 0n, face: 110_000_000n, price: 100_000_000n, maturity: NOW + 86400 * 30, sold: 0n, ...o });
+const offer = (o = {}) => ({ kind: 2, merchant: M, offerDeadline: NOW + 3600, bps: 2000, cancelled: false, settled: false, invoiceId: 0n, face: 11_000_000n, price: 10_000_000n, maturity: NOW + 86400 * 30, sold: 0n, ...o }); // the G5 advance
 const tuple = (o) => [o.kind, o.merchant, BigInt(o.offerDeadline), o.bps, o.cancelled, o.settled, o.invoiceId, o.face, o.price, BigInt(o.maturity), o.sold];
 
 function world({ o = offer(), eligible = true, holders = [], reply = { status: 200, json: { txHash: TX, blockNumber: "123" } }, throws } = {}) {
@@ -51,7 +51,7 @@ test("a valid funding is relayed once as the fund action and answers {tx_hash, b
   assert.deepEqual(await fundOffer(body, w.deps), { tx_hash: TX, block_number: "123" });
   assert.equal(w.posts.length, 1);
   assert.equal(w.posts[0].url, "https://relayer.test/relay");
-  assert.deepEqual(w.posts[0].body, { action: "fund", args: { claimId: "1", investor: INVESTOR, units: "10000000", validAfter: "0", validBefore: body.valid_before, salt: body.salt }, sig: body.sig });
+  assert.deepEqual(w.posts[0].body, { action: "fund", args: { claimId: "1", investor: INVESTOR, units: "11000000", validAfter: "0", validBefore: body.valid_before, salt: body.salt }, sig: body.sig });
   assert.equal(new Headers(w.posts[0].init.headers).get("x-relay-secret"), "s3cret");
   assert.equal(w.posts[0].init.redirect, "manual");
   assert.equal(w.scheduled.length, 1, "FR-ARK-5: the offer's Arkiv status is refreshed after the response");
@@ -70,7 +70,7 @@ test("a funding below the relayer's 1 USDT minimum is refused with the reason, b
 });
 
 test("refused before any relay: not a verified investor (403), offer not open (409), more units than left (400)", async () => {
-  for (const [opts, status] of [[{ eligible: false }, 403], [{ o: offer({ cancelled: true }) }, 409], [{ o: offer({ offerDeadline: NOW - 1 }) }, 409], [{ o: offer({ sold: 105_000_000n }) }, 400]]) {
+  for (const [opts, status] of [[{ eligible: false }, 403], [{ o: offer({ cancelled: true }) }, 409], [{ o: offer({ offerDeadline: NOW - 1 }) }, 409], [{ o: offer({ sold: 5_000_000n }) }, 400]]) {
     const w = world(opts);
     await assert.rejects(fundOffer(body, w.deps), (e) => e.status === status && e.message.length > 0, JSON.stringify(Object.keys(opts)));
     assert.equal(w.posts.length, 0);
@@ -82,7 +82,7 @@ test("a signature that isn't the investor's authorization for exactly this fundi
   for (const bad of [
     { ...body, sig: `0x${"11".repeat(65)}` }, // junk
     await signed({ signer: other }), // someone else's key
-    { ...(await signed({ units: 20_000_000n })), units: "10000000" }, // signed for other units
+    { ...(await signed({ units: 5_000_000n })), units: "11000000" }, // signed for other units
     await signed({ value: 1_000_000n }), // signed for another amount
   ]) {
     const w = world();
@@ -99,7 +99,25 @@ test("an invoice claim takes at most 2 investors, so its repayment fits the rela
   assert.equal(third.posts.length, 0);
   assert.deepEqual(await fundOffer(body, world({ o: inv, holders: [two[0], INVESTOR] }).deps), { tx_hash: TX, block_number: "123" }, "an existing holder can add units");
   assert.deepEqual(await fundOffer(body, world({ o: inv, holders: [two[0]] }).deps), { tx_hash: TX, block_number: "123" }, "a second holder is fine");
-  assert.deepEqual(await fundOffer(body, world({ holders: two }).deps), { tx_hash: TX, block_number: "123" }, "advances aren't capped here");
+});
+
+test("an advance takes 1 investor: a second one is refused before any relay; the holder can add units (contracts 11:26)", async () => {
+  const other = world({ holders: ["0x5555555555555555555555555555555555555555"] });
+  await assert.rejects(fundOffer(body, other.deps), (e) => e.status === 409 && /1 investor/.test(e.message));
+  assert.equal(other.posts.length, 0);
+  assert.deepEqual(await fundOffer(body, world({ holders: [INVESTOR] }).deps), { tx_hash: TX, block_number: "123" });
+  assert.deepEqual(await fundOffer(body, world({ holders: [] }).deps), { tx_hash: TX, block_number: "123" });
+});
+
+test("whoever takes a claim's last free investor slot buys everything left, so a small slice can't lock it (human 12:2x)", async () => {
+  const part = await signed({ units: 4_000_000n });
+  const advance = world(); // cap 1: the first investor is the last slot
+  await assert.rejects(fundOffer(part, advance.deps), (e) => e.status === 400 && /11000000/.test(e.message));
+  assert.equal(advance.posts.length, 0);
+  const inv = (holders) => world({ o: offer({ kind: 1, invoiceId: 4n, bps: 0 }), holders });
+  assert.deepEqual(await fundOffer(part, inv([]).deps), { tx_hash: TX, block_number: "123" }, "an invoice's first of 2 slots may buy part");
+  await assert.rejects(fundOffer(part, inv(["0x5555555555555555555555555555555555555555"]).deps), (e) => e.status === 400, "its second (last) slot buys the rest");
+  assert.deepEqual(await fundOffer(part, inv([INVESTOR]).deps), { tx_hash: TX, block_number: "123" }, "an existing holder tops up freely");
 });
 
 test("a validBefore outside the relayer's 30 s – 15 min window is refused before any read or relay", async () => {
