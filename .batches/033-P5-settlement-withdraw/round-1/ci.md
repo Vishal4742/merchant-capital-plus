@@ -1,5 +1,14 @@
 VERDICT: PASS
 
+## Re-run after the security follow-ups (f968a73: M1, M2, M3, L1, L2)
+- `npm run typecheck`: "✓ Types generated successfully", tsc exit 0
+- `npm run lint`: exit 0, no output
+- `npm test`: tests 600, pass 598, fail 0, skipped 2 (the two live-chain tests below); test/withdraw.test.mjs 14/14
+  (new: "Check again after an unconfirmed send…" and "a transfer whose dry run returns false is refused…")
+- `npm run build`: exit 0, "✓ Compiled successfully", "Generating static pages using 14 workers (41/41)", /merchant/settlements ◐
+- GitHub Actions on c9744d8 (PR #30): web pass (3m24s), changes pass, secrets pass; contracts/mcp/relayer/sdk skipped (unchanged)
+
+## First run
 Phase mode (PIPELINE.md §3b.1): the lane ran the checks itself in apps/web on branch p5-settlement-withdraw at d4e75f5
 (origin/main 1f92783, branch 0 commits behind). Real output below.
 
