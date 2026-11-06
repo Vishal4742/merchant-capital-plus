@@ -37,7 +37,7 @@ Object.defineProperty(globalThis, "localStorage", {
 // a throwaway guest key derived at runtime, so no key literal sits in a file
 store.set("mcplus.guestKey", keccak256(toHex("mcplus payer-wallet test guest")));
 
-const { connectPayer } = await import("../lib/payer-wallet.ts");
+const { connectPayer, privyPayer } = await import("../lib/payer-wallet.ts");
 const { signSale, signInvoice, guestAddress } = await import("../lib/sign-sale.ts");
 const { saleAuthorization, invoiceAuthorization } = await import("../lib/pay.ts");
 const { WHITECHAIN_TESTNET } = await import("../lib/onboarding.ts");
@@ -137,6 +137,31 @@ test("AT-17: a wallet on chain 1874 is asked for one message, no transaction, an
   assert.equal(wallet.calls.filter((m) => m === "eth_signTypedData_v4").length, 1);
   assert.deepEqual(wallet.calls.filter((m) => TX_METHODS.includes(m)), []);
   assert.ok(!wallet.calls.includes("wallet_switchEthereumChain"), "already on 1874: no network prompt");
+});
+
+// Batch 046: a wallet connected through Privy (a phone app over WalletConnect, or the email wallet) hands over its
+// EIP-1193 provider, and from there it's the same path: one message, never a transaction, the same pay route.
+test("Privy (batch 046): the connected wallet's provider is asked for one message, never a transaction, and the pay route relays it", async () => {
+  const wallet = fakeWallet({ chainId: 1 }); // a phone wallet still on another network
+  let asked = 0;
+  const privyWallet = { address: wallet.account.address, getEthereumProvider: async () => (asked++, wallet) };
+  const { session, sale } = await newCheckout();
+  const payer = await privyPayer(privyWallet);
+  assert.equal(asked, 1);
+  const body = await signSale(sale, session.expiresAt, payer);
+  const { status, data } = await callPay(session.id, { ...body, amount: sale.amount });
+  assert.equal(status, 200, JSON.stringify(data));
+  assert.equal(relayCalls.length, 1);
+  assert.equal(relayCalls[0].from.toLowerCase(), wallet.account.address.toLowerCase());
+  assert.equal(wallet.calls.filter((m) => m === "eth_signTypedData_v4").length, 1);
+  assert.ok(wallet.calls.includes("wallet_switchEthereumChain"), "switched to 1874 first");
+  assert.deepEqual(wallet.calls.filter((m) => TX_METHODS.includes(m)), []);
+});
+
+test("Privy (batch 046): a provider that can't be had, or a cancel in the wallet, is one plain sentence", async () => {
+  await assert.rejects(privyPayer({ getEthereumProvider: async () => Promise.reject(new Error("iframe not ready")) }), /^Error: Your wallet couldn't do this\. Nothing was charged\. Try again\.$/);
+  const refusing = fakeWallet({ refuse: { eth_requestAccounts: rpcError(4001) } });
+  await assert.rejects(privyPayer({ getEthereumProvider: async () => refusing }), /You cancelled in your wallet/);
 });
 
 test("the wallet signs exactly the typed data the guest signs for the same checkout, salt and time", async (t) => {

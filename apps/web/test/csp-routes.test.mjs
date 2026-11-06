@@ -20,3 +20,37 @@ test("csp: no later rule overrides /capital (for one header the last matching ru
   const later = rules.slice(at("/capital/:path*") + 1).filter((r) => cspOf(r) && (r.source.startsWith("/capital") || r.source === "/(.*)"));
   assert.deepEqual(later.map((r) => r.source), []);
 });
+
+// Batch 046 (FR-PAY-16, FR-PRIV-1): "Pay with your wallet" through Privy. Only the pages that show the pay sheet may
+// reach Privy's API and wallet iframe and the WalletConnect relay (Privy's CSP guide); every other strict page stays
+// 'self' only. The pay pages still can't reach a chain RPC (no browser chain reads).
+const PAY_SHEET = ["/checkout/:path*", "/pay/:path*", "/l/:path*", "/p/:path*"];
+const STRICT = ["/r/:path*", "/counter/:path*", "/docs", "/merchant/developers"];
+const directive = (csp, name) => csp.split("; ").find((d) => d.startsWith(`${name} `)) ?? "";
+
+test("csp: the pay sheet's pages allow Privy's API, its wallet iframe and the WalletConnect relay, nothing else new", () => {
+  for (const source of PAY_SHEET) {
+    const csp = cspOf(rules[at(source)]);
+    assert.ok(csp, `no CSP for ${source}`);
+    assert.equal(
+      directive(csp, "connect-src"),
+      "connect-src 'self' https://auth.privy.io wss://relay.walletconnect.com wss://relay.walletconnect.org https://explorer-api.walletconnect.com",
+      source,
+    );
+    assert.equal(directive(csp, "frame-src"), "frame-src https://auth.privy.io https://verify.walletconnect.com https://verify.walletconnect.org", source);
+    assert.match(csp, /script-src 'self' 'unsafe-inline'(;| 'unsafe-eval';)/, `${source}: scripts stay 'self'`);
+    assert.match(csp, /frame-ancestors 'none'/, source);
+    assert.doesNotMatch(csp, /whitechain|ankr|rpc\.privy\.systems|walletlink|wss:(?!\/\/relay\.walletconnect)/, `${source}: no chain RPC host`);
+  }
+  assert.match(cspOf(rules[at("/p/:path*")]), /img-src 'self' data: https:/, "/p keeps the merchant's logo");
+});
+
+test("csp: the other strict pages stay 'self' only (no Privy, no WalletConnect)", () => {
+  for (const source of STRICT) {
+    const csp = cspOf(rules[at(source)]);
+    assert.ok(csp, `no CSP for ${source}`);
+    assert.equal(directive(csp, "connect-src"), "connect-src 'self'", source);
+    assert.doesNotMatch(csp, /privy|walletconnect/, source);
+  }
+  for (const source of ["/merchant/:path*", "/capital/:path*"]) assert.doesNotMatch(cspOf(rules[at(source)]), /privy|walletconnect/, source);
+});
