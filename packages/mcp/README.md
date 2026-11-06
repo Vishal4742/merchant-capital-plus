@@ -4,7 +4,7 @@ Manage payment collection by asking your AI assistant: create payment links and 
 
 > **Not production.** It runs in one of two modes, and every result says which:
 > - **Sandbox** (the default): a simulator on your computer. No account, no network, no real money. URLs on `sandbox.whiteflow.invalid` don't open.
-> - **Testnet**: the WhiteFlow gateway on Whitechain Testnet with your `sk_test_` key. Test USDT only. Payment links, payments and collection summaries are live. Customers, invoices and reminders are **not on the testnet backend yet**, and those tools say so.
+> - **Testnet**: the WhiteFlow gateway on Whitechain Testnet with your `sk_test_` key. Test USDT only. Payment links, payments and collection summaries are live once the gateway routes in [PR #48](https://github.com/Vishal4742/merchant-capital-plus/pull/48) are deployed. Customers, invoices and reminders are **not on the testnet backend yet**, and those tools say so.
 
 ## Install
 
@@ -14,7 +14,7 @@ Manage payment collection by asking your AI assistant: create payment links and 
 cd packages/mcp && npm ci && npm run pack
 ```
 
-This builds `dist/whiteflow.mcpb`, plus `whiteflow.mcpb.sha256` (the archive) and `whiteflow.mcpb.contents.sha256` (its files). Open the `.mcpb` with Claude Desktop, or use Settings → Extensions → Install extension. Then fill in the settings:
+This builds `dist/whiteflow.mcpb`, plus `whiteflow.mcpb.sha256` (the archive) and `whiteflow.mcpb.contents.sha256` (its files). The archive also contains `sbom.cdx.json`, a CycloneDX list of every package bundled in it. Open the `.mcpb` with Claude Desktop, or use Settings → Extensions → Install extension. Then fill in the settings:
 
 | Setting | Default | Notes |
 |---|---|---|
@@ -23,7 +23,9 @@ This builds `dist/whiteflow.mcpb`, plus `whiteflow.mcpb.sha256` (the archive) an
 | Gateway URL | `https://merchant-capital.vercel.app` | testnet only |
 | Business time zone | `UTC` | e.g. `Asia/Kolkata`. Used for due dates and "this week" |
 
-Check the archive before installing: `sha256sum dist/whiteflow.mcpb` (PowerShell: `Get-FileHash dist\whiteflow.mcpb`) must match `whiteflow.mcpb.sha256`. The archive's hash changes on every pack, because `mcpb` 2.1.2 stamps zip entries with the current time. The contents hash stays the same for the same source.
+Check the archive before installing: `sha256sum dist/whiteflow.mcpb` (PowerShell: `Get-FileHash dist\whiteflow.mcpb`) must match `whiteflow.mcpb.sha256`. The archive's hash changes on every pack, because `mcpb` 2.1.2 stamps zip entries with the current time. The contents hash stays the same for the same source. A checksum only helps if you got it from a channel you trust: the archive isn't signed yet, and nothing proves who built it (see "what production needs").
+
+Optional setting, environment only: `WHITEFLOW_TRUSTED_ORIGINS`, comma-separated https origins of an approved custom checkout domain. The connector shows payment and review URLs only on the gateway's own origin and these.
 
 ### Other clients (manual stdio)
 
@@ -60,12 +62,13 @@ For testnet, add `"WHITEFLOW_MODE": "testnet"` and `"WHITEFLOW_API_KEY": "sk_tes
 In the assistant:
 1. "Find Priya Sharma, or add her with priya@example.com."
 2. "Draft an invoice for Priya: three consulting sessions at 20 USDT each, due next Friday." The assistant shows the totals and the resolved date and waits for your OK.
-3. "Finalize it." You get `WF-1001` and its payment URL. Nothing is emailed.
+3. "Publish it." The assistant asks to publish this exact version. Nothing is published or emailed yet: the result gives an approval id (`apr_…`) for the business Owner.
 
-In a terminal, play the customer paying. The `pay` command sends signed provider events to the sandbox, and the sandbox processes them like webhooks:
+In a terminal, act as the Owner on the review page, then as the customer paying. In the sandbox the review page is the `approve` command. The `pay` command sends signed provider events, and the sandbox processes them like webhooks:
 
 ```bash
 cd packages/mcp
+npm run sandbox -- approve apr_…      # the Owner approves: the invoice becomes WF-1001, with a payment URL
 npm run sandbox -- pay WF-1001        # or: node dist/bundle/server/sandbox-cli.mjs pay WF-1001
 npm run sandbox -- status
 ```
@@ -98,30 +101,34 @@ There are also prompt templates: **Collect a payment**, **Create an invoice**, *
 | `create_customer` | Name (email optional). A likely duplicate is listed instead of created | — | ✓ | ✓ |
 | `create_payment_link` | Amount, currency, description, optional customer, expiry and reference. Returns the URL and status; not sent | ✓ | ✓ | ✓ |
 | `get_payment_link` | Status and verified payments | ✓ | ✓ | |
-| `create_invoice_draft` | Customer id, line items, USDT, due date, explicit discount or tax. A private draft | — | ✓ | ✓ |
-| `finalize_invoice` | Draft → open: number, payment URL, PDF URL (none yet). Not sent | — | ✓ | ✓ |
+| `create_invoice_draft` | Customer id, line items, USDT, due date, explicit discount or tax. A private draft. Blocked if the server's total differs from the connector's own | — | ✓ | ✓ |
+| `update_invoice_draft` | Change a draft. It becomes a new revision, which cancels a pending approval | — | ✓ | ✓ |
+| `finalize_invoice` | **Asks** to publish: an approval request bound to this revision, total, currency and customer. An Owner approves it on the review page, and only then does the invoice get its number and payment URL. Not sent | — | ✓ | ✓ |
 | `get_invoice` | Totals, paid and due, due date, status incl. overdue, payments | — | ✓ | |
 | `list_invoices` | Filter by customer, status and due dates; cursor pages | — | ✓ | |
 | `list_payments` | Verified payments, with invoice or link and evidence | ✓ | ✓ | |
 | `get_collection_summary` | Collected (gross, fees, refunds, net) and outstanding or overdue, per currency | ✓ (collected only) | ✓ | |
 | `prepare_invoice_reminder` | Reminder draft and recipient, `sent: false` | — | ✓ | |
+| `get_operation_status` | Writes whose outcome is unknown or needs checking, plus what WhiteFlow's records say about each | ✓ (local; lookup once PR #48 is live) | ✓ | |
 
-How writes behave:
-- **Idempotent.** Each write sends an `Idempotency-Key`. Retrying the same request returns the same record, marked `replayed`. Reusing a key with a different request fails. Pass a new `idempotency_key` to create a second identical record on purpose.
-- **Safe after a timeout.** The connector records each key before it sends. A retry of the same request, even after a restart, reuses that key, so it can't create a duplicate.
-- **Never authorization.** A tool's annotations are hints for the client. What each key can do is enforced on the server.
+How writes behave (production review F2/F3):
+- **One operation identity.** Each write sends an `Idempotency-Key`, and the connector records it before sending. The server replays the same record for the same key and request, marked `replayed`, and refuses the same key with a different request.
+- **Unknown outcomes are resumed, not repeated.** If there's no answer (a timeout, a 5xx, a malformed or oversized reply), retrying the same request resumes that operation with the same key for as long as the server keeps it: 24 hours, across restarts and key rotations for the same business. After that, the connector refuses to send it again and marks it `needs_reconciliation`: check the record, then use `create_another`.
+- **Repeats vs new sales.** The same request repeated within 15 minutes of a success replays it. A deliberate second, identical record needs `create_another: true`.
+- **Replies are checked.** Every reply is size-capped and schema-checked. A write's reply must match what was asked: amount, currency, text, reference, single-use, expiry, customer and totals, with URLs on a trusted origin. If it doesn't, the result is an error marked for reconciliation, never a success to share.
+- **Never authorization.** A tool's annotations are hints for the client. What each key can do, and who may publish, is enforced on the server.
 
 ## How it's built
 
 ```
-MCP client ──stdio── src/index.ts → src/server.ts (12 tools, 4 prompts)
+MCP client ──stdio── src/index.ts → src/server.ts (14 tools, 4 prompts)
                                      │  tools/* → context (profile, capability gate, journaled writes, redacting reply)
                                      ▼
-                     src/client.ts  (Bearer key, timeouts, retries with the same key, no redirects)
-                        ├── testnet: https://<gateway>/api/v1/…   (apps/web: links, account, payments, reports)
+                     src/client.ts  (Bearer key, timeouts, retries with the same key, no redirects, size caps, zod schemas)
+                        ├── testnet: https://<gateway>/api/v1/…   (apps/web: links, account, payments, reports, operations)
                         └── sandbox: src/sandbox/backend.ts, the same HTTP contract served in-process
                                      ├── store.ts    (JSON file, lock and atomic write, owner-only)
-                                     ├── records.ts  (customers, links, invoices, receivables, reports)
+                                     ├── records.ts  (customers, links, invoices + revisions, approvals, receivables, reports)
                                      └── provider.ts (signed provider events → processing → reconcile) ← cli.ts (a person)
 ```
 
@@ -131,6 +138,7 @@ The bundle is a thin client. Durable records, authorization, payment verificatio
 
 - **Stored text is data.** Customer names, descriptions, memos and references are bounded and stripped of control, zero-width and bidi characters. They come back only as data, alongside a notice telling the model they are never instructions. They can't change a recipient, an amount, a scope or the tool set; the reminder's recipient is always the customer record's email.
 - **The model can't mark anything paid.** Paid status comes only from verified payments: on testnet, the gateway's records; in the sandbox, signed events with a 5-minute window, applied once per event id, never moving a payment backwards. The payment simulator is a separate command that you run, not a tool.
+- **Publishing is the Owner's decision.** `finalize_invoice` can only *ask*. The server binds the request to the invoice revision and its content hash, total, currency, customer and expiry. An Owner approves it once, and any edit cancels it. No tool approves, and no argument counts as approval (production review F4).
 - **No money-moving tools.** There is no tool that sends, pays, refunds, voids, transfers, signs, fetches URLs or changes keys, wallets, webhooks or settlement.
 - **Secrets stay out.** The API key and the sandbox's signing secret are redacted from every result and stderr line. stdout carries only JSON-RPC, and the tests check this against the packaged archive.
 - **Money is exact.** Amounts are integers in minor units: 2 decimals for fiat, 6 for USDT. Zero, negative, malformed and over-precise amounts are refused, and so is a decimal comma. Discounts and taxes are rounded half up, once each. Different currencies are never added together.
@@ -144,14 +152,17 @@ Not built:
 - a remote, OAuth-based server (planned as SRS FR-MCP-6/7);
 - any rail other than USDT on Whitechain Testnet through the hosted checkout.
 
-Before production:
-- scoped, expiring, per-assistant keys or OAuth grants;
-- customer and invoice tables with audit history on the backend (W3);
-- an owner review and approval page for publishing and for every sensitive action;
+Before production (tracked in `.batches/052-PW5-merchant-mcpb/production-plan.md`):
+- scoped, expiring, per-assistant credentials (Stage 2, on the Stage 3 workspace stack);
+- customer and invoice tables with revisions, approvals, numbering and an audit trail on the backend (Stage 3);
+- the Owner's authenticated review page, whose stand-in in the sandbox is the CLI;
+- a durable payment-event ledger with reconciliation (Stage 4);
+- distributed rate limits and cursor pagination;
+- a signed, provenance-attested release from CI;
 - mainnet contracts and their review;
 - the business, legal and compliance gates in the WhiteFlow plan.
 
-Testnet mode needs the gateway to have the routes added in batch 052 (`GET /api/v1/account`, secret-key links, `GET /api/v1/links/{id}`). Until that is deployed, testnet mode answers "This WhiteFlow backend doesn't offer that yet."
+Testnet mode needs the gateway routes from [PR #48](https://github.com/Vishal4742/merchant-capital-plus/pull/48) (`GET /api/v1/account`, secret-key links, `GET /api/v1/links/{id}`, `GET /api/v1/operations/{key}`), owned by claude-contracts. Until those are deployed, testnet mode answers "This WhiteFlow backend doesn't offer that yet."
 
 ## Phase two (designed, not built)
 
@@ -166,9 +177,9 @@ Testnet mode needs the gateway to have the routes added in batch 052 (`GET /api/
 
 ```bash
 npm ci
-npm run typecheck && npm test   # 29 tests, offline; includes building and launching the .mcpb
+npm run typecheck && npm test   # 41 tests, offline; includes building and launching the .mcpb
 npm run manifest                # rewrite manifest.json from the server (a test fails if you forget)
-npm run pack                    # dist/whiteflow.mcpb + checksums
+npm run pack                    # dist/whiteflow.mcpb + checksums (+ sbom.cdx.json inside)
 node scripts/icon.mjs           # redraw icon.png
 ```
 

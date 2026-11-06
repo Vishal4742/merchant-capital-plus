@@ -33,13 +33,16 @@ These are the routes the WhiteFlow Merchant MCP calls.
 
 | Method and path | Status | Scope | Notes |
 |---|---|---|---|
+| `GET /api/v1/operations/{idempotency_key}` | LIVE (PR #48) | account:read | `{idempotency_key, route, state: "succeeded" \| "pending", http_status, result_id, created_at}` for the caller's own write; foreign, unknown or older than 24 h → 404. The connector uses it to settle an unknown outcome |
 | `GET /api/v1/account` | LIVE | account:read | Merchant, environment, network, settlement asset, price currencies, payment limits, payment methods, `timezone` (null on testnet until Stage 3), credential (`scopes`/`expires_at` null on testnet), `capabilities` |
 | `GET /api/v1/customers?query&limit≤20` | PROPOSED | customers:read | `{data: Customer[], next}`. Customer = `{id, name, email_masked, created_at}` |
 | `POST /api/v1/customers` | PROPOSED | customers:write | `{name, email?, confirm_new?}` → 201 Customer. A likely duplicate (same normalized name or same email) without `confirm_new` → **409** `{error, possible_duplicates: Customer[]}` |
 | `POST /api/v1/links` | LIVE | links:write | `{amount?, currency, description, reference_id?, expires_at?, single_use?, customer_id? (sandbox)}` → 201 Link. Live: `currency` ∈ USDT, USD, EUR, GBP, INR, AED, SGD; 1 to 1,000 USDT at today's rate; `reference_id` unique per merchant (409) |
 | `GET /api/v1/links/{id}` | LIVE | links:read | Link plus `paid_checkouts: [{session_id, payment_id, amount (USDT), currency, tx_hash, paid_at}]`, from the server's payment records |
 | `POST /api/v1/invoices` | PROPOSED | invoices:write | A draft. `{customer_id, currency: "USDT", line_items[1..50]: {description, quantity 1..10000, unit_price}, due_date (today..+2y), discount?: {type:"amount", amount} \| {type:"percent", percent}, tax?: {name, rate_percent}, memo?}` → 201 Invoice. Total 1 to 1,000 USDT |
-| `POST /api/v1/invoices/{id}/finalize` | PROPOSED | invoices:write | Draft → open; assigns `WF-<n>` per merchant; sets `hosted_url`. Not a draft → 409; due date passed → 422. Sends nothing |
+| `POST /api/v1/invoices/{id}` | PROPOSED | invoices:write | Edit a draft: `{revision, customer_id, line_items, due_date, discount, tax, memo}`. `revision` must equal the current one (409 otherwise). It creates revision n+1 and supersedes any pending approval. Not a draft → 409 |
+| `POST /api/v1/invoices/{id}/finalize` | PROPOSED | invoices:write | **Owner-approval policy:** `{revision}` → **202** `{status: "approval_required", approval, invoice}`. It publishes nothing; asking again for the same revision returns the same pending approval. Not a draft → 409; stale revision → 409; due date passed → 422. Sends nothing |
+| `GET /api/v1/approvals/{id}` | PROPOSED | invoices:read | `{id, invoice_id, revision, status: pending\|approved\|rejected\|superseded\|expired, total, currency, customer_id, requested_at, expires_at, decided_at, review_url}` |
 | `GET /api/v1/invoices/{id\|number}` | PROPOSED | invoices:read | Invoice |
 | `GET /api/v1/invoices?customer_id&status&due_from&due_to&limit≤50&cursor` | PROPOSED | invoices:read | `status` ∈ draft, open, paid, overdue. Newest first |
 | `GET /api/v1/invoices/{id}/reminder-draft` | PROPOSED | invoices:read | Open invoices only (409 otherwise). `{invoice_id, number, recipient: {customer_id, name, email}, subject, body, payment_url, sent: false}`. Never sends |
@@ -59,8 +62,15 @@ These are the routes the WhiteFlow Merchant MCP calls.
 - `tax = round_half_up((subtotal − discount) × bps / 10000)`, and `total = subtotal − discount + tax`.
 - Rounding is to the currency's minor unit. A percentage has at most 2 decimals. A tax is only ever the one stated.
 
+**Approvals (production review F4; human decision 2026-11-07: an Owner approves on the review page):**
+- An approval binds the merchant, the invoice, its `revision`, a SHA-256 of its content, the total, currency and customer, and an expiry (48 h in the sandbox).
+- An authenticated Owner decides it once, on the review page. The sandbox stand-in is `whiteflow-sandbox approve|reject <id>`.
+- Approving re-checks that the invoice is still that revision, with that hash and that total. If anything changed, the approval becomes `superseded` and nothing is published.
+- An edit supersedes pending approvals.
+- No API-key route can approve, and a request field is never approval.
+
 **State transitions:**
-- `draft → open` happens at finalize.
+- `draft → open` happens only when an Owner approves a pending publication request for the current revision.
 - `open → paid` happens when verified payments reach `total`.
 - An underpayment keeps the invoice `open` with `amount_due > 0`. An overpayment sets `paid` with `overpaid > 0`.
 - `void` and `refunded` are phase two, and they need a server-enforced approval.

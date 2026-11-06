@@ -4,7 +4,7 @@
 // LIVE = served by apps/web on main (testnet). PROPOSED = not on the web backend yet; the sandbox serves every route.
 //
 //   GET  /api/v1/account                          LIVE      account:read
-//   GET  /api/v1/operations/{idempotency_key}     PROPOSED  account:read      the outcome of a write, by its key
+//   GET  /api/v1/operations/{idempotency_key}     LIVE*     account:read      the outcome of a write, by its key (*PR #48)
 //   GET  /api/v1/customers?query&limit            PROPOSED  customers:read
 //   POST /api/v1/customers                        PROPOSED  customers:write   Idempotency-Key
 //   POST /api/v1/links                            LIVE      links:write       Idempotency-Key
@@ -55,8 +55,8 @@ export type Account = z.infer<typeof AccountSchema>;
 export const OperationSchema = z.object({
   idempotency_key: text(255),
   route: text(80),
-  state: z.enum(["succeeded"]),
-  http_status: z.number().int(),
+  state: z.enum(["succeeded", "pending"]), // pending: in flight, or left by a request that died (<5 min)
+  http_status: z.number().int().nullable(),
   result_id: text(80).nullable(),
   created_at: time,
 });
