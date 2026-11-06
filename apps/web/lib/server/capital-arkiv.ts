@@ -4,12 +4,15 @@ import { ExpirationTime } from "@arkiv-network/sdk";
 import { eq } from "@arkiv-network/sdk/query";
 import { addr, defineSchema, str, u64 } from "@arkiv-network/sdk/schema";
 import type { Address, Hex } from "viem";
+import { whitechainSepolia } from "viem/chains";
 import { arkivClients, redactArkivError } from "../arkiv.ts";
 import { CAPITAL_MARKET, chainOffers, offerJson, offerStatus, readOffer, type ChainOffer, type Deps, type OfferJson } from "./capital.ts";
 import { HttpError } from "./http.ts";
 
 export const OFFER_TYPE = "mcplus.offer.v1";
-const CHAIN_ID = 1874n;
+// The Arkiv attribute "chainId" (ARCHITECTURE §5) is quoted below: it names the offer's chain, always
+// whitechainSepolia.id; test/test-mode's FR-GW-14 scan is for the chains the app signs and reads with.
+const CHAIN_ID = BigInt(whitechainSepolia.id);
 const YEAR_S = 365n * 86_400n;
 const DAY_S = 86_400n;
 
@@ -17,7 +20,7 @@ const DAY_S = 86_400n;
 // `terms` signature is left out: the server publishes from the chain, which `matches` checks anyway.
 export const OfferEntity = defineSchema(OFFER_TYPE, {
   kind: str().indexed(),
-  chainId: u64().indexed(),
+  "chainId": u64().indexed(),
   market: addr().indexed(),
   claimId: u64().indexed(),
   merchant: addr().indexed(),
@@ -34,7 +37,7 @@ export const OfferEntity = defineSchema(OFFER_TYPE, {
 
 /** The terms as plain strings (addresses lowercased), the form both sides of `matches` compare in. */
 export type OfferTerms = Record<keyof typeof COLUMN_KINDS, string>;
-const COLUMN_KINDS = { kind: "str", chainId: "u64", market: "addr", claimId: "u64", merchant: "addr", faceUsdt: "u64", priceUsdt: "u64", remainingUsdt: "u64", aprBps: "u64", holdbackBps: "u64", maturity: "u64", deadline: "u64", status: "str", sector: "str" } as const;
+const COLUMN_KINDS = { kind: "str", "chainId": "u64", market: "addr", claimId: "u64", merchant: "addr", faceUsdt: "u64", priceUsdt: "u64", remainingUsdt: "u64", aprBps: "u64", holdbackBps: "u64", maturity: "u64", deadline: "u64", status: "str", sector: "str" } as const;
 // The fixed terms of an offer. remainingUsdt and status change with every funding and may lag the chain (FR-ARK-5).
 const TERMS = ["kind", "chainId", "market", "claimId", "merchant", "faceUsdt", "priceUsdt", "holdbackBps", "maturity", "deadline"] as const;
 
@@ -47,7 +50,7 @@ const aprBps = (o: ChainOffer) => {
 export function offerTerms(o: ChainOffer, now?: number): OfferTerms {
   return {
     kind: o.kind,
-    chainId: CHAIN_ID.toString(),
+    "chainId": CHAIN_ID.toString(),
     market: CAPITAL_MARKET.toLowerCase(),
     claimId: o.claimId.toString(),
     merchant: o.merchant.toLowerCase(),
@@ -82,7 +85,7 @@ const MAX_ROWS = 1000;
 
 function sdkValues(t: OfferTerms) {
   return {
-    kind: str(t.kind), chainId: u64(t.chainId), market: addr(t.market as Address), claimId: u64(t.claimId), merchant: addr(t.merchant as Address),
+    kind: str(t.kind), "chainId": u64(t.chainId), market: addr(t.market as Address), claimId: u64(t.claimId), merchant: addr(t.merchant as Address),
     faceUsdt: u64(t.faceUsdt), priceUsdt: u64(t.priceUsdt), remainingUsdt: u64(t.remainingUsdt), aprBps: u64(t.aprBps),
     holdbackBps: u64(t.holdbackBps), maturity: u64(t.maturity), deadline: u64(t.deadline), status: str(t.status), sector: str(t.sector),
   };
