@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Address, Hash } from 'viem';
-import { sqlStatements } from '../db/statements.ts';
+import { isSchemaFile, sqlStatements } from '../db/statements.ts';
 import { statements, type Authorization, type CooldownPolicy } from '../src/state.ts';
 import { barrierLine, Cluster, findPgBin, render, rowsAfterMarker, type PsqlResult } from './cluster.ts';
 
@@ -74,9 +74,9 @@ try {
   const take = async (relayer: Address, holder: string) => c.lines(render(statements.takeLease(relayer, holder)));
   const fenceRow = async (relayer: Address) => (await c.lines(`SELECT fence::text || '|' || holder || '|' || (until > now())::text FROM rel_lease WHERE relayer = '${relayer}'`))[0];
 
-  await scenario('schema: every db/NNN_*.sql applied twice through the migrate splitter (idempotent, additive)', async (notes) => {
+  await scenario('schema: every schema db/NNN_*.sql applied twice through the migrate splitter (idempotent, additive)', async (notes) => {
     const dir = new URL('../db/', import.meta.url);
-    const files = readdirSync(dir).filter((f) => /^\d{3}_.+\.sql$/.test(f)).sort();
+    const files = readdirSync(dir).filter(isSchemaFile).sort(); // batch 049: owner-run *_role*.sql excluded
     for (const pass of [1, 2]) {
       for (const file of files) {
         const r = await c.psql(sqlStatements(readFileSync(new URL(file, dir), 'utf8')).map((s) => `${s};`).join('\n'), `migrate-${pass}-${file}`);

@@ -13,7 +13,7 @@ import { parseEnv } from 'node:util';
 
 const require = createRequire(new URL('../../apps/relayer/package.json', import.meta.url));
 const { neon } = require('@neondatabase/serverless');
-const { sqlStatements } = await import('../../apps/relayer/db/statements.ts');
+const { isSchemaFile, sqlStatements } = await import('../../apps/relayer/db/statements.ts');
 
 const raw = parseEnv(readFileSync(process.argv[2] ?? 'P:/WhiteFlow/.env', 'utf8')).DATABASE_URL;
 if (!raw) {
@@ -71,8 +71,10 @@ async function race(db: string, ops: object[]): Promise<any[]> {
   return bufs.map((b) => JSON.parse(b.out.split('\n').filter((l) => l.startsWith('{')).pop() ?? '{"ok":false,"error":"no output"}'));
 }
 
-const files = readdirSync(DB_DIR).filter((f) => /^\d{3}_.+\.sql$/.test(f)).sort();
-const RELAYER_TABLES = ['rel_payer_unblocks', 'rel_sent', 'rel_lease'];
+// Batch 049: schema files only (the owner-run *_role*.sql files are not run here: on Neon the role is cluster-wide and
+// the live project already has it; test/relayer.test.ts proves the grants on PGlite).
+const files = readdirSync(DB_DIR).filter(isSchemaFile).sort();
+const RELAYER_TABLES = ['rel_payer_unblocks', 'rel_sent', 'rel_lease', 'rel_lock'];
 
 // ---- clean target (verified disposable database; only its rel_* tables are recreated)
 const clean = await target('wf_s2_relayer');
@@ -80,7 +82,7 @@ for (const t of RELAYER_TABLES) await clean.query(`DROP TABLE IF EXISTS ${t}`);
 await migrate(clean, files);
 await migrate(clean, files);
 const tables = (await clean.query("SELECT string_agg(table_name, ',' ORDER BY table_name) AS t FROM information_schema.tables WHERE table_schema='public'"))[0].t;
-check('clean schema: 001+002 applied twice through the migrate splitter', tables === 'rel_lease,rel_payer_unblocks,rel_sent', `tables: ${tables}`);
+check('clean schema: every schema file (001, 003, 004) applied twice through the migrate splitter', tables === 'rel_lease,rel_lock,rel_payer_unblocks,rel_sent', `tables: ${tables}`);
 
 const relayer = hex(20).toLowerCase();
 const takes = await race('wf_s2_relayer', Array.from({ length: 12 }, () => ({ kind: 'take', relayer, holder: randomUUID() })));
@@ -127,24 +129,27 @@ check(
   `cooldownUntil=now+${seen[0].result?.cooldownUntil - now} ms; spentWei=${seen[0].result?.spentWei}`,
 );
 
-// ---- previous-schema target: 001 only + synthetic rows → all files twice → rows preserved
+// ---- previous-schema target (batch 049): main's batch-037 schema (001_rel.sql, live in production) + legacy rows →
+// every schema file twice → rows preserved with an honest status, the old lock row untouched
 const prev = await target('wf_s2_relayer_prev');
 for (const t of RELAYER_TABLES) await prev.query(`DROP TABLE IF EXISTS ${t}`);
-await migrate(prev, ['001_rel_state.sql']);
-await prev.query("INSERT INTO rel_lease (relayer, fence, until) VALUES ('0xaaaa', 41, now() - interval '1 minute')");
+await migrate(prev, ['001_rel.sql']);
+await prev.query("INSERT INTO rel_lock (relayer, holder, until_ms) VALUES ('0xaaaa', NULL, 0)");
 for (let i = 0; i < 5; i++) {
-  await prev.query("INSERT INTO rel_sent (auth_key, relayer, payer, tx_hash, tx_nonce, fence, fee_wei, status, sent_at) VALUES ($1, '0xaaaa', '0xbbbb', $2, $3, 41, 1000, 'mined', $4)", [`0xbbbb:${i}`, hex(32), i, now]);
+  await prev.query("INSERT INTO rel_sent (auth_key, relayer, payer, tx_hash, fee_wei, reverted, sent_at) VALUES ($1, '0xaaaa', '0xbbbb', $2, 1000, $3, $4)", [`0xbbbb:${i}`, hex(32), i === 4, now]);
 }
-const before = (await prev.query('SELECT count(*)::int AS n, sum(tx_nonce)::int AS s FROM rel_sent'))[0];
+const before = (await prev.query('SELECT count(*)::int AS n, sum(fee_wei)::text AS s FROM rel_sent'))[0];
 await migrate(prev, files);
 await migrate(prev, files);
-const after = (await prev.query('SELECT count(*)::int AS n, sum(tx_nonce)::int AS s FROM rel_sent'))[0];
-const cols = (await prev.query("SELECT string_agg(column_name, ',' ORDER BY column_name) AS c FROM information_schema.columns WHERE table_name IN ('rel_sent', 'rel_lease') AND column_name IN ('holder', 'payer_fault_at')"))[0].c;
-const lease = (await prev.query("SELECT fence::text AS f, holder FROM rel_lease WHERE relayer = '0xaaaa'"))[0];
+const after = (await prev.query('SELECT count(*)::int AS n, sum(fee_wei)::text AS s FROM rel_sent'))[0];
+const statuses = (await prev.query("SELECT string_agg(status, ',' ORDER BY auth_key) AS s FROM rel_sent"))[0].s;
+const cols = (await prev.query("SELECT string_agg(column_name, ',' ORDER BY column_name) AS c FROM information_schema.columns WHERE table_name IN ('rel_sent', 'rel_lease') AND column_name IN ('holder', 'payer_fault_at', 'status', 'tx_nonce', 'fence')"))[0].c;
+const lock = (await prev.query("SELECT count(*)::int AS n FROM rel_lock"))[0].n;
 check(
-  'previous schema (001 + synthetic rows) → 001+002 applied twice: rows preserved, new columns NULL',
-  before.n === 5 && after.n === 5 && after.s === before.s && cols === 'holder,payer_fault_at' && lease.f === '41' && lease.holder === null,
-  `rows ${before.n}→${after.n}; nonce sum kept; new columns ${cols}; legacy lease fence ${lease.f}, holder ${lease.holder}`,
+  "previous schema (main's 001_rel.sql + legacy rows) → every schema file applied twice: rows, fees and the old lock kept",
+  before.n === 5 && after.n === 5 && after.s === before.s && statuses === 'unknown,unknown,unknown,unknown,reverted' && lock === 1
+    && cols === 'fence,fence,holder,payer_fault_at,status,tx_nonce',
+  `rows ${before.n}→${after.n}; fee sum ${before.s}→${after.s}; statuses ${statuses}; columns ${cols}; rel_lock rows ${lock}`,
 );
 
 const failed = results.filter((r) => !r.ok).length;

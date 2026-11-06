@@ -4,7 +4,7 @@
 
 1. **Merchant creates a code** in the dashboard (percent or fixed off, expiry, usage limit, optional minimum and first-time-only).
 2. **Entity written.** Our server computes `code_hash = HMAC-SHA256(VOUCHER_HASH_SECRET, merchant ‖ code)` and calls `createEntity(Voucher, {...}, { expiration: ExpirationTime.atDate(expiresAt) })` from the writer key. The plain code stays in our database; Arkiv only ever gets the hash.
-3. **Checkout checks the code** against our database (today). Reading the live Arkiv entity by its hash at this step is designed but not built yet; anyone can already query the public entity.
+3. **Checkout reads the code.** When a shopper enters a code, the server hashes it and queries Arkiv for a live entity with that hash, created and owned by our writer (2 s limit). No entity, or an expired one, refuses the code; if Arkiv can't be reached the code is refused and the sale can still be paid without it.
 4. **Server validates and counts.** It checks the rules (currency, minimum, first-time-only) and the redemption count in its own database, then applies the discount. Redemptions stay on our server because Arkiv entities are only patched by the writer, and a counter there would cost a transaction per payment.
 5. **Entity expires on its own** at the code's expiry, so a query for an expired code returns nothing; there is no cleanup job.
 

@@ -241,23 +241,26 @@ export function Capital() {
         <div>
           <span className="mono muted">06 / Capital</span>
           <h2 className="mask">
-            Get paid <span className="em">early,</span> repay from sales.
+            Get paid <span className="em">early.</span>
           </h2>
-          <p>An advance funded by investors, repaid with a share of each sale in the same transaction. You see the full cost before you sign.</p>
+          <p>Sell an invoice to investors, or take an advance they repay from a share of each sale. You see the full cost before you sign.</p>
+          <a className={buttonClasses("quiet")} href="/capital">
+            Browse offers
+          </a>
         </div>
         <div className="lp-offer rv">
           <div className="head">
-            <span className="mono muted">Offer · revenue advance</span>
+            <span className="mono muted">Offer · invoice</span>
             <span className="tag">Open</span>
           </div>
           <div className="big num">
             1,000.00 <span className="mono muted">USDT now</span>
           </div>
-          <div className="num muted">Repay 1,100.00 · 20% of each sale · cost 100.00</div>
+          <div className="num muted">Customer pays 1,030.00 in 30 days · cost 30.00</div>
           <div className="lp-bar" aria-hidden="true">
             <i />
           </div>
-          <div className="mono num muted">640.00 of 1,000.00 funded · 3 investors</div>
+          <div className="mono num muted">640.00 of 1,000.00 funded · 1 investor</div>
         </div>
       </div>
     </section>
@@ -278,6 +281,9 @@ export function Footer() {
           </a>
           <a className={footLink} href="/merchant">
             Dashboard
+          </a>
+          <a className={footLink} href="/capital">
+            Capital offers
           </a>
           <a className={footLink} href="/proofs">
             Private reads and wallet proofs

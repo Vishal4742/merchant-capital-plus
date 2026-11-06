@@ -13,7 +13,8 @@ import { payConfig } from "@/lib/config";
 import { confirmed, formatWbt, paymentRows, WBT_HINT } from "@/lib/dashboard";
 import { currentMerchant } from "@/lib/merchant-session";
 import { isHex } from "viem";
-import { paidLogs, readPayment, readTxFee, type PaymentRecord } from "@/lib/onchain";
+import { paidLogs, readPayment, type PaymentRecord } from "@/lib/onchain";
+import { cachedTxFee } from "@/lib/server/tx-fee";
 import { listPayments } from "@/lib/sessions";
 import { EXPLORER, formatUsdt } from "@/lib/usdt";
 
@@ -67,13 +68,21 @@ async function Payments() {
   const merchant = await currentMerchant();
   if (!merchant) return <SignedOut available={Boolean(authSecret())} />;
   const pay = payConfig();
-  const logs = pay ? await paidLogs(pay.merchantPay, { merchant }).catch(logged("payment index")) : null;
-  const candidates = paymentRows((await listPayments(merchant).catch(logged("checkout records"))) ?? [], logs ?? []);
+  // the index and our checkout records don't depend on each other: read both at once
+  const [logs, sessions] = await Promise.all([
+    pay ? paidLogs(pay.merchantPay, { merchant }).catch(logged("payment index")) : null,
+    listPayments(merchant).catch(logged("checkout records")),
+  ]);
+  // our checkout records only label the chain's payments: unreadable, the chain's rows still show
+  const candidates = paymentRows(sessions ?? [], logs ?? []);
+  // amounts and what is left to refund, read on chain per payment, never from the index
   const records = pay ? await Promise.all(candidates.map((row) => (row.paymentId ? readPayment(pay.merchantPay, BigInt(row.paymentId)).catch(logged(`payments(${row.paymentId})`)) : null))) : [];
   const payments = confirmed(candidates, records, merchant);
-
+  // the network fee the relayer paid per payment (human 07:39): merchants only, never on a customer page (FR-PAY-7)
+  // one receipt read per payment, the newest FEE_ROWS, each kept once read (a mined tx's fee never changes)
+  // null: the read failed; undefined: not read (past the newest FEE_ROWS, or no transaction)
   const fees = await Promise.all(
-    payments.map(({ row }, i) => (i < FEE_ROWS && row.txHash && isHex(row.txHash) ? readTxFee(row.txHash).catch(logged(`fee of ${row.txHash}`)) : undefined)),
+    payments.map(({ row }, i) => (i < FEE_ROWS && row.txHash && isHex(row.txHash) ? cachedTxFee(row.txHash).catch(logged(`fee of ${row.txHash}`)) : undefined)),
   );
   const known = fees.filter((fee): fee is bigint => typeof fee === "bigint");
   const failed = fees.filter((fee) => fee === null).length;

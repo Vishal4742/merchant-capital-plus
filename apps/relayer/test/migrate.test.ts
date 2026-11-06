@@ -19,5 +19,5 @@ test('db/migrate.ts on a malformed DATABASE_URL exits 1 and never prints the pas
   assert.equal(run.status, 1, output.replaceAll(FAKE_PASSWORD, '<redacted>'));
   assert.ok(!output.includes(FAKE_PASSWORD), 'the password was printed');
   assert.ok(!output.includes('postgresql://'), 'the connection string was printed');
-  assert.match(run.stderr, /migration failed: 001_rel_state\.sql statement 1: NeonDbError/);
+  assert.match(run.stderr, /migration failed: 001_rel\.sql statement 1: NeonDbError/);
 });

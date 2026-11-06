@@ -16,7 +16,8 @@ import { authSecret } from "@/lib/auth";
 import { currentMerchant } from "@/lib/merchant-session";
 import { merchantConfig, payConfig } from "@/lib/config";
 import { change, confirmed, dailyGross, figures, paymentRows, type Confirmed } from "@/lib/dashboard";
-import { logFailure } from "@/lib/gateway-server";
+import { vouchersUsed, type Voucher } from "@/lib/gateway-money";
+import { logFailure, merchantVouchers } from "@/lib/gateway-server";
 import { setupSteps } from "@/lib/onboarding";
 import { merchantInvoices, paidLogs, readPayment, readRelayFee, type Invoice, type PaidLog, type PaymentRecord } from "@/lib/onchain";
 import { relayerHealth } from "@/lib/relay";
@@ -27,7 +28,14 @@ import { EXPLORER, formatUsdt } from "@/lib/usdt";
 
 export default function MerchantPage() {
   return (
-    <Suspense fallback={<p className="mx-auto max-w-6xl px-4 pt-16 text-ink-muted">Loading the workspace…</p>}>
+    // the sidebar paints at once, so switching to Overview never drops the frame while its data streams in (NFR-13)
+    <Suspense
+      fallback={
+        <Shell active="home">
+          <p className="px-4 py-6 text-ink-muted md:px-8">Loading the workspace…</p>
+        </Shell>
+      }
+    >
       <Dashboard />
     </Suspense>
   );
@@ -85,8 +93,8 @@ interface Tile {
 const arrow = (n: number) => (n === 0 ? "0" : `${n > 0 ? "▲" : "▼"} ${Math.abs(n)}`);
 const toneOf = (n: number | null): Tile["tone"] => (n === null || n === 0 ? undefined : n > 0 ? "up" : "down");
 
-/** Everything on the home that depends on the clock, in one plain function. */
-function home(payments: Confirmed[], fee: bigint | null, invoices?: Invoice[] | null) {
+/** Everything on the home that depends on the clock, in one plain function (the render body never reads it). */
+function home(payments: Confirmed[], fee: bigint | null, invoices: Invoice[] | null | undefined, vouchers: Voucher[] | null) {
   const now = Date.now();
   const f = figures(payments, now);
   const vsYesterday = change(f.grossToday, f.grossYesterday);
@@ -128,12 +136,7 @@ function home(payments: Confirmed[], fee: bigint | null, invoices?: Invoice[] | 
       value: fee === null ? "—" : formatUsdt(fee * BigInt(f.countToday)),
       sub: fee === null ? "Can't read fee" : `${formatUsdt(fee)} each, sponsored`,
     },
-    {
-      label: "Settlement",
-      value: "T+0",
-      sub: "Direct to receiving wallet",
-      tone: "positive",
-    },
+    { label: "Vouchers used", ...vouchersUsed(vouchers, now) },
   ];
 
   const series = dailyGross(
@@ -213,8 +216,9 @@ async function Dashboard() {
       </PlainPage>
     );
   }
-
-  const setup = setupFacts(merchant);
+  const setup = setupFacts(merchant); // its own reads, alongside the chain's
+  const vouchers = merchantVouchers(merchant).catch((error: unknown) => (logFailure("dashboard: vouchers", error), null)); // the name only: a DB message can hold SQL
+  const sessions = listPayments(merchant).catch(logged("checkout records")); // Postgres, alongside the chain's reads
   const pay = payConfig();
   const [health, invoices, logs, fee] = pay
     ? await Promise.all([
@@ -224,13 +228,15 @@ async function Dashboard() {
         readRelayFee(pay.merchantPay).catch(logged("fee read")),
       ])
     : [null, null, null, null];
-
-  const candidates = paymentRows((await listPayments(merchant).catch(logged("checkout records"))) ?? [], logs ?? []);
+  // our checkout records only label the chain's payments: unreadable, the chain's rows still show
+  const candidates = paymentRows((await sessions) ?? [], logs ?? []);
+  // amounts and what is left to refund, read on chain per payment (one multicall), never from the index
   const records = pay ? await Promise.all(candidates.map((row) => (row.paymentId ? readPayment(pay.merchantPay, BigInt(row.paymentId)).catch(logged(`payments(${row.paymentId})`)) : null))) : [];
   const payments = confirmed(candidates, records, merchant);
   const isShopWallet = merchant.toLowerCase() === config.merchant.toLowerCase();
   const shop = isShopWallet ? config.merchantName : "your workspace";
-  const { tiles, ranges, when, today } = home(payments, fee, invoices);
+  const { tiles, ranges, when, today } = home(payments, fee, invoices, await vouchers);
+  // the owner may change relayFee (≤ 0.25 USDT): every fee the merchant reads comes from the chain (code review 005 F7)
   const feeText = fee === null ? null : formatUsdt(fee);
   const steps = setupSteps({ ...(await setup), payments: payments.length });
   const shopWallet = `${config.merchant.slice(0, 6)}…${config.merchant.slice(-4)}`;
@@ -294,6 +300,11 @@ async function Dashboard() {
                 <a href="/merchant/settings" className={action}>
                   <span>Settlement policy</span>
                   <span className="eyebrow text-ink-muted">Settings</span>
+                </a>
+              </li>
+              <li>
+                <a href="/merchant/capital" className={action}>
+                  Get paid early <span className="eyebrow text-ink-muted">Capital</span>
                 </a>
               </li>
             </ul>

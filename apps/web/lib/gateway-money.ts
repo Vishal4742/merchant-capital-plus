@@ -189,6 +189,15 @@ export function voucherStatus(v: Voucher, now = Date.now()): VoucherStatus {
   return v.times_redeemed >= v.max_redemptions ? "used_up" : "active";
 }
 
+/** The home's "Vouchers used" tile: redemptions across every code, and how many still work (null: unreadable). */
+export function vouchersUsed(vouchers: readonly Voucher[] | null, now = Date.now()): { value: string; sub: string } {
+  if (vouchers === null) return { value: "—", sub: "can't read vouchers now" };
+  if (vouchers.length === 0) return { value: "0", sub: "No codes yet" };
+  const used = vouchers.reduce((sum, v) => sum + v.times_redeemed, 0);
+  const live = vouchers.filter((v) => voucherStatus(v, now) === "active").length;
+  return { value: String(used), sub: `all time · ${live} of ${vouchers.length} ${vouchers.length === 1 ? "code" : "codes"} live` };
+}
+
 /** "10% off" or "5.00 USDT off". */
 export const discountText = (v: Pick<Voucher, "kind" | "value">) => (v.kind === "percent" ? `${v.value}% off` : `${amountText(v.value)} USDT off`);
 

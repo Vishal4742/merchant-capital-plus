@@ -3,7 +3,7 @@
 // Run from apps/web: node --experimental-test-module-mocks --test test/unknown-recovery.test.mjs
 import { test, before, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
-import { setupDb, resetDb, expireSession, agePending } from "./gw-helpers.mjs";
+import { setupDb, resetDb, agePending } from "./gw-helpers.mjs";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { toHex } from "viem";
 
@@ -39,7 +39,7 @@ const { POST: pay } = await import("../app/api/v1/sessions/[id]/pay/route.ts");
 const { UNKNOWN } = await import("../lib/relay.ts");
 const { GET: status } = await import("../app/api/v1/sessions/[id]/route.ts");
 const { getSession } = await import("../lib/sessions.ts");
-const { saleAuthorization, saleNonce } = await import("../lib/pay.ts");
+const { saleAuthorization } = await import("../lib/pay.ts");
 
 const customer = privateKeyToAccount(generatePrivateKey());
 const relayCalls = [];

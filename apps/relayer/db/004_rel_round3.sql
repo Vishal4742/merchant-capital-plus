@@ -1,4 +1,4 @@
--- Batch 031 round 3 (owner decisions at the human gate). Additive and re-run safe, like 001.
+-- Batch 031 round 3 (owner decisions at the human gate), renumbered 004 by the batch-049 port. Additive and re-run safe.
 -- Apply from apps/relayer: npm run db:migrate
 
 -- B8: the request that took a lease, so a take whose reply was lost (and is retried) is recognised as its own.

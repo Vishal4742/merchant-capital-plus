@@ -120,6 +120,21 @@ test("whoever takes a claim's last free investor slot buys everything left, so a
   assert.deepEqual(await fundOffer(part, inv([INVESTOR]).deps), { tx_hash: TX, block_number: "123" }, "an existing holder tops up freely");
 });
 
+test("a part buy must leave a remainder that still costs at least 1 USDT, or the claim could never fill (UX review #33 M1)", async () => {
+  // the AT-6 invoice: 100 USDT face at 98.065556; the smallest fundable remainder is 1019726 units (quote 1.000000)
+  const at6 = offer({ kind: 1, invoiceId: 4n, bps: 0, face: 100_000_000n, price: 98_065_556n });
+  const buy = (units) => signed({ units, value: (units * at6.price + at6.face - 1n) / at6.face });
+  const tiny = world({ o: at6 });
+  await assert.rejects(fundOffer(await buy(99_500_000n), tiny.deps), (e) => e.status === 400 && /Buy all 100\.00 USDT, or leave at least 1\.019726 USDT/.test(e.message));
+  assert.equal(tiny.posts.length, 0, "refused before any relay");
+  await assert.rejects(fundOffer(await buy(98_980_275n), world({ o: at6 }).deps), (e) => e.status === 400, "1019725 left costs 0.999999");
+  assert.deepEqual(await fundOffer(await buy(98_980_274n), world({ o: at6 }).deps), { tx_hash: TX, block_number: "123" }, "exactly 1019726 left is fundable");
+  assert.deepEqual(await fundOffer(await buy(60_000_000n), world({ o: at6 }).deps), { tx_hash: TX, block_number: "123" }, "AT-6: A buys 60 and leaves 40");
+  assert.deepEqual(await fundOffer(await buy(100_000_000n), world({ o: at6 }).deps), { tx_hash: TX, block_number: "123" }, "buying everything leaves nothing to fund");
+  // an advance's only holder topping up hits the same rule
+  await assert.rejects(fundOffer(await signed({ units: 10_500_000n }), world({ holders: [INVESTOR] }).deps), (e) => e.status === 400 && /leave at least/.test(e.message));
+});
+
 test("a validBefore outside the relayer's 30 s – 15 min window is refused before any read or relay", async () => {
   for (const validBefore of [BigInt(NOW + 10), BigInt(NOW + 1000)]) {
     const w = world();

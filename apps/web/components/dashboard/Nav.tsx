@@ -1,6 +1,11 @@
-// WhiteFlow Navigation — Responsive sidebar and mobile navigation.
-// Maps cleanly to the target navigation: Overview, Invoices, Payments, Connections, Settings.
-// Preserves all existing tools: Links, Pages, Vouchers, Reports, Settlements, API keys, Webhooks, Docs.
+// WhiteFlow navigation (FR-UX-2): the five destinations Overview, Invoices, Payments, Connections, Settings, then the
+// existing gateway tools (links, pages, vouchers, reports, settlements, developers, docs) and legacy Capital, outside the
+// five (its existing positions stay visible). Between screens that send the same CSP a link is next/link (a client
+// navigation, the shell prefetched, NFR-13); every other link is a plain <a>, a full load under its own headers
+// (security review 005 F-N4, lib/soft-nav.ts). At phone width the list folds into a menu; from md up it is the sidebar.
+import Link from "next/link";
+import { FoldedMenu } from "@/components/dashboard/FoldedMenu";
+import { softNav } from "@/lib/soft-nav";
 
 const SECTIONS = [
   {
@@ -26,13 +31,14 @@ const SECTIONS = [
     items: [
       { key: "reports", label: "Reports", href: "/merchant/reports" },
       { key: "settlements", label: "Settlements", href: "/merchant/settlements" },
-      { key: "capital", label: "Advances (Legacy)" },
+      { key: "capital", label: "Capital (legacy)", href: "/merchant/capital" },
     ],
   },
   {
     title: "Developers",
     items: [
-      { key: "keys", label: "API keys & Webhooks", href: "/merchant/developers" },
+      { key: "keys", label: "API keys", href: "/merchant/developers" },
+      { key: "webhooks", label: "Webhooks", href: "/merchant/developers#webhooks" }, // a section of Developers (batch 045)
       { key: "docs", label: "Docs", href: "/docs" },
     ],
   },
@@ -80,7 +86,10 @@ function NavIcon({ name }: { name: string }) {
 
 const row = "flex min-h-9 items-center justify-between gap-2.5 rounded-[8px] px-2.5 text-sm transition-colors";
 
+const hrefOf = (key: NavKey) => SECTIONS.flatMap((section): readonly { key: NavKey; href: string }[] => section.items).find((item) => item.key === key)?.href ?? "";
+
 function List({ active }: { active: NavKey }) {
+  const here = hrefOf(active);
   return (
     <div className="grid gap-1">
       {SECTIONS.map((section) => (
@@ -90,28 +99,24 @@ function List({ active }: { active: NavKey }) {
           </li>
           {section.items.map((item) => {
             const isCurrent = item.key === active;
+            const className = `${row} ${isCurrent ? "bg-accent-soft font-medium text-accent dark:bg-accent/15" : "text-ink hover:bg-surface-sunk"}`;
+            const label = (
+              <span className="flex min-w-0 items-center gap-2">
+                {"icon" in item && item.icon && <NavIcon name={item.icon} />}
+                <span className="truncate">{item.label}</span>
+              </span>
+            );
             return (
               <li key={item.key}>
-                {"href" in item ? (
-                  <a
-                    href={item.href}
-                    aria-current={isCurrent ? "page" : undefined}
-                    className={`${row} ${
-                      isCurrent
-                        ? "bg-accent-soft font-medium text-accent dark:bg-accent/15"
-                        : "text-ink hover:bg-surface-sunk"
-                    }`}
-                  >
-                    <span className="flex items-center gap-2 min-w-0">
-                      {"icon" in item && item.icon && <NavIcon name={item.icon} />}
-                      <span className="truncate">{item.label}</span>
-                    </span>
-                  </a>
+                {softNav(here, item.href) ? (
+                  <Link href={item.href} aria-current={isCurrent ? "page" : undefined} className={className}>
+                    {label}
+                  </Link>
                 ) : (
-                  <span className={`${row} text-ink-muted`}>
-                    <span className="truncate">{item.label}</span>
-                    <span className="eyebrow text-xs">Soon</span>
-                  </span>
+                  // a full load: this screen or the target sends another CSP (F-N4)
+                  <a href={item.href} aria-current={isCurrent ? "page" : undefined} className={className}>
+                    {label}
+                  </a>
                 )}
               </li>
             );
@@ -126,7 +131,7 @@ export function Nav({ active }: { active: NavKey }) {
   const current = SECTIONS.flatMap((section): readonly { key: NavKey; label: string }[] => section.items).find((item) => item.key === active)?.label;
   return (
     <nav aria-label="Dashboard" className="w-full">
-      <details className="group rounded-[10px] border border-hairline bg-surface md:hidden">
+      <FoldedMenu className="group rounded-[10px] border border-hairline bg-surface md:hidden">
         <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3.5 text-sm font-medium [&::-webkit-details-marker]:hidden">
           <span className="flex items-center gap-2">
             <span className="text-ink">Menu</span>
@@ -139,7 +144,7 @@ export function Nav({ active }: { active: NavKey }) {
         <div className="border-t border-hairline p-2">
           <List active={active} />
         </div>
-      </details>
+      </FoldedMenu>
       <div className="hidden md:block">
         <List active={active} />
       </div>

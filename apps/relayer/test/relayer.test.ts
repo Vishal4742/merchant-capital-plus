@@ -14,7 +14,7 @@ import { addresses, capitalMarketAbi, merchantPayAbi } from '../src/contracts.ts
 import { setTestDb, type Db } from '../src/db.ts';
 import { takeLease, unblockPayer, writeAhead } from '../src/state.ts';
 import { health, makeClient, relay, relayerClient, startBalanceRefresh, TIMING, USDT_ABI, USDT_DOMAIN } from '../src/relayer.ts';
-import { applySchema, pgDb, setupDb } from './db-helpers.ts';
+import { applyRoles, applySchema, pgDb, setupDb } from './db-helpers.ts';
 
 // Batch 031: the relayer's shared state is Postgres (FR-REL-10), so every test runs on one PGlite with db/*.sql applied.
 // Each fakeNode has its own relayer key, and the state is per relayer address, so tests stay independent.
@@ -1544,4 +1544,30 @@ test('B7: db/*.sql is idempotent: applying it again keeps every table and row', 
   assert.ok(existing > 0);
   await applySchema(pg);
   assert.equal(await rows(), existing);
+});
+
+// Batch 049 (port): main's batch-037 least-privilege role kept for the batch-031 state. 002 creates mcplus_relayer,
+// 005 grants what src/state.ts needs; a relay must work as that role and everything else must stay refused.
+test('049: as the mcplus_relayer role (002 + 005) a sale relays end to end; other tables, deletes and unblocks are refused', async () => {
+  const { PGlite } = await import('@electric-sql/pglite');
+  const rolePg = new PGlite();
+  try {
+    await applySchema(rolePg);
+    await applyRoles(rolePg);
+    await rolePg.query('CREATE TABLE app_gw_keys (id text)'); // stands in for the gateway's tables
+    await rolePg.query('SET ROLE mcplus_relayer');
+    await assert.rejects(rolePg.query('SELECT * FROM app_gw_keys'), /permission denied/);
+    await assert.rejects(rolePg.query('DELETE FROM rel_sent'), /permission denied/);
+    await assert.rejects(rolePg.query("INSERT INTO rel_payer_unblocks (id, payer, actor, reason, at) VALUES ('x', '0x', 'a', 'b', 1)"), /permission denied/);
+    await withDb(pgDb(rolePg), async () => {
+      const node = fakeNode();
+      const sale = await signedSale();
+      assert.equal((await post(sale.body, node)).status, 200);
+      assert.equal((await post(sale.body, node)).out.code, 'replay');
+      const h = await (await health(node.client)).json();
+      assert.notEqual(h.gasSpentToday, '0', 'spend read back as the role');
+    });
+  } finally {
+    await rolePg.close();
+  }
 });
