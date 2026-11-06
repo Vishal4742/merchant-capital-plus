@@ -74,7 +74,9 @@ test("both sheets close the Privy session after every attempt (paid, cancelled o
     assert.match(source(file), /inFlight\.current = submit\(via\)\.finally\(\(\) => \{\s*endWalletSession\(\);/, file);
   }
   const privyPay = source("components/PrivyPay.tsx");
-  assert.match(privyPay, /await endPrivySession\(/, "close() ends the Privy session");
+  assert.match(privyPay, /const end = \(\) => endPrivySession\(state\.wallets, state\.logout, browserStorage\(\)\);/, "ends the Privy session");
+  assert.match(privyPay, /const close = async \(\) => \{\s*try \{\s*await end\(\);/, "close() awaits it");
+  assert.match(privyPay, /lingering\?\.\(\); \/\/ never two Privy trees/, "a new attempt ends a cancelled one's tree first");
   assert.match(privyPay, /root\.unmount\(\)/, "and removes the Privy tree");
 });
 
