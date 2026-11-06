@@ -6,3 +6,4 @@ Money: yes (the send path)
 Log:
 - 10:15 batch started; spec + failing tests first.
 - 10:16 PARKED before any code: claude-research 10:15 ranks the Capital tab server (P5 critical path) first; F1b + F4 resume right after it.
+- 11:05 RESUMED after batch 023 closed (PR #23 merged). F9 (global breaker via self-cancelled authorizations) is the human-approved 02:44 breaker design: out of scope, needs the human.
