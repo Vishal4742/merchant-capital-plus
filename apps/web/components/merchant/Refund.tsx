@@ -8,6 +8,7 @@ import { useState, type FormEvent } from "react";
 import type { Address } from "viem";
 import { Button } from "@/components/Button";
 import { connectMerchant, refund, walletError } from "@/lib/merchant-wallet";
+import { syncRefund } from "@/lib/refund-sync";
 import { formatUsdt, parseUsdt, plainUsdt } from "@/lib/usdt";
 
 interface RefundProps {
@@ -26,6 +27,14 @@ export function Refund({ merchant, merchantPay, paymentId, refundable }: RefundP
   const [amount, setAmount] = useState(all);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [unsynced, setUnsynced] = useState(false);
+
+  // the table re-reads payments(id) and re-keys this control by what is left, so it starts from the new figure
+  function done() {
+    setOpen(false);
+    setUnsynced(false);
+    router.refresh();
+  }
 
   if (!open) {
     return (
@@ -56,14 +65,29 @@ export function Refund({ merchant, merchantPay, paymentId, refundable }: RefundP
     if (units === 0n || units > left) return setError(`Enter an amount above 0, up to ${formatUsdt(left)} USDT.`);
     setBusy(true);
     try {
-      await refund(await connectMerchant(window.ethereum, merchant, merchantPay), BigInt(paymentId), units);
-      setOpen(false);
-      router.refresh(); // the table re-reads payments(id); the next open starts from the new figure
+      const tx = await refund(await connectMerchant(window.ethereum, merchant, merchantPay), BigInt(paymentId), units);
+      // the money moved; a failed sync only delays the shop's payment.refunded, so it is a notice, never a failed refund.
+      // It stays open until Close, because the refresh re-keys (remounts) this control and would drop the notice.
+      if (await syncRefund(paymentId, tx)) return done();
+      setUnsynced(true);
     } catch (err) {
       setError(walletError(err));
     } finally {
       setBusy(false);
     }
+  }
+
+  if (unsynced) {
+    return (
+      <div className="grid gap-2 text-left sm:justify-items-end">
+        <p role="status" className="text-sm text-ink">
+          Refunded. The webhook to your server didn&apos;t go out yet.
+        </p>
+        <Button variant="quiet" onClick={done}>
+          Close
+        </Button>
+      </div>
+    );
   }
 
   const inputId = `refund-${paymentId}`;

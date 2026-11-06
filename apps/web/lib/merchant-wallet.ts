@@ -17,6 +17,7 @@ import {
   zeroAddress,
   type Address,
   type EIP1193Provider,
+  type Hex,
 } from "viem";
 import { whitechainSepolia } from "viem/chains";
 import { getChainClient } from "./anon.ts";
@@ -158,7 +159,8 @@ export const cancelInvoice = (w: MerchantWallet, id: bigint) => send(w, { addres
 
 /** Returns `amount` of payment `paymentId` to its payer from the merchant's wallet. MerchantPay pulls it with
  *  transferFrom, so a short allowance is first raised by approving exactly this amount. */
-export async function refund(w: MerchantWallet, paymentId: bigint, amount: bigint): Promise<void> {
+/** Returns the refund tx hash, for the gateway's refund sync (batch 027). */
+export async function refund(w: MerchantWallet, paymentId: bigint, amount: bigint): Promise<Hex> {
   const call = { address: w.merchantPay, abi: merchantPayAbi, functionName: "refund", args: [paymentId, amount] } as const;
   const allowance = await w.reader.readContract({ address: USDT, abi: usdtAbi, functionName: "allowance", args: [w.account, w.merchantPay] });
   if (allowance < amount) {
@@ -172,7 +174,7 @@ export async function refund(w: MerchantWallet, paymentId: bigint, amount: bigin
     });
     await send(w, { address: USDT, abi: usdtAbi, functionName: "approve", args: [w.merchantPay, amount] });
   }
-  await send(w, call);
+  return (await send(w, call)).transactionHash;
 }
 
 function revertReason(error: unknown): string {
