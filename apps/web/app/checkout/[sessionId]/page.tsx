@@ -22,7 +22,7 @@ export default function CheckoutPage({ params }: PageProps<"/checkout/[sessionId
   );
 }
 
-/** The FX line, rendered here on the server (NFR-12): "20.00 EUR = 22.50 USDT · rate of 5 Nov 2026 · 1 USDT = 1 USD". */
+/** The FX line, rendered here on the server (NFR-12): "20.00 EUR = 22.51 USDT · rate of 6 Nov 2026 · 1 USDT = 1 USD" (rounded up to the cent). */
 function fxLine(session: Session): string | null {
   const p = session.priced;
   if (!p) return null;

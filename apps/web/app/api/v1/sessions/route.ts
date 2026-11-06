@@ -5,10 +5,9 @@ import { createHash } from "node:crypto";
 import { merchantConfig, shopAuthorized, type MerchantConfig } from "../../../../lib/config.ts";
 import { CURRENCIES, FxUnavailableError, QUOTE_LOCK_MS, quote, type Currency } from "../../../../lib/fx.ts";
 import { BAD_RETURN_URL, SESSION_TTL_MS, createSession, currencyFields, webUrl, type LineItem } from "../../../../lib/sessions.ts";
+import { MAX_PAYMENT, MIN_PAYMENT } from "../../../../lib/server/http.ts";
 import { formatUsdt, parseUsdt, plainUsdt } from "../../../../lib/usdt.ts";
 
-const MIN_UNITS = 1_000_000n; // 1 USDT minimum payment (FR-REL-4)
-const MAX_UNITS = 10_000_000_000n; // 10,000 USDT: a demo ceiling, well above every demo amount
 const MAX_ITEMS = 20;
 const MAX_REFERENCE = 40;
 const MAX_IDEMPOTENCY_KEY = 255;
@@ -47,7 +46,8 @@ export async function POST(request: Request) {
     return send(done);
   } finally {
     // only a created checkout is replayed: a refused or failed one frees the key for a corrected retry
-    if (done?.status !== 201) replies.delete(slot);
+    // only its own entry: a newer request may hold this slot if this one was evicted (code review 006 R2-4)
+    if (done?.status !== 201 && replies.get(slot)?.reply === reply) replies.delete(slot);
   }
 }
 
@@ -99,9 +99,9 @@ async function create(text: string, pageUrl: string, config: MerchantConfig): Pr
     if (error instanceof FxUnavailableError) return fail(503, error.message); // nothing is created without a rate
     throw error;
   }
-  if (fx.usdt < MIN_UNITS || fx.usdt > MAX_UNITS) {
+  if (fx.usdt < MIN_PAYMENT || fx.usdt > MAX_PAYMENT) {
     const converted = currency === "USDT" ? "" : ` (${formatUsdt(asked)} ${currency} is ${formatUsdt(fx.usdt)} USDT)`;
-    return fail(400, `amount must be between 1.00 and 10,000.00 USDT${converted}.`);
+    return fail(400, `amount must be between 1.00 and 1,000.00 USDT${converted}.`); // §4b: 1,000 per payment on testnet
   }
 
   const session = createSession(

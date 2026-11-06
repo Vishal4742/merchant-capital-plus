@@ -35,7 +35,7 @@ interface InvoicesProps {
 }
 
 const MIN_UNITS = 1_000_000n; // MerchantPay.MIN_PAYMENT: 1 USDT
-const MAX_UNITS = 10_000_000_000n; // 10,000 USDT: the same demo ceiling as checkouts
+const MAX_UNITS = 1_000_000_000n; // 1,000 USDT per payment on testnet (§4b), = MAX_PAYMENT in lib/server/http.ts (server-only)
 const NOTES_EVENT = "mcplus-invoice-notes";
 const STATUS = {
   open: { label: "Open", tone: "text-accent" },
@@ -161,7 +161,7 @@ function NewInvoice({ merchant, merchantPay, today, feeText, notesKey: key }: Om
     } catch {
       return setError("Enter an amount like 25.00.");
     }
-    if (amount < MIN_UNITS || amount > MAX_UNITS) return setError("Enter an amount from 1.00 to 10,000.00 USDT.");
+    if (amount < MIN_UNITS || amount > MAX_UNITS) return setError("Enter an amount from 1.00 to 1,000.00 USDT.");
     const due = String(data.get("due") ?? "");
     const dueMs = /^\d{4}-\d{2}-\d{2}$/.test(due) ? Date.parse(`${due}T23:59:59+05:30`) : NaN; // the end of that day in IST
     if (!(dueMs > Date.now() + 60_000)) return setError("Pick a due date from today on.");
@@ -187,7 +187,7 @@ function NewInvoice({ merchant, merchantPay, today, feeText, notesKey: key }: Om
       {/* a stale error goes as soon as anything changes (UX review 005 F6) */}
       <form onSubmit={submit} onChange={() => setError(null)} className="grid items-end gap-4 md:grid-cols-[1fr_1fr_1.5fr_1.5fr_auto]">
         <label className="grid gap-1 text-sm">
-          <span className="text-ink-muted">Amount, 1.00 to 10,000.00 USDT</span>
+          <span className="text-ink-muted">Amount, 1.00 to 1,000.00 USDT</span>
           <input name="amount" inputMode="decimal" autoComplete="off" placeholder="25.00" required className={field} />
         </label>
         <label className="grid gap-1 text-sm">

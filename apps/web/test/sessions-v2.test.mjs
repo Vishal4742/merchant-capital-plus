@@ -116,11 +116,13 @@ test("when the FX rate can't be fetched, an EUR checkout is a 503 in plain words
   assert.equal((await past15Minutes(() => create({ amount: "20.00", currency: "USD" }))).res.status, 201, "USD needs no rate");
 });
 
-test("the converted amount must still be 1.00–10,000.00 USDT", async () => {
+test("the converted amount must still be 1.00–1,000.00 USDT (§4b: 1,000 per payment on testnet)", async () => {
   const small = await create({ amount: "50", currency: "INR" });
   assert.equal(small.res.status, 400);
-  assert.match(small.data.error, /between 1\.00 and 10,000\.00 USDT \(50\.00 INR is 0\.53 USDT\)/);
-  assert.equal((await create({ amount: "9000.00", currency: "GBP" })).res.status, 400, "9,000 GBP is over 10,000 USDT");
+  assert.match(small.data.error, /between 1\.00 and 1,000\.00 USDT \(50\.00 INR is 0\.53 USDT\)/);
+  assert.equal((await create({ amount: "900.00", currency: "GBP" })).res.status, 400, "900 GBP is over 1,000 USDT");
+  assert.equal((await create({ amount: "1000.01", currency: "USDT" })).res.status, 400, "1 cent over the cap");
+  assert.equal((await create({ amount: "1000.00", currency: "USDT" })).res.status, 201, "the cap itself is allowed");
 });
 
 test("returnUrl: http or https up to 200 characters is kept; any other scheme or a longer one is a 400", async () => {
@@ -144,11 +146,11 @@ test("a reference over 40 characters is a 400, never silently cut (claude-sdk)",
   assert.equal((await create({ amount: "25.00", reference: 42 })).res.status, 400);
 });
 
-test("amounts in every reply are plain decimals (1234.50, never 1,234.50)", async () => {
-  const { data } = await create({ amount: "1234.50", currency: "USD" });
-  assert.deepEqual([data.amount, data.priced.amount], ["1234.50", "1234.50"]);
+test("amounts in every reply are plain decimals (1000.00, never 1,000.00)", async () => {
+  const { data } = await create({ amount: "1000.00", currency: "USD" });
+  assert.deepEqual([data.amount, data.priced.amount], ["1000.00", "1000.00"]);
   const polled = await poll(data.id);
-  assert.equal(polled.amount, "1234.50");
+  assert.equal(polled.amount, "1000.00");
 });
 
 test("Idempotency-Key: the same key and body give the first checkout back; another body is a 422; a refused request isn't kept", async () => {
@@ -201,6 +203,13 @@ test("createSession itself refuses a returnUrl that isn't http or https, and kee
   assert.throws(() => createSession({ ...input, returnUrl: `https://shop.example/${"a".repeat(180)}` }), /returnUrl/);
   assert.equal(createSession({ ...input, returnUrl: " https://shop.example " }).returnUrl, "https://shop.example/");
   assert.equal(createSession(input).returnUrl, undefined);
+});
+
+// Security review 006 R2-F5: links and pages create checkouts for other merchants, so the shop key reads only its own.
+test("GET /api/v1/sessions/:id: another merchant's checkout is a 404 for this shop's key", async () => {
+  const other = createSession({ merchant: "0x9999999999999999999999999999999999999999", merchantName: "Elsewhere", amount: 5_000_000n, reference: "X-1", items: [] });
+  const res = await statusRoute(new Request(`http://shop.test/api/v1/sessions/${other.id}`, { headers: auth }), { params: Promise.resolve({ id: other.id }) });
+  assert.equal(res.status, 404);
 });
 
 // Security review 006 F6: the Idempotency-Key store is capped (oldest dropped), so a shop can't grow it without limit.

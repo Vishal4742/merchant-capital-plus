@@ -1,5 +1,5 @@
 // claude-frontend checks for FX quotes (FR-GW-11): Frankfurter v2 rows, the 15-minute cache, rounding, the sanity
-// bands on each rate and its date (security review 006 F1, human 05:4x), and failure.
+// bands on each rate (±15% of today, human 06:18) and its date (security review 006 F1), and failure.
 // fetch is faked; test/fx.live.test.mjs calls the real API (LIVE=1). Run from apps/web: npm test
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
@@ -110,29 +110,33 @@ test("a currency without a rate is unavailable, not priced at 1", async () => {
   await assert.rejects(quote("JPY", "100", hour(7)), FxUnavailableError);
 });
 
-// Security review 006 F1, human 05:4x: one outside host sets the prices, so each rate must sit in a band of USD per unit
-// of the currency, and its date must be recent. Anything else is "unavailable" (503, nothing created).
+// Security review 006 F1 (human 05:4x), narrowed by the human at 06:18: one outside host sets the prices, so each rate
+// (units per USD) must sit within ±15% of 6 Nov's rate, and its date must be recent. Anything else is "unavailable"
+// (503, nothing created). The old 0.5×–2× band let a flipped EUR, GBP or SGD rate through (security review 006 R2-F1).
 const rowsWith = (quoteCode, change) => ROWS.map((row) => (row.quote === quoteCode ? { ...row, ...change } : row));
 async function refused(rows, now, currency) {
   reply = async () => Response.json(rows);
   await assert.rejects(quote(currency, "20.00", now), (error) => error instanceof FxUnavailableError && error.currency === currency);
 }
 
-test("each rate must sit in its band of USD per unit: EUR 0.5–2, GBP 0.6–2.5, SGD 0.4–1.5, INR 0.005–0.03", async () => {
-  const cases = [
-    ["EUR", 8.8877, 0.4], // 10× off: 1 EUR = 0.11 USD; and 1 EUR = 2.5 USD
-    ["GBP", 1.7, 0.39],
-    ["SGD", 2.6, 0.66],
-    ["INR", 201, 33],
-  ];
+const TODAY = { EUR: 0.88875, GBP: 0.74225, SGD: 1.2774, INR: 94.5 };
+
+test("a flipped rate (USD per unit sent as units per USD) is refused for EUR, GBP, SGD and INR", async () => {
   let h = 8;
-  for (const [currency, low, high] of cases) {
-    await refused(rowsWith(currency, { rate: low }), hour(h++), currency);
-    await refused(rowsWith(currency, { rate: high }), hour(h++), currency);
+  for (const [currency, rate] of Object.entries(TODAY)) await refused(rowsWith(currency, { rate: 1 / rate }), hour(h++), currency);
+});
+
+test("each rate must sit within ±15% of today's: 16% off is refused, 14% off is used", async () => {
+  let h = 24; // 6 Nov 00:00 on: hours no other test uses (the rows stay 1 day old)
+  for (const [currency, rate] of Object.entries(TODAY)) {
+    await refused(rowsWith(currency, { rate: rate * 0.84 }), hour(h++), currency);
+    await refused(rowsWith(currency, { rate: rate * 1.16 }), hour(h++), currency);
   }
-  // the edges themselves are fine (1 / rate = exactly the bound)
-  reply = async () => Response.json(ROWS.map((row) => ({ ...row, rate: { EUR: 2, GBP: 0.4, SGD: 2.5, INR: 200, AED: 3.6725 }[row.quote] })));
-  for (const currency of ["EUR", "GBP", "SGD", "INR"]) assert.ok((await quote(currency, "20.00", hour(h))).usdt > 0n, currency);
+  for (const factor of [0.86, 1.14]) {
+    reply = async () => Response.json(ROWS.map((row) => (row.quote in TODAY ? { ...row, rate: TODAY[row.quote] * factor } : row)));
+    for (const currency of Object.keys(TODAY)) assert.ok((await quote(currency, "20.00", hour(h))).usdt > 0n, `${currency} ×${factor}`);
+    h++;
+  }
 });
 
 test("AED must sit within ±1% of its 3.6725 peg", async () => {

@@ -20,14 +20,17 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_RATE_AGE_DAYS = 7;
 const AED_PEG = 3.6725; // AED per USD, the UAE dirham's peg (Central Bank of the UAE)
 
-// The sanity limit (security review 006 F1, human 05:4x): one outside host sets these prices, so a rate is used only if
-// one unit of the currency is worth between these many USD. "Today" is Frankfurter's rate of 5 Nov 2026.
-const USD_PER_UNIT: Record<string, readonly [number, number]> = {
-  EUR: [0.5, 2], // today 1.125
-  GBP: [0.6, 2.5], // today 1.347
-  SGD: [0.4, 1.5], // today 0.783
-  INR: [0.005, 0.03], // today 0.0106
-  AED: [1 / (AED_PEG * 1.01), 1 / (AED_PEG * 0.99)], // the peg ±1%: today exactly 3.6725
+// The sanity limit (security review 006 F1, human 05:4x; narrowed by the human at 06:18 because a flipped EUR, GBP or
+// SGD rate passed the old 0.5×–2× band): one outside host sets these prices, so a rate (units of the currency per 1 USD,
+// as Frankfurter sends it) is used only within ±15% of Frankfurter's rate of 6 Nov 2026. claude-contracts' quotes module
+// uses the same numbers (ARCHITECTURE §4b). ponytail: fixed to this week's rates; widen or re-centre if the demo runs later.
+const around = (today: number) => [today * 0.85, today * 1.15] as const;
+const UNITS_PER_USD: Record<string, readonly [number, number]> = {
+  EUR: around(0.88875),
+  GBP: around(0.74225),
+  SGD: around(1.2774),
+  INR: around(94.5),
+  AED: [AED_PEG * 0.99, AED_PEG * 1.01], // the peg ±1%: today exactly 3.6725
 };
 
 export interface Quote {
@@ -68,10 +71,10 @@ function recent(date: string, now: number): boolean {
   return at >= today - MAX_RATE_AGE_DAYS * DAY_MS && at <= today + DAY_MS;
 }
 
-/** One unit of `currency` at `rate` per USD is worth a sane number of USD. */
+/** `rate` (units of `currency` per 1 USD) sits within that currency's band. */
 function inBand(currency: string, rate: number): boolean {
-  const band = USD_PER_UNIT[currency];
-  return band !== undefined && 1 / rate >= band[0] && 1 / rate <= band[1];
+  const band = UNITS_PER_USD[currency];
+  return band !== undefined && rate >= band[0] && rate <= band[1];
 }
 type Rates = { fetchedAt: number; rates: Map<string, { rate: string; date: string }> };
 // ponytail: one cache per server instance; a failed or partial answer is never cached

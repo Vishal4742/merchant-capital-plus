@@ -15,7 +15,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   if (!shopAuthorized(request, config.apiKey)) return fail(401, "Missing or wrong API key.");
   const { id } = await params;
   const found = getSession(id);
-  if (!found) return fail(404, "No such checkout.");
+  // only this shop's checkouts: links and pages create sessions for other merchants too (security review 006 R2-F5)
+  if (!found || found.merchant.toLowerCase() !== config.merchant.toLowerCase()) return fail(404, "No such checkout.");
   const pay = payConfig();
   const state = pay ? await settlePending(found, pay.merchantPay) : found.payment ? "paid" : found.pending ? "pending" : "open";
   const session = getSession(id) ?? found;
