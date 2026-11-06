@@ -41,6 +41,9 @@ const VoucherEntity = defineSchema(VOUCHER_TYPE, {
 const CODE_RE = /^[A-Z0-9_-]{3,32}$/;
 const MAX_REDEMPTIONS = 100_000;
 const LINKS_AND_PAGES_ONLY = "Vouchers work on payment links and pages only.";
+/** How long a hold counts against the usage limit: the checkout session's life plus a grace for a payment signed just
+ *  before it expired that is still settling (security R2-L2). Measured from the checkout's start, never from a re-apply. */
+export const HOLD_MS = SESSION_TTL_MS + 5 * 60_000;
 
 type VoucherRow = { id: string; merchant: string; code: string; kind: VoucherKind; value: string; expires_at: string; max_redemptions: number; times_redeemed: number; min_amount: string | null; active: boolean; arkiv_entity_key: string | null; created_at: string };
 const COLUMNS = "id, merchant, code, kind, value::text, expires_at::text, max_redemptions, times_redeemed, min_amount::text, active, arkiv_entity_key, created_at::text";
@@ -177,6 +180,7 @@ export async function applyVoucher(merchant: string, code: string, sessionId: st
   const checkout = await checkoutOf(sessionId);
   if (!checkout || checkout.merchant !== merchant.toLowerCase()) return { ok: false, reason: LINKS_AND_PAGES_ONLY };
   if (checkout.paidAt !== null) return { ok: false, reason: "This checkout is already paid." };
+  if (now - checkout.createdAt >= SESSION_TTL_MS) return { ok: false, reason: "This checkout has expired." }; // R2-M2
   if (usdtAmount !== checkout.usdtAmount) return { ok: false, reason: "The amount doesn't match this checkout." };
   const normalized = code.trim().toUpperCase();
   if (!CODE_RE.test(normalized)) return { ok: false, reason: "That code isn't valid." };
@@ -189,7 +193,7 @@ export async function applyVoucher(merchant: string, code: string, sessionId: st
   const discount = voucher.kind === "percent" ? (base * voucher.value) / 100n : voucher.value; // floor: the merchant's favour
   const total = base - discount;
   if (total < MIN_PAYMENT) return { ok: false, reason: "The total after this code would be under 1 USDT." };
-  // A hold counts against the usage limit for as long as its checkout session lives (security review H1: without this,
+  // A hold counts against the usage limit for HOLD_MS from its checkout's start (security review H1: without this,
   // one code with 1 use could be applied to many open checkouts and all of them paid at the discount). The advisory
   // lock runs first in the same transaction, so the insert's snapshot sees every other session's committed hold.
   const [, reserved] = await transaction([
@@ -205,11 +209,27 @@ export async function applyVoucher(merchant: string, code: string, sessionId: st
                usdt_amount = EXCLUDED.usdt_amount, created_at = EXCLUDED.created_at
              WHERE app_gw_redemptions.confirmed_at IS NULL
              RETURNING session_id`,
-      params: [sessionId, voucher.id, discount.toString(), total.toString(), now, now - SESSION_TTL_MS],
+      // the hold starts when the checkout did ($5), so re-applying can't keep a code locked (R2-M2)
+      params: [sessionId, voucher.id, discount.toString(), total.toString(), checkout.createdAt, now - HOLD_MS],
     },
   ]);
   if (reserved.length !== 1) return { ok: false, reason: "That code has been used up." }; // (a paid checkout returned above)
   return { ok: true, discount, usdtAmount: total };
+}
+
+/**
+ * What the payer must be charged for a link or page session: the live (or confirmed) voucher hold's total, else the
+ * checkout's amount; null for a shop's own session (its amount is the session's). claude-frontend's pay route charges
+ * exactly this and refuses to relay on a mismatch, so the price can never drift from the hold (security R2-M1).
+ */
+export async function amountDue(sessionId: string, now = Date.now()): Promise<bigint | null> {
+  const checkout = await checkoutOf(sessionId);
+  if (!checkout) return null;
+  const rows = await query<{ usdt_amount: string }>(
+    "SELECT usdt_amount::text FROM app_gw_redemptions WHERE session_id = $1 AND (confirmed_at IS NOT NULL OR created_at > $2)",
+    [sessionId, now - HOLD_MS],
+  );
+  return rows[0] ? BigInt(rows[0].usdt_amount) : checkout.usdtAmount;
 }
 
 /**

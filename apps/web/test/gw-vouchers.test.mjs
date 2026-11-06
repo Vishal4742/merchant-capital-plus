@@ -42,9 +42,9 @@ async function newVoucher(over = {}, merchant = MERCHANT) {
   return { res, data: await res.json() };
 }
 let n = 0;
-async function checkout(amount = USDT(25), merchant = MERCHANT) {
+async function checkout(amount = USDT(25), merchant = MERCHANT, at = Date.now()) {
   const id = `ses_test_${++n}`;
-  await recordCheckout(id, "link", "lnk_1", merchant, amount);
+  await recordCheckout(id, "link", "lnk_1", merchant, amount, { now: at });
   return id;
 }
 
@@ -210,9 +210,11 @@ test("applyVoucher refuses shop sessions, other merchants' sessions, unknown cod
 test("applyVoucher refuses expired, used-up and below-minimum codes, and paid checkouts", async () => {
   const { data } = await newVoucher({ max_redemptions: 1, min_amount: "20.00" });
   const session = await checkout(USDT(25));
-  const expired = await applyVoucher(MERCHANT, "SAVE10", session, USDT(25), Date.parse(data.expires_at));
+  const atExpiry = Date.parse(data.expires_at);
+  const late = await checkout(USDT(25), MERCHANT, atExpiry - 60_000); // a fresh checkout opened a minute before the code expires
+  const expired = await applyVoucher(MERCHANT, "SAVE10", late, USDT(25), atExpiry);
   assert.equal(expired.ok, false);
-  assert.match(expired.reason, /expired/);
+  assert.equal(expired.reason, "That code has expired.");
   const low = await checkout(USDT(19.99));
   const below = await applyVoucher(MERCHANT, "SAVE10", low, USDT(19.99));
   assert.equal(below.ok, false);
@@ -263,20 +265,52 @@ test("security H1: a 1-use code applied to many open checkouts discounts only th
   assert.equal((await applyVoucher(MERCHANT, "SAVE10", sessions[0], USDT(25))).ok, true, "the holder may re-apply its own code");
 });
 
-test("a hold ends with its checkout session: after 30 minutes another checkout can use the code", async () => {
+test("a hold ends with its checkout session (+5 min grace): then another checkout can use the code", async () => {
   const { SESSION_TTL_MS } = await import("../lib/sessions.ts");
+  const { HOLD_MS } = await import("../lib/server/vouchers.ts");
+  assert.equal(HOLD_MS, SESSION_TTL_MS + 5 * 60_000);
   await newVoucher({ max_redemptions: 1 });
   const t = Date.now();
-  const a = await checkout();
-  const b = await checkout();
+  const a = await checkout(USDT(25), MERCHANT, t);
   assert.equal((await applyVoucher(MERCHANT, "SAVE10", a, USDT(25), t)).ok, true);
-  assert.equal((await applyVoucher(MERCHANT, "SAVE10", b, USDT(25), t + SESSION_TTL_MS - 1)).ok, false, "a's hold is still live");
-  assert.equal((await applyVoucher(MERCHANT, "SAVE10", b, USDT(25), t + SESSION_TTL_MS + 1)).ok, true, "a's hold expired");
-  // both holds exist now; if both were somehow paid, the last-use guard still counts exactly one
-  const results = await Promise.all([confirmRedemption(a, USDT(22.5)), confirmRedemption(b, USDT(22.5)), confirmRedemption(a, USDT(22.5))]);
+  const b = await checkout(USDT(25), MERCHANT, t + SESSION_TTL_MS);
+  assert.equal((await applyVoucher(MERCHANT, "SAVE10", b, USDT(25), t + SESSION_TTL_MS + 1)).ok, false, "a's hold still counts in the grace");
+  const c = await checkout(USDT(25), MERCHANT, t + HOLD_MS);
+  assert.equal((await applyVoucher(MERCHANT, "SAVE10", c, USDT(25), t + HOLD_MS + 1)).ok, true, "a's hold is over");
+  // a's (lapsed) hold and c's hold both exist; if both were somehow paid, the last-use guard still counts exactly one
+  const results = await Promise.all([confirmRedemption(a, USDT(22.5)), confirmRedemption(c, USDT(22.5)), confirmRedemption(a, USDT(22.5))]);
   assert.equal(results.filter(Boolean).length, 1);
   const listed = await (await list(req("GET", "/api/v1/vouchers", { headers: signedIn() }))).json();
   assert.equal(listed.vouchers[0].times_redeemed, 1);
+});
+
+test("R2-M2: an expired checkout can't take a code, and re-applying late never extends a hold", async () => {
+  const { SESSION_TTL_MS } = await import("../lib/sessions.ts");
+  const { HOLD_MS } = await import("../lib/server/vouchers.ts");
+  await newVoucher({ max_redemptions: 1 });
+  const t = Date.now();
+  const a = await checkout(USDT(25), MERCHANT, t);
+  const old = await applyVoucher(MERCHANT, "SAVE10", a, USDT(25), t + SESSION_TTL_MS);
+  assert.deepEqual(old, { ok: false, reason: "This checkout has expired." });
+  assert.equal((await applyVoucher(MERCHANT, "SAVE10", a, USDT(25), t)).ok, true);
+  assert.equal((await applyVoucher(MERCHANT, "SAVE10", a, USDT(25), t + SESSION_TTL_MS - 1)).ok, true, "re-apply inside the session");
+  const fresh = await checkout(USDT(25), MERCHANT, t + HOLD_MS);
+  assert.equal((await applyVoucher(MERCHANT, "SAVE10", fresh, USDT(25), t + HOLD_MS + 1)).ok, true, "a's hold ended at its checkout's start + HOLD_MS, not at the re-apply");
+});
+
+test("R2-M1: amountDue is the live hold's total, else the checkout's amount, else null", async () => {
+  const { amountDue, HOLD_MS } = await import("../lib/server/vouchers.ts");
+  await newVoucher({ code: "TEN", value: "10" });
+  await newVoucher({ code: "TWENTY", value: "20" });
+  const t = Date.now();
+  const s = await checkout(USDT(50), MERCHANT, t);
+  assert.equal(await amountDue(s, t), USDT(50), "no code yet");
+  await applyVoucher(MERCHANT, "TEN", s, USDT(50), t);
+  assert.equal(await amountDue(s, t), USDT(45));
+  await applyVoucher(MERCHANT, "TWENTY", s, USDT(50), t);
+  assert.equal(await amountDue(s, t), USDT(40), "the switched code wins");
+  assert.equal(await amountDue(s, t + HOLD_MS + 1), USDT(50), "a lapsed hold no longer discounts");
+  assert.equal(await amountDue("ses_shop_own", t), null, "a shop's own session: not ours to price");
 });
 
 test("code review M3: paying the full price after applying a code doesn't count a use", async () => {
