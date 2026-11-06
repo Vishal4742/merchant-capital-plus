@@ -225,33 +225,6 @@ export async function cancelLink(merchant: Address, id: string, now = Date.now()
   return rows.length === 1;
 }
 
-export const MAX_LINK_PAYMENTS = 50; // ponytail: the newest 50 paid checkouts of a reusable link; add a cursor if needed
-
-/** One of the merchant's links, or null (another merchant's id is the same null: the route answers 404). */
-export async function linkById(merchant: Address, id: string): Promise<Link | null> {
-  const rows = await query<LinkRow>(`SELECT ${COLUMNS} FROM app_gw_links WHERE id = $1 AND merchant = $2`, [id, merchant.toLowerCase()]);
-  return rows.length ? (await withPayments(rows))[0] : null;
-}
-
-/** A link's paid checkouts, newest first (batch 052): the server's own record of each payment (app_web_sessions.payment,
- *  written by the pay route once the relayer's receipt, or the chain after an unknown outcome, confirmed it), never a
- *  redirect or a client's word. `amount` is what was paid in USDT, after any discount code. */
-export async function linkPayments(link: Link): Promise<{ session_id: string; payment_id: string | null; amount: string; currency: "USDT"; tx_hash: string | null; paid_at: string | null }[]> {
-  const rows = await query<{ session_id: string; paid_at: string; payment: { txHash?: string | null; paymentId?: string | null; amount?: string } | null; usdt_amount: string }>(
-    `SELECT c.session_id, c.paid_at::text, c.usdt_amount::text, s.payment FROM app_gw_checkouts c LEFT JOIN app_web_sessions s ON s.id = c.session_id
-     WHERE c.kind = 'link' AND c.ref_id = $1 AND c.merchant = $2 AND c.paid_at IS NOT NULL ORDER BY c.paid_at DESC, c.session_id LIMIT ${MAX_LINK_PAYMENTS}`,
-    [link.id, link.merchant],
-  );
-  return rows.map((r) => ({
-    session_id: r.session_id,
-    payment_id: r.payment?.paymentId ?? null,
-    amount: decimal(BigInt(r.payment?.amount ?? r.usdt_amount))!,
-    currency: "USDT",
-    tx_hash: r.payment?.txHash ?? null,
-    paid_at: iso(Number(r.paid_at)),
-  }));
-}
-
 export async function linkBySlug(slug: string): Promise<Link | null> {
   dispatchSoon(); // a customer opening a checkout: the steadiest traffic there is, so due webhook retries ride on it
   const rows = await query<LinkRow>(`SELECT ${COLUMNS} FROM app_gw_links WHERE slug = $1`, [slug]);

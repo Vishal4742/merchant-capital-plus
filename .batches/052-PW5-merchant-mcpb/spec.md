@@ -70,14 +70,11 @@ Delivered or kept, from main's SRS 2.3 and the WhiteFlow SRS v3.1 (on the stage 
 - [ ] Web: `npm run typecheck && npm run lint && npm test` in apps/web. MCP: `npm run typecheck && npm test`.
 
 ## Files to touch (owner lane: only these)
-- apps/web/lib/server/idempotency.ts (new; the sessions route's helper, extracted)
-- apps/web/app/api/v1/sessions/route.ts (uses the shared helper; same behaviour)
-- apps/web/app/api/v1/links/route.ts (an sk_test_ key also works; Idempotency-Key on POST)
-- apps/web/app/api/v1/links/[id]/route.ts (new GET: one link and its paid checkouts)
-- apps/web/app/api/v1/account/route.ts (new GET: the key's merchant profile)
-- apps/web/app/api/v1/reports/route.ts (an sk_test_ key also works)
-- apps/web/lib/server/links.ts (linkById + its paid checkouts)
-- apps/web/test/gw-mcp-api.test.mjs (new)
+- **Round 2 (human: "hand routes over"):** every apps/web route and lib change below moved to
+  `wf/gateway-secret-key-routes`, PR #48, batch 054, owner claude-contracts, together with the fix for review F1.
+  PR #45 keeps packages/mcp only, plus the two test-path fixes.
+- (moved) apps/web/lib/server/{idempotency,links,keys,http}.ts, app/api/v1/{sessions,links,links/[id],account,reports}
+  routes, test/gw-mcp-api.test.mjs
 - apps/web/test/docs-reference.test.mjs and test-mode.test.mjs: test-only Windows path fix (`fileURLToPath`; batch 049's
   identical change to docs-reference). On main they fail on a Windows host, so the pre-push hook refused this branch.
   Assertions unchanged; Linux unaffected.
