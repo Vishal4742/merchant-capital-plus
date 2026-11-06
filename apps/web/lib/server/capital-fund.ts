@@ -41,14 +41,18 @@ export async function fundOffer(raw: Record<string, unknown>, deps: FundDeps = {
   // a payout pays every holder in one tx under the relayer's 400k gas: an advance takes 1 investor, an invoice 2
   // (claude-contracts' fork table; ClaimToken itself allows 8). An existing holder may still add units.
   const holders = await claimHolders(f.claimId, deps);
-  if (holders.length >= HOLDER_CAP[offer.kind] && !holders.some((h) => h.toLowerCase() === f.investor.toLowerCase())) {
-    throw new HttpError(409, holderCapMessage(offer.kind));
-  }
+  const holding = holders.some((h) => h.toLowerCase() === f.investor.toLowerCase());
+  if (holders.length >= HOLDER_CAP[offer.kind] && !holding) throw new HttpError(409, holderCapMessage(offer.kind));
   const left = offer.face - offer.sold;
   if (f.units > left) throw new HttpError(400, `Only ${left} units are left in this offer.`);
   const value = await quoteUnits(f.claimId, f.units, deps);
   // no relay fee on funding, so the relayer refuses less than 1 USDT: say so instead of "approval didn't work"
   if (value < MIN_PAYMENT) throw new HttpError(400, "The minimum funding is 1.00 USDT.");
+  // human 12:2x (security 026 M1): a new investor taking the claim's last free slot buys everything left, so a small
+  // slice can't lock an advance (or an invoice) against every other investor until it repays
+  if (!holding && holders.length === HOLDER_CAP[offer.kind] - 1 && f.units !== left) {
+    throw new HttpError(400, `You're the last investor this ${offer.kind} can take: buy all ${left} remaining units.`);
+  }
   const message = { from: f.investor, to: CAPITAL_MARKET, value, validAfter: 0n, validBefore: f.validBefore, nonce: fundingNonce(f.claimId, f.investor, f.units, f.salt) };
   const valid = await verifyTypedData({ address: f.investor, domain: usdtDomain, types: receiveTypes, primaryType: "ReceiveWithAuthorization", message, signature: f.sig }).catch(() => false);
   if (!valid) throw new HttpError(400, "That approval doesn't match this funding. Nothing was charged; please sign again.");
