@@ -11,15 +11,21 @@ const attemptedIds = [];
 const confirmed = [];
 const confirmedAmounts = [];
 let failNext = false;
+const { query: dbQuery } = await import("../lib/server/db.ts");
+// Batch 031: events.ts now calls enqueueEventOnce, which writes the dedupe key together with the deliveries in one
+// statement. The recorder keeps that contract: a failed enqueue writes no key; a successful one writes it exactly once.
+// (gw-outbox.test.mjs tests the real statement.)
 mock.module("../lib/server/webhooks.ts", {
   namedExports: {
-    enqueueEvent: async (merchant, type, data, now, eventId) => {
+    enqueueEventOnce: async (key, merchant, type, data, now, eventId) => {
       attemptedIds.push(eventId);
       if (failNext) {
         failNext = false;
         throw new Error("db down");
       }
-      sent.push({ merchant, type, data, eventId });
+      const fresh = await dbQuery("INSERT INTO app_gw_events (key, created_at) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING RETURNING key", [key, now]);
+      if (fresh.length === 1) sent.push({ merchant, type, data, eventId });
+      return [];
     },
   },
 });

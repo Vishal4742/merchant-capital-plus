@@ -27,6 +27,7 @@ const { syncRefund } = await import("../lib/server/refunds.ts");
 const { POST } = await import("../app/api/v1/payments/[id]/refunds/sync/route.ts");
 const { createSession, recordPayment } = await import("../lib/sessions.ts");
 const { resetRateLimits } = await import("../lib/server/http.ts");
+const { query } = await import("../lib/server/db.ts");
 
 const USDT = (n) => BigInt(Math.round(n * 1_000_000));
 const TX = `0x${"ab".repeat(32)}`;
@@ -68,9 +69,12 @@ before(async () => {
   const theirs = await createSession({ merchant: OTHER_MERCHANT, merchantName: "Other", amount: USDT(10), reference: "B-1", items: [{ name: "Tea", qty: 1, price: USDT(10) }] });
   await recordPayment(theirs.id, { txHash: `0x${"02".repeat(32)}`, blockNumber: "11", paymentId: "8", from: PAYER, paidAt: Date.now(), amount: USDT(10) });
 });
-beforeEach(() => {
+beforeEach(async () => {
   refunds.length = 0;
   resetRateLimits();
+  // batch 031 Part C: the refund-sync limit is now a shared Postgres window (app_web_rate_limits); this file seeds its
+  // data once instead of calling resetDb(), so clear the shared windows too, as the in-memory reset used to
+  await query("DELETE FROM app_web_rate_limits");
   process.env.MERCHANT_PAY_ADDRESS = MERCHANT_PAY;
 });
 
