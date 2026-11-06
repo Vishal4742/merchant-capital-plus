@@ -8,8 +8,12 @@ import { sqlStatements } from "../db/statements.mjs";
 
 export const AUTH_SECRET = "gw-test-auth-secret-0123456789abcdef";
 process.env.AUTH_SECRET = AUTH_SECRET;
-// Batch 051: dashboard mutations check the request's Origin against PUBLIC_ORIGIN (CSRF), so the tests need one.
-export const ORIGIN = (process.env.PUBLIC_ORIGIN ??= "http://localhost");
+// Batch 051: dashboard mutations check the request's Origin against PUBLIC_ORIGIN (CSRF), so a file that signs in needs
+// one. Set on first sign-in only: files that test PUBLIC_ORIGIN handling themselves (auth.test.mjs) see it unset.
+export const ORIGIN = process.env.PUBLIC_ORIGIN ?? "http://localhost";
+const needOrigin = () => {
+  process.env.PUBLIC_ORIGIN ??= ORIGIN;
+};
 
 const { query, setTestDb } = await import("../lib/server/db.ts");
 const { SESSION_COOKIE, signSession } = await import("../lib/auth.ts");
@@ -83,7 +87,8 @@ export async function resetDb() {
 // Batch 051: the dashboard cookie is a WhiteFlow session (wf_session) of an Owner whose workspace is linked to the legacy
 // merchant wallet, the only way to reach the v1 gateway after the cutover. signedIn() stays synchronous: it names the
 // merchant, and that workspace (principal, business, Owner membership, session) is written on the next database call,
-// and again after each resetDb(). Files that never call signedIn() get no extra wf_* rows.
+// and again after each resetDb(). Files that never call signedIn() get no extra wf_* rows. A file that installs its own
+// setTestDb wrapper (gw-outbox) bypasses this: it uses `await seedWorkspace()` instead.
 const wanted = new Set();
 const seeded = new Set();
 const FAR_FUTURE = 9_000_000_000_000_000; // ms: seeded sessions outlive any mocked clock
@@ -110,6 +115,7 @@ async function seedSession(tag, principalId, businessId, now) {
 
 /** The workspace for `merchant` (linked to it unless linked: false) with an Owner signed in; returns its ids and headers. */
 export async function seedWorkspace(merchant = MERCHANT, { linked = true } = {}) {
+  needOrigin();
   const h = hex(merchant), now = Date.now();
   if (linked) seeded.add(merchant.toLowerCase());
   const principalId = await seedPrincipal(`owner${h}`, now);
@@ -141,6 +147,7 @@ export const agePending = (id, validBefore = 0n) => query("UPDATE app_web_sessio
 
 /** Headers for the Owner of `merchant`'s linked workspace, signed in to WhiteFlow (batch 051). */
 export const signedIn = (merchant = MERCHANT) => {
+  needOrigin();
   wanted.add(merchant.toLowerCase());
   return { cookie: `wf_session=seed_owner${hex(merchant)}`, origin: ORIGIN };
 };
