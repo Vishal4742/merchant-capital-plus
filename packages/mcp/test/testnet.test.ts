@@ -159,6 +159,15 @@ test("list_payments and get_payment_link: verified records with explorer links; 
   assert.equal((await call("get_payment_link", { link_id: "../../etc/passwd" })).isError, true);
 });
 
+test("a dashboard link priced finer than its currency's minor unit (10.555 INR) is shown as stored, not rounded or refused", async () => {
+  const { fetch } = gateway({ "GET /api/v1/links/lnk_AbCdEfGhIjKlMnOp": () => ({ status: 200, body: { ...LINK, amount: "10.555", paid_checkouts: [] } }) });
+  const { call } = await connect(ENV, { fetch });
+  const r = await call("get_payment_link", { link_id: LINK.id });
+  assert.equal(r.isError, false, r.text);
+  assert.equal(r.json.link.amount, "10.555");
+  assert.equal(r.json.link.amount_display, "10.555 INR");
+});
+
 test("startup refuses bad settings without repeating the key; sandbox is the default mode", () => {
   const make = (env: Record<string, string>) => () => createServer({ env, stateDir: tempDir(), now: () => NOW });
   assert.throws(make({ WHITEFLOW_MODE: "testnet" }), /needs WHITEFLOW_API_KEY/);

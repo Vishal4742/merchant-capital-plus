@@ -12,15 +12,27 @@ import { EXPLORER_TX, replayNote, type Ctx, type Profile } from "./context.ts";
 
 const LINK_ID = /^lnk_[A-Za-z0-9_-]{1,40}$/;
 
+/** The link's price as WhiteFlow stored it. The dashboard accepts up to 6 decimals in any currency, so a stored price can
+ *  be finer than the currency's minor unit (e.g. 10.555 INR): then it's shown exactly as stored, never rounded. */
+function price(text: string | null, currency: Currency): { amount: string | null; display: string } {
+  if (text === null) return { amount: null, display: "the customer enters the amount" };
+  try {
+    const units = fromApi(text, currency);
+    return { amount: decimal(units, currency), display: display(units, currency) };
+  } catch {
+    return { amount: text, display: `${text} ${currency}` };
+  }
+}
+
 function linkOut(ctx: Ctx, link: Link, profile: Profile) {
   const currency = link.currency as Currency;
-  const amount = link.amount === null ? null : fromApi(link.amount, currency);
+  const { amount, display: shown } = price(link.amount, currency);
   return {
     id: link.id,
     url: ctx.client.absolute(link.url),
-    amount: amount === null ? null : decimal(amount, currency),
+    amount,
     currency,
-    amount_display: amount === null ? "the customer enters the amount" : display(amount, currency),
+    amount_display: shown,
     description: untrusted(link.description),
     reference: link.reference_id ? untrusted(link.reference_id, 40) : null,
     status: link.status,
