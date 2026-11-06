@@ -34,19 +34,20 @@ export function InvestorApp({ view, header }: InvestorAppProps) {
           <a href="/" className="inline-flex min-h-11 items-center text-[17px] font-medium tracking-[-0.02em] whitespace-nowrap md:text-[19px]">
             Merchant Capital+
           </a>
-          <nav aria-label="Capital" className="order-3 flex basis-full gap-1 sm:order-2 sm:basis-auto">
+          {/* no CSS order: what you see is the tab order at every width; the wallet wraps below on a phone (UX review #33 M4) */}
+          <nav aria-label="Capital" className="flex gap-1">
             {PAGES.map((p) => (
               <a
                 key={p.key}
                 href={p.href}
                 aria-current={p.key === view ? "page" : undefined}
-                className={`inline-flex min-h-11 items-center rounded-[10px] px-3 text-sm ${p.key === view ? "bg-accent-soft font-medium text-accent" : "text-ink hover:bg-surface-sunk"}`}
+                className={`inline-flex min-h-11 items-center rounded-[10px] px-2.5 text-sm whitespace-nowrap sm:px-3 ${p.key === view ? "bg-accent-soft font-medium text-accent" : "text-ink hover:bg-surface-sunk"}`}
               >
                 {p.label}
               </a>
             ))}
           </nav>
-          <div className="order-2 ml-auto flex items-center gap-2 sm:order-3">
+          <div className="ml-auto flex items-center gap-2">
             <WalletChip state={state} connect={connect} />
           </div>
         </div>
