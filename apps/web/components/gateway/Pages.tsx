@@ -8,7 +8,7 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@/components/Button";
 import { SectionLabel, card, field, nightGrain, textLink } from "@/components/gateway/Frame";
 import { PageSheet, rangeText } from "@/components/gateway/Hosted";
-import { LinkPill, QrActions } from "@/components/gateway/Share";
+import { LinkPill, QrActions, WebhookId } from "@/components/gateway/Share";
 import { PRICE_CURRENCIES, errorText, gatewayClient, type Currency, type Page } from "@/lib/gateway-client";
 import { amountText, pageBody, type PageForm } from "@/lib/gateway-forms";
 
@@ -213,6 +213,7 @@ function PageCard({ page, origin }: { page: Page; origin: string }) {
         </div>
       </div>
       <LinkPill url={`${origin}/p/${page.slug}`} name={`the page ${page.title}`} />
+      <WebhookId field="page_id" id={page.id} name={`the page ${page.title}`} />
       <div className="grid gap-1 border-t border-hairline pt-2 text-sm">
         <div className="flex flex-wrap items-center justify-between gap-x-4">
           <span className="text-ink-muted tabular-nums">

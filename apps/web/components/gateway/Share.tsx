@@ -14,6 +14,19 @@ export function LinkPill({ url, name }: { url: string; name: string }) {
   );
 }
 
+/** The id a link's or page's webhooks carry (data.link_id / data.page_id, lib/server/events.ts), with Copy: how the
+ *  merchant's server tells which link or page a payment came from. */
+export function WebhookId({ field, id, name }: { field: "link_id" | "page_id"; id: string; name: string }) {
+  return (
+    <div className="flex min-w-0 items-center gap-2 text-sm">
+      <p className="min-w-0 flex-1 text-ink-muted">
+        Webhooks for this {field === "link_id" ? "link" : "page"} carry <code className="data break-words text-ink">data.{field} = {id}</code>
+      </p>
+      <CopyButton text={id} name={`the id of ${name}`} />
+    </div>
+  );
+}
+
 const action = "inline-flex min-h-11 items-center text-sm text-accent underline underline-offset-4";
 
 export function QrActions({ kind, id, name }: { kind: QrKind; id: string; name: string }) {
