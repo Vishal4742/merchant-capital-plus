@@ -11,12 +11,14 @@ import { field } from "@/components/gateway/Frame";
 import {
   UNKNOWN_FUNDING,
   amountBlocker,
+  fundHint,
   investorError,
   minUnits,
   postFunding,
   recordFunding,
   signFunding,
   slotRule,
+  usdt2,
   type BookOffer,
   type FundOutcome,
   type InvestorWallet,
@@ -87,8 +89,8 @@ export function FundPanel({ offer, wallet, balance, holders, blocker, onFunded }
           {advance ? "from its sales" : "when the invoice is paid"}.
         </p>
         <div className="flex flex-wrap items-center gap-x-6">
-          <a className="data inline-flex min-h-11 items-center text-accent underline underline-offset-4" href={`${EXPLORER}/tx/${outcome.txHash}`} target="_blank" rel="noreferrer">
-            {short(outcome.txHash)} ↗
+          <a className="inline-flex min-h-11 items-center text-accent underline underline-offset-4" href={`${EXPLORER}/tx/${outcome.txHash}`} target="_blank" rel="noreferrer">
+            View transaction ↗
           </a>
           <a href="/capital/holdings" className="inline-flex min-h-11 items-center text-accent underline underline-offset-4">
             See your claims
@@ -113,8 +115,9 @@ export function FundPanel({ offer, wallet, balance, holders, blocker, onFunded }
   const cost = quote?.units === unitsKey ? quote.cost : null;
   const quoteFailed = quote?.units === unitsKey && quote.cost === null;
   const typedBadly = slot.kind !== "last" && text.trim() !== "" && units === null;
-  const stop = blocker ?? (typedBadly ? "Enter an amount like 11.00, with at most 6 decimals." : text.trim() === "" && slot.kind !== "last" ? null : amountBlocker(units ?? 0n, left, cost, balance));
-  const smallest = minUnits(price, face);
+  const minLeft = minUnits(price, face); // also the smallest buy: both must cost at least 1.00 USDT
+  const stop = blocker ?? (typedBadly ? "Enter an amount like 11.00, with at most 6 decimals." : text.trim() === "" && slot.kind !== "last" ? null : amountBlocker(units ?? 0n, left, cost, balance, minLeft));
+  const isNew = !holders.some((h) => h.toLowerCase() === wallet.account.toLowerCase());
 
   async function confirm() {
     if (units === null || cost === null) return;
@@ -138,7 +141,7 @@ export function FundPanel({ offer, wallet, balance, holders, blocker, onFunded }
     <div className="grid gap-4 rounded-sm border border-hairline bg-surface-sunk p-4 md:p-5">
       <p className="text-sm">
         {advance
-          ? `The shop gets ${formatUsdt(price)} USDT now and repays ${formatUsdt(face)} USDT from ${offer.holdback_pct}% of each sale. You buy part or all of that repayment.`
+          ? `The shop gets ${usdt2(price)} USDT now and repays ${formatUsdt(face)} USDT from ${offer.holdback_pct}% of each sale. You buy part or all of that repayment.`
           : `The shop's customer pays ${formatUsdt(face)} USDT by ${istDate(Date.parse(offer.maturity))}. You buy part or all of it for less today.`}
       </p>
       <label className="grid max-w-sm gap-1 text-sm">
@@ -157,11 +160,7 @@ export function FundPanel({ offer, wallet, balance, holders, blocker, onFunded }
         />
       </label>
       <p className="text-xs text-ink-muted">
-        {slot.kind === "last"
-          ? advance
-            ? `A cash advance takes one investor, so you buy all of it: ${formatUsdt(slot.units)} USDT.`
-            : `An invoice takes at most 2 investors and you'd be the last, so you buy everything left: ${formatUsdt(slot.units)} USDT.`
-          : `Up to ${formatUsdt(left)} USDT. The smallest buy is ${formatUsdt(smallest)} USDT, which costs 1.00 USDT.`}
+        {fundHint(offer.kind, slot, isNew, left, minLeft)}
       </p>
       <p role="status" className="text-sm">
         {pricing
@@ -169,7 +168,7 @@ export function FundPanel({ offer, wallet, balance, holders, blocker, onFunded }
           : quoteFailed
             ? "We couldn't get the price right now. Try again in a moment."
             : cost !== null && units !== null
-              ? `Total cost: ${formatUsdt(cost)} USDT. You get back ${formatUsdt(units)} USDT ${advance ? "from the shop's sales" : `when the invoice is paid, due ${istDate(Date.parse(offer.maturity))}`}.`
+              ? `Total cost: ${usdt2(cost) === formatUsdt(cost) ? "" : "about "}${usdt2(cost)} USDT. You get back ${formatUsdt(units)} USDT ${advance ? "from the shop's sales" : `when the invoice is paid, due ${istDate(Date.parse(offer.maturity))}`}.`
               : ""}
       </p>
       {stop && (

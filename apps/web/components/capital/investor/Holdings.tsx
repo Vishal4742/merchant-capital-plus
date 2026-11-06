@@ -7,8 +7,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/Button";
 import { card } from "@/components/gateway/Frame";
-import { investorError, readHoldings, readInvestor, type Holding } from "@/lib/capital-wallet";
-import { formatUsdt } from "@/lib/usdt";
+import { investorError, readHoldings, readInvestor, usdt2, type Holding } from "@/lib/capital-wallet";
 import { KIND_LABEL, istDate, istDateTime, kindBadge } from "./format";
 import type { ScreenProps } from "./OfferBook";
 import { TransferCheck } from "./TransferCheck";
@@ -68,7 +67,7 @@ export function Holdings({ state, connect }: ScreenProps) {
       )}
       {mine.owed > 0n && (
         <p role="status" className={`${card} text-sm`}>
-          {formatUsdt(mine.owed)} USDT is waiting for you in the market: a payout couldn&apos;t reach your wallet, so it was kept for you.
+          {usdt2(mine.owed)} USDT is waiting for you in the market: a payout couldn&apos;t reach your wallet, so it was kept for you.
         </p>
       )}
       {mine.holdings.length === 0 ? (
@@ -112,9 +111,9 @@ function ClaimCard({ holding: h }: { holding: Holding }) {
         <span className={`${kindBadge} ${s.tone}`}>{s.label}</span>
       </div>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-4">
-        <Field label="Still owed to you" value={`${formatUsdt(h.held)} USDT`} />
-        <Field label="Paid back to you" value={paidBack !== null ? `${formatUsdt(paidBack)} USDT` : h.funded !== null ? "0.00 USDT" : "—"} />
-        <Field label="Owed on the claim" value={`${formatUsdt(h.outstanding)} USDT`} />
+        <Field label="Still owed to you" value={`${usdt2(h.held)} USDT`} />
+        <Field label="Paid back to you" value={paidBack !== null ? `${usdt2(paidBack)} USDT` : h.funded !== null ? "0.00 USDT" : "—"} />
+        <Field label="Owed on the claim" value={`${usdt2(h.outstanding)} USDT`} />
         <Field label={h.kind === "advance" ? "Expected by" : "Due"} value={istDate(h.maturity * 1000)} />
       </dl>
       {h.lockFrom !== 0 && now < h.lockFrom && <p className="text-xs text-ink-muted">Its units can&apos;t move from {istDateTime(h.lockFrom * 1000)}, just before it&apos;s due.</p>}

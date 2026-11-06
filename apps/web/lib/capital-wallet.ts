@@ -90,10 +90,39 @@ export function buyBlocker(o: BookOffer, me?: Investor): string | null {
   return slot?.kind === "full" ? slot.message : null;
 }
 
-/** Why this amount can't be bought, or null. `cost` and `balance` are null until read. */
-export function amountBlocker(units: bigint, unitsLeft: bigint, cost: bigint | null, balance: bigint | null): string | null {
+const CENT = 10_000n; // 0.01 USDT in base units
+
+/** A USDT figure in the house style's 2 decimals (UX review #33 M3); a minimum rounds up so following it always works.
+ *  Exact 6-decimal figures stay on the line the investor approves. */
+export function usdt2(units: bigint, round: "nearest" | "up" = "nearest"): string {
+  return formatUsdt(((units + (round === "up" ? CENT - 1n : CENT / 2n)) / CENT) * CENT);
+}
+
+export const investorsLabel = (kind: Kind) => (HOLDER_CAP[kind] === 1 ? "1 investor" : `Up to ${HOLDER_CAP[kind]} investors`);
+
+/** The line under the amount: the slot rule in plain words, then the range (UX review #33 M2). `isNew`: the wallet holds
+ *  none of this claim yet. */
+export function fundHint(kind: Kind, slot: Slot, isNew: boolean, unitsLeft: bigint, minLeft: bigint): string {
+  if (slot.kind === "last") {
+    return kind === "advance"
+      ? `A cash advance takes one investor, so you buy all of it: ${formatUsdt(slot.units)} USDT.`
+      : `An invoice takes at most ${HOLDER_CAP.invoice} investors and you'd be the last, so you buy everything left: ${formatUsdt(slot.units)} USDT.`;
+  }
+  const rule = isNew && kind === "invoice" ? `An invoice takes at most ${HOLDER_CAP.invoice} investors, and the second buys everything you leave. ` : "";
+  return `${rule}Up to ${formatUsdt(unitsLeft)} USDT. The smallest buy is ${usdt2(minLeft, "up")} USDT, which costs 1.00 USDT.`;
+}
+
+/** What the row says in place of an Arkiv entity key, or null when it has one. A closed offer's entity expired at its
+ *  deadline, as Arkiv intends, so it doesn't read as Arkiv being down; an open offer without one keeps the warning. */
+export const arkivNote = (o: BookOffer): string | null =>
+  o.arkiv.entity_key ? null : o.status === "closed" ? "Closed · Arkiv entry expired" : "Not on Arkiv";
+
+/** Why this amount can't be bought, or null. `cost` and `balance` are null until read. `minLeft` = minUnits(price, face):
+ *  a part buy must leave at least that, or the next investor, who must buy everything left, is refused (the server's rule). */
+export function amountBlocker(units: bigint, unitsLeft: bigint, cost: bigint | null, balance: bigint | null, minLeft: bigint): string | null {
   if (units <= 0n) return "Enter how much you want to get back.";
   if (units > unitsLeft) return `Only ${formatUsdt(unitsLeft)} USDT is left in this offer.`;
+  if (units < unitsLeft && unitsLeft - units < minLeft) return `Buy all ${formatUsdt(unitsLeft)} USDT, or leave at least ${usdt2(minLeft, "up")} USDT for the next investor.`;
   if (cost === null) return null;
   if (cost < MIN_FUND) return "The smallest buy costs 1.00 USDT.";
   if (balance !== null && balance < cost) return `Your wallet holds ${formatUsdt(balance)} USDT, less than the ${formatUsdt(cost)} USDT this costs.`;

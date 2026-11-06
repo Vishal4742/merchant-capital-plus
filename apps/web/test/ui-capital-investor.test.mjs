@@ -135,13 +135,43 @@ test("buyBlocker: Buy only for an open offer whose Arkiv terms match the chain, 
   assert.equal(inv.buyBlocker(book(), { account: A, eligible: true, holders: [B, M] }), server.holderCapMessage("invoice"));
 });
 
+// the AT-6 invoice's smallest fundable remainder: minUnits(98065556, 100000000)
+const MIN_LEFT = 1_019_726n;
+
 test("amountBlocker: units within what's left, a cost of at least 1 USDT, and enough USDT in the wallet", () => {
-  assert.match(inv.amountBlocker(0n, 100n, null, null), /how much/);
-  assert.match(inv.amountBlocker(101n, 100n, null, null), /Only 0\.0001 USDT is left/);
-  assert.equal(inv.amountBlocker(60_000_000n, 100_000_000n, null, 0n), null, "no verdict on cost before the quote arrives");
-  assert.match(inv.amountBlocker(1_000_000n, 100_000_000n, 980_656n, 10n ** 9n), /1\.00 USDT/);
-  assert.match(inv.amountBlocker(60_000_000n, 100_000_000n, 58_839_334n, 58_000_000n), /holds 58\.00 USDT, less than the 58\.839334 USDT/);
-  assert.equal(inv.amountBlocker(60_000_000n, 100_000_000n, 58_839_334n, 58_839_334n), null);
+  assert.match(inv.amountBlocker(0n, 100n, null, null, 1n), /how much/);
+  assert.match(inv.amountBlocker(101n, 100n, null, null, 1n), /Only 0\.0001 USDT is left/);
+  assert.equal(inv.amountBlocker(60_000_000n, 100_000_000n, null, 0n, MIN_LEFT), null, "no verdict on cost before the quote arrives");
+  assert.match(inv.amountBlocker(1_000_000n, 100_000_000n, 980_656n, 10n ** 9n, MIN_LEFT), /1\.00 USDT/);
+  assert.match(inv.amountBlocker(60_000_000n, 100_000_000n, 58_839_334n, 58_000_000n, MIN_LEFT), /holds 58\.00 USDT, less than the 58\.839334 USDT/);
+  assert.equal(inv.amountBlocker(60_000_000n, 100_000_000n, 58_839_334n, 58_839_334n, MIN_LEFT), null, "AT-6: A's 60 leaves 40");
+});
+
+test("amountBlocker: a part buy must leave a remainder the next investor can still buy (UX review #33 M1, the server's rule)", () => {
+  assert.equal(inv.amountBlocker(99_500_000n, 100_000_000n, null, null, MIN_LEFT), "Buy all 100.00 USDT, or leave at least 1.02 USDT for the next investor.");
+  assert.match(inv.amountBlocker(98_980_275n, 100_000_000n, null, null, MIN_LEFT), /leave at least/, "1019725 left costs 0.999999");
+  assert.equal(inv.amountBlocker(98_980_274n, 100_000_000n, null, null, MIN_LEFT), null, "exactly 1019726 left is fundable");
+  assert.equal(inv.amountBlocker(100_000_000n, 100_000_000n, null, null, MIN_LEFT), null, "buying everything leaves nothing to fund");
+  assert.equal(inv.amountBlocker(98_980_274n, 100_000_000n, null, null, inv.minUnits(98_065_556n, 100_000_000n)), null, "minUnits is the remainder's floor");
+});
+
+test("usdt2 shows the house style's 2 decimals; exact figures stay on the approve line (UX review #33 M3)", () => {
+  assert.equal(inv.usdt2(98_065_556n), "98.07");
+  assert.equal(inv.usdt2(58_839_334n), "58.84");
+  assert.equal(inv.usdt2(39_226_223n), "39.23");
+  assert.equal(inv.usdt2(11_000_000n), "11.00");
+  assert.equal(inv.usdt2(1_019_726n, "up"), "1.02", "a minimum rounds up, so following it always works");
+  assert.equal(inv.usdt2(1_010_000n, "up"), "1.01");
+});
+
+test("fundHint tells an invoice's first investor that the second buys everything left (UX review #33 M2)", () => {
+  assert.match(inv.fundHint("invoice", { kind: "free" }, true, 100_000_000n, MIN_LEFT), /at most 2 investors.*second buys everything you leave/);
+  assert.match(inv.fundHint("invoice", { kind: "free" }, true, 100_000_000n, MIN_LEFT), /Up to 100\.00 USDT\. The smallest buy is 1\.02 USDT/);
+  assert.doesNotMatch(inv.fundHint("invoice", { kind: "free" }, false, 40_000_000n, MIN_LEFT), /2 investors/, "an existing holder tops up");
+  assert.match(inv.fundHint("invoice", { kind: "last", units: 40_000_000n }, true, 40_000_000n, MIN_LEFT), /you'd be the last, so you buy everything left: 40\.00 USDT/);
+  assert.match(inv.fundHint("advance", { kind: "last", units: 11_000_000n }, true, 11_000_000n, 1_099_999n), /takes one investor, so you buy all of it: 11\.00 USDT/);
+  assert.equal(inv.investorsLabel("advance"), "1 investor");
+  assert.equal(inv.investorsLabel("invoice"), "Up to 2 investors");
 });
 
 test("fundOutcome: a tx hash is done; 5xx (not 503) or a 200 without a hash is unknown, never 'try again'", () => {
@@ -162,4 +192,11 @@ test("claimsToShow keeps held claims and the ones this browser funded (a repaid 
 
 test("aprPercent shows the AT-6 invoice at 12.0% a year over 60 days", () => {
   assert.deepEqual(inv.aprPercent(98_065_556n, 100_000_000n, NOW + 60 * 86400, NOW), { pct: "12.0", days: 60 });
+});
+
+test("arkivNote: a closed offer's expired entity reads as expired; an open offer without one keeps the warning (smoke walk)", () => {
+  const none = { entity_key: null, matches: false, terms: null };
+  assert.equal(inv.arkivNote(book({ status: "closed", arkiv: none })), "Closed · Arkiv entry expired");
+  assert.equal(inv.arkivNote(book({ status: "open", arkiv: none })), "Not on Arkiv");
+  assert.equal(inv.arkivNote(book()), null, "an offer with an entity shows its key instead");
 });
