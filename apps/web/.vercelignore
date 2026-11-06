@@ -1,0 +1,9 @@
+# Never upload local secrets or build output with `vercel deploy` (secrets come from the project settings only)
+.env
+.env.*
+.next
+node_modules
+.vercel
+test-results
+playwright-report
+*.log
