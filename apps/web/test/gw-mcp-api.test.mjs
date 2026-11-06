@@ -45,7 +45,7 @@ const LINK = { amount: "15000.00", currency: "INR", description: "Acme website r
 const post = (body, headers) => createLinkRoute(req("POST", "/api/v1/links", { body, headers }));
 
 test("a secret key creates a link; a publishable key is 403 and no key 401; the session cookie still works", async () => {
-  const res = await post(LINK, bearer(sk));
+  const res = await post(LINK, bearer(sk, { "idempotency-key": "create-1" }));
   assert.equal(res.status, 201);
   const link = await res.json();
   assert.match(link.id, /^lnk_/);
@@ -56,6 +56,8 @@ test("a secret key creates a link; a publishable key is 403 and no key 401; the 
   assert.equal((await post({ ...LINK, reference_id: "B" }, bearer(pk))).status, 403);
   assert.equal((await post({ ...LINK, reference_id: "C" }, {})).status, 401);
   assert.equal((await post({ ...LINK, reference_id: "D" }, bearer("sk_test_notarealkeynotarealkeynotarealk"))).status, 401);
+  // a secret-key write without an Idempotency-Key is refused, so its retries are always safe (batch 054)
+  assert.equal((await post({ ...LINK, reference_id: "F" }, bearer(sk))).status, 400);
   assert.equal((await post({ ...LINK, reference_id: "E" }, signedIn())).status, 201);
 });
 
@@ -124,7 +126,7 @@ test("sessions keep their idempotency (shared helper): the same key replays the 
 });
 
 test("GET /api/v1/links/{id}: the merchant's link with its paid checkouts; another merchant's id or a junk id is 404", async () => {
-  const link = await (await post({ amount: "25.00", currency: "USDT", description: "Consulting", single_use: true }, bearer(sk))).json();
+  const link = await (await post({ amount: "25.00", currency: "USDT", description: "Consulting", single_use: true }, bearer(sk, { "idempotency-key": "read-1" }))).json();
   const read = (id, key = sk) => getLinkRoute(req("GET", `/api/v1/links/${id}`, { headers: bearer(key) }), params({ id }));
 
   const before = await (await read(link.id)).json();

@@ -5,13 +5,15 @@ import { createHash, randomUUID } from "node:crypto";
 import { query } from "./db.ts";
 
 export const MAX_IDEMPOTENCY_KEY = 255;
-const IDEMPOTENCY_MS = 24 * 60 * 60 * 1000;
+export const IDEMPOTENCY_MS = 24 * 60 * 60 * 1000;
 const ABANDONED_MS = 300_000; // = the function's maximum duration (security 026 F4): a first request that stored no reply by now died with its instance, so its key is free again
 const WAIT_GAP_MS = 100;
 const WAIT_TRIES = 100; // a second request waits up to 10 s for the first one's reply (an FX quote takes at most 5 s)
 const STILL_CREATING = "A request with this Idempotency-Key is still being processed. Try again in a moment.";
 
-export type Reply = { status: number; body: unknown; replayed?: true };
+/** `stored`: the route already committed this reply in the slot together with its record (links, batch 054). */
+export type Reply = { status: number; body: unknown; replayed?: true; stored?: true };
+export type Own = { slot: string; owner: string };
 type Slot = { hash: string; status: number | null; body: string | null };
 
 const fail = (status: number, error: string): Reply => ({ status, body: { error } });
@@ -38,7 +40,7 @@ export function requestHash(text: string): string {
  *  one's stored reply. Only a created (201) reply is replayed: a refused or failed one frees the key for a corrected
  *  retry, deleting only its own row (code review 006 R2-4). `slot` must name the merchant (and the route, for any route
  *  but sessions), so one merchant's key never replays another's reply. */
-export async function idempotent(slot: string, hash: string, run: () => Promise<Reply>): Promise<Reply> {
+export async function idempotent(slot: string, hash: string, run: (own: Own) => Promise<Reply>): Promise<Reply> {
   const now = Date.now(), owner = randomUUID();
   // expiry by age replaces the 1,000-key cap (security review 006 F6): past 24 h, or a first request that died
   await query("DELETE FROM app_web_idempotency WHERE created_at < $1 OR (status IS NULL AND created_at < $2)", [now - IDEMPOTENCY_MS, now - ABANDONED_MS]);
@@ -54,17 +56,23 @@ export async function idempotent(slot: string, hash: string, run: () => Promise<
   }
 }
 
-async function first(slot: string, owner: string, run: () => Promise<Reply>): Promise<Reply> {
+async function first(slot: string, owner: string, run: (own: Own) => Promise<Reply>): Promise<Reply> {
   let done: Reply | undefined;
   try {
-    done = await run();
-    return done;
+    done = await run({ slot, owner });
+    return { ...done, stored: undefined };
   } finally {
     const own = [slot, owner];
-    // a reply that can't be stored is logged, never thrown over the created record: the slot then frees after 5 min
-    const kept = done?.status === 201
-      ? query("UPDATE app_web_idempotency SET status = $3, body = $4::jsonb WHERE slot = $1 AND owner = $2", [...own, done.status, JSON.stringify(done.body)])
-      : query("DELETE FROM app_web_idempotency WHERE slot = $1 AND owner = $2", own);
+    // A reply the route committed with its record (`stored`) is already in the slot. A slot is freed only while it holds
+    // no reply (status IS NULL), so a request whose commit happened but whose answer was lost never frees it: the retry
+    // replays it (production review F1). A non-atomic route's reply that can't be stored is logged, never thrown over
+    // the created record; its slot then frees after 5 min. Known residual for sessions: that retry can open a second,
+    // unpaid checkout (it expires in 30 min). Fix: bind it like links.
+    const kept = done?.stored
+      ? Promise.resolve()
+      : done?.status === 201
+        ? query("UPDATE app_web_idempotency SET status = $3, body = $4::jsonb WHERE slot = $1 AND owner = $2", [...own, done.status, JSON.stringify(done.body)])
+        : query("DELETE FROM app_web_idempotency WHERE slot = $1 AND owner = $2 AND status IS NULL", own);
     await kept.catch((error: unknown) => console.error(`idempotency slot not ${done?.status === 201 ? "stored" : "freed"}: ${error instanceof Error ? error.name : "error"}`));
   }
 }

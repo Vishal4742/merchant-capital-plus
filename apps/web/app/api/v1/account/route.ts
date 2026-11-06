@@ -23,7 +23,7 @@ export async function GET(request: Request) {
       ],
       timezone: null,
       credential: { type: caller.via, key_id: caller.keyId, scopes: null, expires_at: null },
-      capabilities: { links: true, payments: true, reports: true, customers: false, invoices: false, reminders: false },
+      capabilities: { links: true, payments: true, reports: true, customers: false, invoices: false, reminders: false, operations: true },
     });
   });
 }
