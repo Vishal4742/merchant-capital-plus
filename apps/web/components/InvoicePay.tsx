@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Hex } from "viem";
 import { Confirming } from "@/components/Confirming";
 import { HoldButton } from "@/components/HoldButton";
+import { WhiteFlowWordmark } from "@/components/WhiteFlowLogo";
 import { FAILED, NOT_FUNDED, outcome, type PayAnswer } from "@/lib/outcome";
 import type { InvoicePayTerms } from "@/lib/sign-sale";
 import { EXPLORER } from "@/lib/usdt";
@@ -104,10 +105,14 @@ export function InvoicePay({ invoiceId, merchantName, dueText, invoiceText, paid
   const pill = PILL[paid ? "paid" : phase === "ready" && paidSoFarText ? "partPaid" : phase];
   const payable = !paid && phase === "ready";
   return (
-    <section className="relative grid w-full max-w-[420px] gap-6 rounded-[28px] bg-surface p-8 text-ink shadow-float" aria-live="polite">
+    <section className="relative grid w-full max-w-[420px] gap-5 rounded-[24px] bg-surface p-7 text-ink shadow-float border border-hairline" aria-live="polite">
+      <div className="flex items-center justify-between border-b border-hairline pb-3">
+        <WhiteFlowWordmark className="text-xs" />
+        <span className="eyebrow text-xs text-ink-muted">Whitechain Sepolia</span>
+      </div>
       <div className="flex items-start justify-between gap-4">
         <div className="grid gap-1">
-          <span className="label text-ink-muted">Invoice {invoiceId}</span>
+          <span className="label text-ink-muted">Invoice #{invoiceId}</span>
           <h1 className="title first-letter:uppercase">{merchantName}</h1>
         </div>
         <span className={`shrink-0 rounded-pill border border-current px-3 py-0.5 text-xs font-medium tracking-wide ${pill.tone}`}>{pill.label}</span>
@@ -115,6 +120,8 @@ export function InvoicePay({ invoiceId, merchantName, dueText, invoiceText, paid
       <dl className="grid gap-2 border-y border-hairline py-4 text-sm">
         <Row term="Due">{dueText}</Row>
         <Row term="Invoice">{invoiceText} USDT</Row>
+        <Row term="Network">Whitechain Sepolia (Testnet)</Row>
+        <Row term="Network fee">0.00 WBT (Sponsored)</Row>
         {!paid && paidSoFarText && <Row term="Already paid">{paidSoFarText} USDT</Row>}
         {payable && <Row term="Payment fee">{feeText} USDT</Row>}
         {paid?.receiptId && (

@@ -6,6 +6,8 @@ import { announcePaid } from "@/lib/announce-paid";
 import { notFound } from "next/navigation";
 import { Suspense, type ReactNode } from "react";
 import { StaticScene } from "@/components/StaticScene";
+import { WhiteFlowWordmark } from "@/components/WhiteFlowLogo";
+import { StatusBadge } from "@/components/ui/Badge";
 import { merchantConfig, payConfig } from "@/lib/config";
 import { paidLogs, paymentRefunded, readPayment } from "@/lib/onchain";
 import { getSession, type Payment } from "@/lib/sessions";
@@ -116,48 +118,69 @@ interface ReceiptCardProps {
 
 function ReceiptCard({ label, amount, merchantName, paidAt, reference, price, refund, txHash, paymentId }: ReceiptCardProps) {
   return (
-    <section className="relative grid w-full max-w-[420px] gap-5 rounded-[28px] border border-hairline bg-surface p-8 shadow-float">
-      <span className="label text-ink-muted">{label}</span>
-      <p className="flex flex-wrap items-baseline gap-2">
-        <span className="amount-xl">{formatUsdt(amount)}</span>
-        <span className="label text-ink-muted">USDT</span>
-        <span className="text-ink-muted">to {merchantName}</span>
-      </p>
+    <section className="relative grid w-full max-w-[440px] gap-5 rounded-[20px] border border-hairline bg-surface p-7 shadow-float">
+      <div className="flex items-center justify-between border-b border-hairline pb-3">
+        <WhiteFlowWordmark className="text-sm" />
+        <StatusBadge status="paid" label="Confirmed Settlement" />
+      </div>
+
+      <div>
+        <span className="eyebrow text-ink-muted">{label}</span>
+        <p className="mt-1 flex flex-wrap items-baseline gap-2">
+          <span className="text-[36px] font-semibold tracking-[-0.03em] tabular-nums text-ink">{formatUsdt(amount)}</span>
+          <span className="eyebrow font-medium text-ink-muted">USDT</span>
+          <span className="text-sm text-ink-muted">to {merchantName}</span>
+        </p>
+      </div>
+
       <dl className="grid gap-2 border-y border-hairline py-4 text-sm">
         {paidAt && (
           <div className="flex justify-between gap-4">
-            <dt className="text-ink-muted">Paid</dt>
-            <dd>{paidAt}</dd>
+            <dt className="text-ink-muted">Settled at</dt>
+            <dd className="font-medium text-ink">{paidAt}</dd>
           </div>
         )}
         {reference && (
           <div className="flex justify-between gap-4">
             <dt className="text-ink-muted">{reference.term}</dt>
-            <dd>{reference.value}</dd>
+            <dd className="font-mono text-xs text-ink">{reference.value}</dd>
           </div>
         )}
         {price && (
           <div className="flex justify-between gap-4">
-            <dt className="text-ink-muted">Price</dt>
-            <dd>{price}</dd>
+            <dt className="text-ink-muted">Priced in</dt>
+            <dd className="font-mono text-xs text-ink">{price}</dd>
           </div>
         )}
         <div className="flex justify-between gap-4">
-          <dt className="text-ink-muted">Network fee</dt>
-          <dd>None: you paid no network fee</dd>
+          <dt className="text-ink-muted">Settlement Rail</dt>
+          <dd className="text-xs text-ink">Whitechain Sepolia (T+0)</dd>
         </div>
         <div className="flex justify-between gap-4">
-          <dt className="text-ink-muted">Refund</dt>
-          <dd>{refund}</dd>
+          <dt className="text-ink-muted">Customer Gas Fee</dt>
+          <dd className="text-xs font-medium text-positive">0.00 WBT (Sponsored by WhiteFlow)</dd>
+        </div>
+        <div className="flex justify-between gap-4">
+          <dt className="text-ink-muted">Refund Status</dt>
+          <dd className="text-xs text-ink">{refund}</dd>
         </div>
       </dl>
-      {txHash ? (
-        <a className="text-sm text-accent underline underline-offset-4" href={`${EXPLORER}/tx/${txHash}`} target="_blank" rel="noreferrer">
-          View this payment on the explorer ↗
-        </a>
-      ) : (
-        <p className="text-sm text-ink-muted">Payment number {paymentId} is confirmed.</p>
-      )}
+
+      <div className="flex flex-wrap items-center justify-between gap-3 pt-1 text-xs">
+        {txHash ? (
+          <a
+            className="font-medium text-accent underline underline-offset-4 hover:text-accent-hover"
+            href={`${EXPLORER}/tx/${txHash}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            View on Whitechain Explorer ↗
+          </a>
+        ) : (
+          <span className="text-ink-muted font-mono">Payment #{paymentId} confirmed</span>
+        )}
+        <span className="text-ink-muted">One invoice. Clear settlement.</span>
+      </div>
     </section>
   );
 }

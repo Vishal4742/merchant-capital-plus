@@ -284,7 +284,7 @@ export function Footer() {
           </a>
         </div>
         <div className="ghost" aria-hidden="true">
-          Merchant Capital+
+          WhiteFlow
         </div>
       </div>
     </footer>
