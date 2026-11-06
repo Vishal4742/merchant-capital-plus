@@ -123,7 +123,7 @@ test("refuses a payment that would pass the day cap (default 25 USDT); the repor
 
 test("the day resets at UTC midnight, and the spending file survives a restart", async () => {
   const file = tempFile();
-  const { fetch } = gateway({ a: USDT(10), b: USDT(10), c: USDT(10) });
+  const { fetch } = gateway({ a: USDT(10), b: USDT(10), c: USDT(10) }, undefined, { expiresAt: Date.parse("2026-11-07T01:00:00Z") });
   let now = NOW;
   const first = await connect(payerEnv(), fetch, { spendingFile: file, now: () => now });
   await first.call("pay_checkout", { checkout: "a" });
