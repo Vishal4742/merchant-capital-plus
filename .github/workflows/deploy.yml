@@ -1,0 +1,47 @@
+name: deploy
+
+# The only thing that deploys to Vercel. Vercel's own Git deploys are off
+# (`git.deploymentEnabled: false` in each apps/*/vercel.json), because the Hobby plan
+# allows 100 deployments a day and every push used to create 3.
+#
+# After main changes it waits for a quiet spell: a later push cancels this run, so a
+# burst of merges deploys once. Then it starts a build of main (deploy hook) only for
+# the projects whose folders changed since the last successful run.
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**/*.md", "docs/**", "arkiv/**", "notes/**", ".batches/**"]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Deploy all three projects, changed or not
+        type: boolean
+        default: false
+
+concurrency:
+  group: vercel-deploy
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Wait for a quiet spell
+        if: github.event_name == 'push'
+        run: sleep 600
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Deploy the projects that changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force && '1' || '0' }}
+          HOOK_WEB: ${{ secrets.VERCEL_HOOK_WEB }}
+          HOOK_RELAYER: ${{ secrets.VERCEL_HOOK_RELAYER }}
+          HOOK_SHOP: ${{ secrets.VERCEL_HOOK_SHOP }}
+        run: bash tools/vercel-deploy.sh

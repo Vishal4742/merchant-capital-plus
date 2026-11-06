@@ -4,7 +4,7 @@
     "iad1"
   ],
   "fluid": true,
-  "git": { "deploymentEnabled": { "**": false, "main": true } },
+  "git": { "deploymentEnabled": false },
   "functions": {
     "api/*.ts": {
       "maxDuration": 60
