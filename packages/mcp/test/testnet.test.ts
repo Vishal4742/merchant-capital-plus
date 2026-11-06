@@ -92,6 +92,22 @@ test("timeout with an unknown outcome: the tool says it's safe to retry, and the
   assert.match(recovered.json.note, /reused that attempt's idempotency key/);
 });
 
+test("a lost reply then 429s, or a 'still being processed' 409, stays ambiguous: the next call reuses the key (review 052 M1)", async () => {
+  for (const after of [{ status: 429, body: { error: "Too many requests. Wait a minute and try again." } }, { status: 409, body: { error: "A request with this Idempotency-Key is still being processed. Try again in a moment." } }]) {
+    const stateDir = tempDir();
+    let n = 0, up = false;
+    const { calls, fetch } = gateway({ "POST /api/v1/links": () => (up ? { status: 201, body: LINK, headers: { "idempotent-replayed": "true" } } : ++n === 1 ? new TypeError("fetch failed") : after) });
+    const { call } = await connect(ENV, { fetch, stateDir });
+    const lost = await call("create_payment_link", { amount: "15000", currency: "INR", description: "Acme website redesign" });
+    assert.equal(lost.isError, true);
+    assert.equal(lost.json.outcome, "unknown", `${after.status}: ${lost.text}`);
+    up = true;
+    await call("create_payment_link", { amount: "15000", currency: "INR", description: "Acme website redesign" });
+    const keys = new Set(calls.filter((c) => c.method === "POST").map((c) => c.headers.get("idempotency-key")));
+    assert.equal(keys.size, 1, `${after.status}: one key across every attempt and the retry`);
+  }
+});
+
 test("a definite refusal frees the journal: a corrected request gets a fresh key", async () => {
   let n = 0;
   const { calls, fetch } = gateway({ "POST /api/v1/links": () => (++n === 1 ? { status: 409, body: { error: "You already have a link with that reference_id." } } : { status: 201, body: LINK }) });

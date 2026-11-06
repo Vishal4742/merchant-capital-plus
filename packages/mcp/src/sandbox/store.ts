@@ -175,7 +175,13 @@ export function ensureSandbox(dir: string, timezone: string): { apiKey: string; 
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const file = credentialsFile(dir);
   if (existsSync(file) && existsSync(stateFile(dir))) {
-    const saved = JSON.parse(readFileSync(file, "utf8")) as { api_key?: string };
+    let saved: { api_key?: string };
+    try {
+      saved = JSON.parse(readFileSync(file, "utf8")) as { api_key?: string };
+    } catch {
+      // never JSON.parse's own message: it quotes the file, i.e. part of the key (security review 052 L3)
+      throw new Error(`${file} is damaged. Delete it and the sandbox folder to start a fresh sandbox.`);
+    }
     if (saved.api_key && SANDBOX_KEY.test(saved.api_key)) return { apiKey: saved.api_key, created: false };
   }
   const { apiKey } = addMerchant(dir, { name: "Demo Business (sandbox)", timezone });

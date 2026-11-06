@@ -82,6 +82,15 @@ test("idempotency: a retry replays the same record; the same key with another pa
   const again = await call("finalize_invoice", { invoice: invoice.id });
   assert.equal(again.json.invoice.number, invoice.number);
   assert.equal(again.json.replayed, true);
+  // the path is part of the request: one key can't replay invoice A's finalize for invoice B (review 052 M2)
+  const customer = (await call("search_customers", { query: "Priya" })).json.customers[0].id;
+  const draftB = await call("create_invoice_draft", { customer_id: customer, currency: "USDT", line_items: LINES, due_date: "2026-11-20" });
+  await call("finalize_invoice", { invoice: draftB.json.invoice.id, idempotency_key: "finalize-key-shared" });
+  const draftC = await call("create_invoice_draft", { customer_id: customer, currency: "USDT", line_items: LINES, due_date: "2026-11-21" });
+  const replayedForC = await call("finalize_invoice", { invoice: draftC.json.invoice.id, idempotency_key: "finalize-key-shared" });
+  assert.equal(replayedForC.isError, true);
+  assert.match(replayedForC.json.error, /already used for a different request/);
+  assert.equal((await call("get_invoice", { invoice: draftC.json.invoice.id })).json.invoice.status, "draft");
 });
 
 test("provider events: bad signature and stale timestamp refused, duplicates once, out-of-order never regresses", async () => {
@@ -100,6 +109,10 @@ test("provider events: bad signature and stale timestamp refused, duplicates onc
   // a body altered after signing (amount raised) fails the signature too
   const header = signWebhook(raw, secret);
   assert.equal(processEvent(stateDir, raw.replace("60000000", "99000000"), header).outcome, "rejected");
+  // a validly signed event for an unknown target is rejected and NOT marked processed, so a redelivery isn't a "duplicate" (L6)
+  const orphan = JSON.stringify({ ...event, id: "evt_orphantarget01", data: { ...event.data, target: { kind: "invoice", id: "inv_nosuchinvoice" } } });
+  assert.equal(processEvent(stateDir, orphan, signWebhook(orphan, secret)).outcome, "rejected");
+  assert.equal(processEvent(stateDir, orphan, signWebhook(orphan, secret)).outcome, "rejected");
 
   const dup = simulatePayment(stateDir, invoice.number, { scenario: "duplicate" });
   assert.deepEqual(dup.deliveries.map((d) => d.outcome), ["applied", "applied", "duplicate"]);

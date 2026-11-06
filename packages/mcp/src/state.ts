@@ -3,7 +3,8 @@
 // new state, never half of one. Files are created owner-only (0600; on Windows the user profile's ACL applies).
 // ponytail: one lock per file and whole-file rewrites: fine for a single merchant's sandbox and a key journal; the
 // real records live in the backend's Postgres.
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
 
 const LOCK_WAIT_MS = 5_000;
@@ -17,10 +18,20 @@ export class StateError extends Error {
 function lock(file: string): () => void {
   const path = `${file}.lock`;
   const deadline = Date.now() + LOCK_WAIT_MS;
+  const token = `${process.pid}:${randomBytes(8).toString("hex")}`;
   for (;;) {
     try {
-      closeSync(openSync(path, "wx", 0o600));
-      return () => rmSync(path, { force: true });
+      const fd = openSync(path, "wx", 0o600);
+      writeSync(fd, token);
+      closeSync(fd);
+      // release only our own lock: if a stale-lock break ever handed it to someone else, theirs stays (review 052 L1)
+      return () => {
+        try {
+          if (readFileSync(path, "utf8") === token) rmSync(path, { force: true });
+        } catch {
+          // already gone
+        }
+      };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       try {
@@ -44,7 +55,7 @@ function read<T>(file: string, initial: () => T): T {
 }
 
 function write(file: string, value: unknown): void {
-  const temp = `${file}.${process.pid}.tmp`;
+  const temp = `${file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`; // not guessable (review 052 L2)
   writeFileSync(temp, JSON.stringify(value, null, 2), { mode: 0o600 });
   for (let tries = 0; ; tries++) {
     try {

@@ -61,12 +61,11 @@ export function processEvent(dir: string, raw: string, header: string | null, no
     }
     const seen = { ...state, processed_events: [...state.processed_events, id].slice(-MAX_EVENT_IDS) };
     const target = data.target.kind === "invoice" ? seen.invoices.find((i) => i.id === data.target.id && i.merchant_id === data.merchant_id) : seen.links.find((l) => l.id === data.target.id && l.merchant_id === data.merchant_id);
-    if (!target) return { ...reject(id, type, "unknown merchant or target"), next: log(seen, { id, type, at: now, outcome: "rejected", reason: "unknown merchant or target" }) };
+    // a rejected event isn't marked processed, so a corrected redelivery can still apply (security review 052 L6)
+    if (!target) return reject(id, type, "unknown merchant or target");
     const status = TYPES[type];
     const prior = seen.payments.find((p) => p.id === data.payment_id);
-    if (prior && (prior.merchant_id !== data.merchant_id || prior.target.id !== data.target.id || prior.amount !== data.amount)) {
-      return { next: log(seen, { id, type, at: now, outcome: "rejected", reason: "event disagrees with the recorded payment" }), result: { event_id: id, type, outcome: "rejected", reason: "event disagrees with the recorded payment" } };
-    }
+    if (prior && (prior.merchant_id !== data.merchant_id || prior.target.id !== data.target.id || prior.amount !== data.amount)) return reject(id, type, "event disagrees with the recorded payment");
     if (prior && (data.sequence <= prior.sequence || prior.status !== "pending")) {
       const reason = prior.status !== "pending" ? `payment is already ${prior.status}; a late ${status} can't change it` : `older than the state already applied (sequence ${data.sequence} ≤ ${prior.sequence})`;
       return { next: log(seen, { id, type, at: now, outcome: "stale", reason }), result: { event_id: id, type, outcome: "stale", reason } };

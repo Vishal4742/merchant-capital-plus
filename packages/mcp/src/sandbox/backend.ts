@@ -2,7 +2,7 @@
 // client talks to it exactly as it talks to the testnet gateway: Bearer key → merchant (never a parameter), scopes,
 // key expiry, 404 for another merchant's ids, and Idempotency-Key slots written in the same transaction as the record.
 import { canonical } from "../journal.ts";
-import { DateError, calendarDate } from "../dates.ts";
+import { DateError, MAX_RANGE_DAYS, calendarDate, daysBetween, validZone } from "../dates.ts";
 import { CURRENCIES, decimal } from "../money.ts";
 import { sha256, type SMerchant, type SandboxState, change, read } from "./store.ts";
 import type { Account, Scope } from "../contract.ts";
@@ -87,7 +87,9 @@ function idempotentWrite(dir: string, request: Request, text: string, route: str
   const key = request.headers.get("idempotency-key");
   if (!key || key.length > 255) throw new SandboxHttpError(400, "Send an Idempotency-Key header (1 to 255 characters) with every write.");
   const input = body(text);
-  const hash = sha256(canonical(input));
+  // the path is part of the request: finalize's body is always {}, so the invoice id in the path must be hashed too, or
+  // one key would replay invoice A's finalize for invoice B (security review 052 M2; the web routes must do the same)
+  const hash = sha256(canonical({ path: new URL(request.url).pathname, body: input }));
   return change(dir, (state) => {
     const caller = authenticate(state, request, now);
     need(caller, scope);
@@ -221,10 +223,13 @@ function get(state: SandboxState, caller: Caller, url: URL, now: number): unknow
   }
   if (path === "/api/v1/reports") {
     need(caller, "reports:read");
+    // the live route's rules: a valid zone, from ≤ to, at most 92 days (security review 052 L4)
     const tz = q.get("tz") || m.timezone;
+    if (!validZone(tz)) throw new SandboxHttpError(400, "tz must be a time zone like Asia/Kolkata.");
     const to = q.get("to") ? calendarDate(q.get("to")!, "to") : today(m, now);
     const from = q.get("from") ? calendarDate(q.get("from")!, "from") : to;
     if (from > to) throw new SandboxHttpError(400, "from must be on or before to.");
+    if (daysBetween(from, to) + 1 > MAX_RANGE_DAYS) throw new SandboxHttpError(400, `A report covers at most ${MAX_RANGE_DAYS} days.`);
     return report(state, m.id, { from, to, tz });
   }
   return undefined;

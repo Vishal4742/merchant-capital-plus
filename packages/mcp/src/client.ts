@@ -2,6 +2,7 @@
 // Idempotency-Key, redirects refused (never re-send the key elsewhere), and every error reduced to a plain reason with
 // the key scrubbed. Its `fetch` is the network for testnet, or the in-process sandbox (src/sandbox/backend.ts).
 import type { Account, ApiPayment, Customer, Invoice, LinkDetail, Link, Page, Receivables, ReminderDraft, Report } from "./contract.ts";
+import { untrusted } from "./safety.ts";
 
 export interface ClientOptions {
   baseUrl: URL;
@@ -104,12 +105,16 @@ export class WhiteflowClient {
     }
     const init: RequestInit = { method, headers, body: opts.body === undefined ? undefined : JSON.stringify(opts.body), redirect: "error" };
     const write = method === "POST";
+    // once any attempt of a write went unanswered or failed on the server, it may have been applied: from then on only
+    // a 2xx (the record) or a 422 (the key belongs to another request) is a definite answer (security review 052 M1)
+    let uncertain = false;
     for (let attempt = 0; ; attempt++) {
       const last = attempt >= this.#maxRetries;
       let res: Response;
       try {
         res = await this.#fetch(url, { ...init, signal: AbortSignal.timeout(this.#timeoutMs) });
       } catch (error) {
+        uncertain = true;
         if (!last) {
           await this.#sleep(backoff(attempt));
           continue;
@@ -118,15 +123,16 @@ export class WhiteflowClient {
         throw new ApiError(0, this.#scrub(`${timedOut ? "WhiteFlow didn't answer in time" : "Couldn't reach WhiteFlow"} (${url.origin}).`), { ambiguous: write });
       }
       if ((res.status >= 500 || res.status === 429) && !last) {
+        if (res.status >= 500) uncertain = true;
         await res.body?.cancel().catch(() => {});
         await this.#sleep(backoff(attempt));
         continue;
       }
-      return this.#read<T>(res, write);
+      return this.#read<T>(res, write, write && uncertain);
     }
   }
 
-  async #read<T>(res: Response, write: boolean): Promise<Result<T>> {
+  async #read<T>(res: Response, write: boolean, uncertain = false): Promise<Result<T>> {
     const text = await res.text().catch(() => "");
     let json: Record<string, unknown> | null = null;
     try {
@@ -136,7 +142,13 @@ export class WhiteflowClient {
       json = null;
     }
     if (res.ok && json) return { data: json as T, replayed: res.headers.get("idempotent-replayed") === "true" };
-    const said = typeof json?.error === "string" ? json.error.slice(0, 300) : null;
+    // the backend's words reach the model: bounded and stripped like stored text (security review 052 L5)
+    const said = typeof json?.error === "string" ? untrusted(json.error, 300) : null;
+    // 429 and "still being processed" (409) say nothing about whether the write happened: keep the same key
+    const pending = write && (res.status === 429 || (res.status === 409 && /still being processed/i.test(said ?? "")));
+    if (write && !res.ok && res.status !== 422 && (uncertain || pending)) {
+      throw new ApiError(res.status, `${said ? `${this.#scrub(said)} ` : ""}WhiteFlow may or may not have applied this write.`, { ambiguous: true, body: json });
+    }
     switch (true) {
       case res.status === 401:
         throw new ApiError(401, "WhiteFlow didn't accept the API key: it's missing, revoked or expired. Create a new secret key (Developers screen) and update the connector's settings.");
