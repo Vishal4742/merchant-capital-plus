@@ -22,10 +22,10 @@ const CLAIMS_PER_MINUTE = 10; // per principal, for issuing and (separately) for
 const PRUNE_AFTER_MS = 24 * 60 * 60 * 1000;
 const NONCE = /^[A-Za-z0-9]{8,128}$/; // viem's SIWE nonces are 96 characters
 const SIGNATURE = /^0x[0-9a-fA-F]{130}$/;
-// line breaks, NEL, Unicode line/paragraph separators and bidi controls: a quoted name must not reshape the wallet
-// prompt. Code points, so the source holds no invisible characters.
-const PROMPT_UNSAFE: ReadonlySet<number> = new Set([0x0a, 0x0d, 0x85, 0x2028, 0x2029, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069]);
-const promptSafe = (text: string) => Array.from(text, (c) => (PROMPT_UNSAFE.has(c.charCodeAt(0)) ? " " : c)).join("");
+// every control, format (bidi, zero-width, tags) and line/paragraph separator character: a quoted name must not
+// reshape the wallet prompt. Unicode property classes, so the source holds no invisible characters.
+const PROMPT_UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
+const promptSafe = (text: string) => text.replace(PROMPT_UNSAFE, " ");
 
 const NOT_LINKED = "This workspace isn't linked to a merchant account yet. An Owner can link it in Settings.";
 const EXPIRED = "That link request expired or was already used. Start again.";
@@ -113,8 +113,9 @@ export async function issueClaimChallenge(ctx: AuthContext, input: { address: un
   return { nonce, message, expiresAt, address: wallet };
 }
 
-/** The claim in one statement. Lock order: the actor's membership (FOR SHARE),
- *  then the business row: the same order as every membership change, so no new deadlock pair.
+/** The claim in one statement. Lock order: the actor's membership (FOR SHARE), then the business row (FOR UPDATE:
+ *  the UPDATE sets the UNIQUE legacy_merchant, so it also briefly blocks foreign-key checks on that row): the same
+ *  order as every membership change, so no new deadlock pair (traced in review 051 round 1).
  *  $1 business, $2 principal, $3 nonce, $4 now, $5 wallet (lowercase), $6 V1 obligations, $7 notice id prefix,
  *  $8 audit id, $9 session id, $10 request id. */
 const SQL_CLAIM = `WITH actor AS (

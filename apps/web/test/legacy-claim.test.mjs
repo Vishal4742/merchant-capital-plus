@@ -222,15 +222,17 @@ test("a wallet linked elsewhere is refused before the chain read; one already li
   assert.equal(reads, 0, "neither refusal nor the already-linked answer reads the chain");
 });
 
-const ch = (code) => String.fromCharCode(code);
-test("the workspace name can't reshape the signed message: line and bidi controls become spaces (review S-L2)", async () => {
+const ch = (code) => String.fromCodePoint(code);
+test("the workspace name can't reshape the signed message: control, format and separator characters become spaces (review S-L2)", async () => {
   const wallet = privateKeyToAccount(generatePrivateKey());
   const owner = await seedWorkspace(UNLINKED, { linked: false });
-  await pg.query("UPDATE wf_businesses SET display_name = $2 WHERE id = $1", [owner.businessId, `Acme${ch(0x2028)}Chain ID: 1${ch(0x202e)}evil${ch(0x2066)}x${ch(0x85)}y`]);
+  // line separator, RLO, LRI, NEL, zero-width space, LRM, an astral tag character
+  const name = `Acme${ch(0x2028)}Chain ID: 1${ch(0x202e)}evil${ch(0x2066)}x${ch(0x85)}y${ch(0x200b)}z${ch(0x200e)}w${ch(0xe0041)}v`;
+  await pg.query("UPDATE wf_businesses SET display_name = $2 WHERE id = $1", [owner.businessId, name]);
   const c = await challenge(owner.headers, wallet.address);
   assert.equal(c.status, 200);
-  for (const code of [0x85, 0x2028, 0x2029, 0x202a, 0x202e, 0x2066, 0x2069]) assert.ok(!c.body.message.includes(ch(code)), code.toString(16));
-  assert.ok(c.body.message.includes('"Acme Chain ID: 1 evil x y"'));
+  for (const code of [0x85, 0x2028, 0x2029, 0x202a, 0x202e, 0x2066, 0x2069, 0x200b, 0x200e, 0xe0041]) assert.ok(!c.body.message.includes(ch(code)), code.toString(16));
+  assert.ok(c.body.message.includes('"Acme Chain ID: 1 evil x y z w v"'));
   assert.equal(c.body.message.match(/^Chain ID: /gm).length, 1, "only the real Chain ID line");
 });
 
