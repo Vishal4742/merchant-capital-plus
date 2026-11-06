@@ -52,6 +52,8 @@ const nextConfig: NextConfig = {
       // (FR-PRIV-4) and run the hash-pinned worker (blob: + WebAssembly) in the harness's sandboxed iframe, which
       // inherits this policy. Wallet extensions aren't bound by a page's CSP.
       { source: "/merchant/:path*", headers: merchantCsp }, // `:path*` also matches /merchant itself
+      // the investor pages fund offers from the investor's wallet and read claims through Anon-RPC too (batch 040)
+      { source: "/capital/:path*", headers: merchantCsp },
       // after the rules above: for the same header the last match wins (Next docs, headers)
       { source: "/p/:path*", headers: logoCsp },
       { source: "/merchant/pages", headers: [{ key: "Content-Security-Policy", value: merchantPolicy.replace("img-src 'self' data:", "img-src 'self' data: https:") }] },
