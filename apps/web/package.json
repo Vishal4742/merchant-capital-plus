@@ -14,6 +14,7 @@
     "@anon-rpc/browser-harness": "0.4.0",
     "@arkiv-network/sdk": "1.0.1",
     "@neondatabase/serverless": "1.2.0",
+    "@privy-io/react-auth": "3.51.0",
     "next": "16.4.3",
     "react": "19.3.0",
     "react-dom": "19.3.0",

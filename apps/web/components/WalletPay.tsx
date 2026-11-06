@@ -10,8 +10,10 @@ import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react
 import type { Address } from "viem";
 import { Button, buttonClasses } from "@/components/Button";
 import { CopyButton } from "@/components/CopyButton";
-import { WALLET_SHORT } from "@/lib/outcome";
+import { FAILED, WALLET_SHORT } from "@/lib/outcome";
+import { privyAppId, walletConnectProjectId } from "@/lib/privy-config";
 import type { Payer } from "@/lib/sign-sale";
+import type { PrivySession } from "@/components/PrivyPay";
 // window.ethereum is typed by the global in components/merchant/SignIn.tsx
 
 type Signer = typeof import("@/lib/sign-sale");
@@ -35,11 +37,32 @@ async function checkFunds(fundsUrl: string, payer: Address): Promise<Funds> {
   }
 }
 
+/** How the customer's own wallet comes in: the browser's (window.ethereum), or Privy's modal (batch 046: a phone wallet
+ *  over WalletConnect, a browser wallet, or email). */
+export type WalletVia = "wallet" | "privy";
+
+let privySession: PrivySession | null = null;
+/** After every attempt (paid, cancelled or failed): disconnect the Privy wallet and sign out, if Privy was used. */
+export function endWalletSession(): void {
+  const session = privySession;
+  privySession = null;
+  void session?.close();
+}
+
+async function connectVia(via: WalletVia): Promise<Payer> {
+  const { connectPayer, privyPayer } = await import("@/lib/payer-wallet");
+  if (via === "wallet") return connectPayer(window.ethereum);
+  const appId = privyAppId();
+  if (!appId) throw new Error(FAILED); // the button only shows with an app ID
+  const { openPrivy } = await import("@/components/PrivyPay");
+  privySession = await openPrivy(appId, walletConnectProjectId());
+  return privyPayer(privySession.wallet);
+}
+
 /** The customer's own wallet, connected and on chain 1874, and checked by our server to hold enough USDT before the
  *  wallet asks for anything to approve (no prompt for a payment that would fail). Throws plain copy. */
-export async function walletPayer(fundsUrl: string): Promise<Payer> {
-  const { connectPayer } = await import("@/lib/payer-wallet");
-  const payer = await connectPayer(window.ethereum);
+export async function walletPayer(fundsUrl: string, via: WalletVia = "wallet"): Promise<Payer> {
+  const payer = await connectVia(via);
   if ((await checkFunds(fundsUrl, payer.address)) === "short") throw new Error(WALLET_SHORT);
   return payer;
 }
@@ -122,11 +145,25 @@ const useHasWallet = () =>
 
 const outline = "h-12 w-full cursor-pointer rounded-pill border border-current text-base font-medium text-accent hover:bg-accent-soft aria-disabled:cursor-not-allowed aria-disabled:opacity-45";
 
+const quiet = "inline-flex min-h-11 cursor-pointer items-center justify-self-center text-sm font-medium text-accent underline underline-offset-4 hover:text-accent-hover aria-disabled:cursor-not-allowed aria-disabled:opacity-45";
+
+interface WalletOptionProps {
+  /** The way in that's waiting on the customer, if any. */
+  busy: string | null;
+  disabled: boolean;
+  onPay: (via: WalletVia) => void;
+  primary?: boolean;
+}
+
 /** "Pay with your wallet", or where to get one. `primary`: the guest is short, so this is the way to pay: the filled
- *  button "Hold to pay" has when funded, and no "or" above it. */
-export function WalletOption({ busy, disabled, onPay, primary = false }: { busy: boolean; disabled: boolean; onPay: () => void; primary?: boolean }) {
+ *  button "Hold to pay" has when funded, and no "or" above it. With a Privy app ID (batch 046) a browser without a
+ *  wallet (a phone) still gets the button, through Privy; a browser with one also gets "Use another wallet or email". */
+export function WalletOption({ busy, disabled, onPay, primary = false }: WalletOptionProps) {
   const found = useHasWallet();
+  const privy = privyAppId();
   const off = disabled || !found;
+  const main = primary ? buttonClasses("primary", "w-full") : outline;
+  const browser = found !== false; // null while hydrating: the browser button shows, held, as before
   return (
     <div data-pay-option="wallet" className="grid gap-2">
       {!primary && (
@@ -134,7 +171,26 @@ export function WalletOption({ busy, disabled, onPay, primary = false }: { busy:
           or
         </p>
       )}
-      {found === false ? (
+      {privy && (
+        <>
+          {browser && (
+            <button type="button" className={main} aria-disabled={off} aria-describedby="wallet-hint" onClick={off ? undefined : () => onPay("wallet")}>
+              {busy === "wallet" ? "Check your wallet…" : "Pay with your browser wallet"}
+            </button>
+          )}
+          <button type="button" className={browser ? quiet : main} aria-disabled={disabled} aria-describedby="wallet-hint privy-notice" onClick={disabled ? undefined : () => onPay("privy")}>
+            {busy === "privy" ? "Finish in the wallet window…" : browser ? "Use another wallet or email" : "Pay with your wallet"}
+          </button>
+          <p id="wallet-hint" className="text-center text-sm text-ink-muted">
+            A browser or phone wallet, or your email, with test USDT. You approve one message. No network fee.
+          </p>
+          {/* who sees what before the customer opens it (security 046 M2) */}
+          <p id="privy-notice" className="text-center text-xs text-ink-muted">
+            Opens Privy and WalletConnect. They see your IP address, and with email, your email and wallet address.
+          </p>
+        </>
+      )}
+      {privy ? null : found === false ? (
         <p className="text-center text-sm text-ink-muted">
           Have your own wallet with test USDT?{" "}
           <a href="https://metamask.io/download/" target="_blank" rel="noreferrer" className="font-medium text-accent underline underline-offset-4">
@@ -144,8 +200,8 @@ export function WalletOption({ busy, disabled, onPay, primary = false }: { busy:
         </p>
       ) : (
         <>
-          <button type="button" className={primary ? buttonClasses("primary", "w-full") : outline} aria-disabled={off} aria-describedby="wallet-hint" onClick={off ? undefined : onPay}>
-            {busy ? "Check your wallet…" : "Pay with your wallet"}
+          <button type="button" className={main} aria-disabled={off} aria-describedby="wallet-hint" onClick={off ? undefined : () => onPay("wallet")}>
+            {busy === "wallet" ? "Check your wallet…" : "Pay with your wallet"}
           </button>
           <p id="wallet-hint" className="text-center text-sm text-ink-muted">
             MetaMask or similar, with test USDT. You approve one message. No network fee.

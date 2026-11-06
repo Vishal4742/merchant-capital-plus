@@ -49,6 +49,15 @@ async function toWhitechain(provider: EIP1193Provider, current: () => Promise<nu
   if ((await current()) !== whitechainSepolia.id) throw new Plain(WRONG_NETWORK);
 }
 
+/** A wallet connected through Privy (batch 046: a phone wallet over WalletConnect, a browser wallet, or the email
+ *  wallet): its EIP-1193 provider takes the same path as an injected one. Throws plain copy. */
+export async function privyPayer(wallet: { getEthereumProvider: () => Promise<unknown> }): Promise<Payer> {
+  const provider = await wallet.getEthereumProvider().catch((error: unknown) => Promise.reject(plain(error)));
+  // Privy types its provider's events loosely; viem's custom() transport only ever calls request()
+  if (typeof (provider as { request?: unknown } | null)?.request !== "function") throw new Plain(FAILED);
+  return connectPayer(provider as EIP1193Provider);
+}
+
 /** The customer's wallet: one account, on chain 1874, ready to approve one payment. Throws plain copy. */
 export async function connectPayer(provider: EIP1193Provider | undefined): Promise<Payer> {
   if (!provider) throw new Plain(NO_WALLET);
