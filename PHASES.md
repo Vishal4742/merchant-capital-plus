@@ -115,7 +115,7 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 - [ ] `L` *(11:41: the G5 runner captures every AT step's screen in both runs, at 1440 and 375, into its run folder; the curated set goes to docs/screens/)* Screenshot every screen state
 - [x] `S` *(16:09 human: "i want the mcp")* Assistant connector `packages/mcp` (FR-MCP-1..4, AT-16): stdio MCP over the public API with the merchant's `sk_test_` key; needs no web deploy · DONE 17:10: #29 (031), 25/25 tests, adapted from Pixa (MIT)
 - [x] `F` Checkout reads the voucher's Arkiv entity (FR-ARK-7, AT-12): must ride the one Capital redeploy · DONE 17:10: #28 (034)
-- [ ] `F` *(16:16 human: no wallet connect on the pay page)* Pay with your own wallet + short-balance notice (FR-PAY-16, AT-17): rides the Capital redeploy
+- [x] `F` *(16:16 human: no wallet connect on the pay page)* Pay with your own wallet + short-balance notice (FR-PAY-16, AT-17): rides the Capital redeploy · DONE 17:21: #34 (032); security PASS (claude-contracts), UX PASS with a real-env browser walk (claude-frontend)
 - [x] `C` *(16:16 human: no option to settle)* Settlements balance + Withdraw (FR-GW-15, AT-18): rides the Capital redeploy · DONE 17:10: #30 (033); follow-up 042 open
 - [x] `S` Agent pays a checkout under caps (FR-MCP-5), after FR-MCP-1..4 · DONE 17:10: in #29 (pay_checkout + spending_report, caps 10/25)
 - [ ] `L` Relayer limits across instances (FR-REL-10): before G5 only if merged by 20:00, else right after G5
