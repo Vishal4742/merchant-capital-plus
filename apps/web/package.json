@@ -13,6 +13,7 @@
   "dependencies": {
     "@anon-rpc/browser-harness": "0.4.0",
     "@arkiv-network/sdk": "1.0.1",
+    "@neondatabase/serverless": "1.2.0",
     "next": "16.4.3",
     "react": "19.3.0",
     "react-dom": "19.3.0",
@@ -20,6 +21,7 @@
     "viem": "2.57.13"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.11",
     "@tailwindcss/turbopack": "4.3.3",
     "@types/node": "20.19.43",
     "@types/react": "19.3.0",
