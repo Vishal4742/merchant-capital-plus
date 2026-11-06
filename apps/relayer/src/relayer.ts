@@ -10,6 +10,7 @@ import { whitechainSepolia } from 'viem/chains';
 import {
   addresses, capitalMarketAbi, KIND_INVOICE, KIND_SALE, merchantPayAbi, MIN_PAYMENT, nonceParams, receiveWithAuthorizationTypes, usdtDomain,
 } from './contracts.ts';
+import * as store from './store.ts';
 
 // Ankr (G2 06:06: Whitechain's own RPC refused eth_sendRawTransactionSync with -32601, so the default went back to Ankr;
 // sends are plain eth_sendRawTransaction now). Upgrade: try Whitechain's RPC again for reads, which were ~2× faster.
@@ -21,7 +22,8 @@ const RPC_TIMEOUT_MS = 8_000;
 // and poll our own receipt. Tests shrink these.
 // 1 s blocks: ~4 polls per block. Worst case after the age gate: the 8 s send timeout + the 8 s poll (+ one poll's
 // overrun), about 37-44 s: past the web's 35 s, which it treats as unknown (it polls the chain), and under the 60 s maxDuration.
-export const TIMING = { receiptPollMs: 250, receiptTimeoutMs: 8_000, maxRequestAgeMs: 20_000 };
+// leasePollMs: how often a request waits for another instance's send lock (FR-REL-10).
+export const TIMING = { receiptPollMs: 250, receiptTimeoutMs: 8_000, maxRequestAgeMs: 20_000, leasePollMs: 100 };
 const BALANCE_TTL_MS = 5_000; // /health WBT balance may be 5 s old (human 23:27, NFR-14 ≤ 300 ms p95); a send clears it
 // Refresh it every 3 s (human 01:14): stays inside the 5 s rule and keeps the RPC socket warm (Node drops idle ones at ~4 s).
 const BALANCE_REFRESH_MS = 3_000;
@@ -44,7 +46,6 @@ const CAP_FEE_WEI = FEES.gas * FEES.maxFeePerGas; // the most one send can cost:
 const PAYER_SENDS_PER_HOUR = 10;
 const MERCHANT_SENDS_PER_HOUR = 200;
 const BREAKER_REVERTS_PER_HOUR = 3;
-const HOUR_MS = 3_600_000;
 
 const UINT_DECIMAL = /^\d{1,78}$/;
 const BYTES32_HEX = /^0x[0-9a-fA-F]{64}$/;
@@ -138,42 +139,28 @@ export function startBalanceRefresh(client: RelayerClient, everyMs: number): () 
   return () => clearInterval(timer);
 }
 
-// ponytail: per process, per relayer address. Upgrade: rel_sent + Postgres advisory lock (the plan-reviewed full 006 spec).
-interface Ledger { day: string; spentWei: bigint; reverts: number[]; banned: Set<string>; sends: Map<string, number[]> }
-const ledgers = new Map<Address, Ledger>();
-function ledgerOf(client: RelayerClient): Ledger {
-  const day = new Date().toISOString().slice(0, 10); // UTC
-  const current = ledgers.get(client.account.address);
-  if (current?.day === day) return current;
-  const fresh: Ledger = { day, spentWei: 0n, reverts: current?.reverts ?? [], banned: current?.banned ?? new Set(), sends: current?.sends ?? new Map() };
-  ledgers.set(client.account.address, fresh);
-  return fresh;
-}
-const lastHour = (times: number[] = []) => times.filter((t) => Date.now() - t < HOUR_MS);
-const sendKeys = (p: Payment) => [`payer:${p.from.toLowerCase()}`, ...(p.merchant ? [`merchant:${p.merchant.toLowerCase()}`] : [])];
+const authKey = (p: Payment) => store.authKey(p.from, p.nonce);
 
-/** Breaker, ban, budget and rate limits: free, so they run before any RPC and again inside the lock. */
-function ledgerChecks(client: RelayerClient, p: Payment): Reject | undefined {
-  const l = ledgerOf(client);
-  if (lastHour(l.reverts).length >= BREAKER_REVERTS_PER_HOUR) return reject(503, 'breaker_open', 'relaying is paused after repeated reverts; retry later');
-  if (l.banned.has(p.from.toLowerCase())) return reject(422, 'payer_banned', 'this payer caused a reverted relay');
-  if (l.spentWei + CAP_FEE_WEI > DAILY_BUDGET_WEI) return reject(503, 'budget_exhausted', "today's relay budget is used up; retry tomorrow");
-  const [payerKey, merchantKey] = sendKeys(p);
-  if (lastHour(l.sends.get(payerKey)).length >= PAYER_SENDS_PER_HOUR
-    || (merchantKey && lastHour(l.sends.get(merchantKey)).length >= MERCHANT_SENDS_PER_HOUR)) {
+/** Replay, breaker, ban, budget and rate limits, from the table every instance writes (FR-REL-10). No RPC, so they run
+ *  before the RPC round, and again once this request holds the send lock. */
+async function ledgerChecks(client: RelayerClient, p: Payment): Promise<Reject | undefined> {
+  const c = await store.counters(client.account.address, p.from, p.merchant, authKey(p));
+  if (c.sent) return REPLAY;
+  if (c.revertsLastHour >= BREAKER_REVERTS_PER_HOUR) return reject(503, 'breaker_open', 'relaying is paused after repeated reverts; retry later');
+  if (c.banned) return reject(422, 'payer_banned', 'this payer caused a reverted relay');
+  if (c.spentWei + CAP_FEE_WEI > DAILY_BUDGET_WEI) return reject(503, 'budget_exhausted', "today's relay budget is used up; retry tomorrow");
+  if (c.payerSendsLastHour >= PAYER_SENDS_PER_HOUR || (p.merchant && c.merchantSendsLastHour >= MERCHANT_SENDS_PER_HOUR)) {
     return reject(429, 'rate_limited', 'too many payments in the last hour; retry later');
   }
 }
 
-/** After a broadcast attempt: count the spend (worst case when unknown), the send, and a mined revert. */
-function recordSend(client: RelayerClient, p: Payment, feeWei: bigint, minedRevert: boolean, txHash: Hash) {
-  const l = ledgerOf(client);
-  l.spentWei += feeWei;
-  for (const key of sendKeys(p)) l.sends.set(key, [...lastHour(l.sends.get(key)), Date.now()]);
-  if (!minedRevert) return;
-  l.banned.add(p.from.toLowerCase());
-  l.reverts = [...lastHour(l.reverts), Date.now()];
-  process.stderr.write(`ALERT reverted ${txHash} payer ${p.from}\n`);
+/** After a receipt: its real fee and a mined revert (which bans the payer and feeds the breaker). A send without a
+ *  receipt keeps the worst-case fee it was reserved with. */
+async function settleSend(p: Payment, feeWei: bigint, minedRevert: boolean, txHash: Hash) {
+  if (minedRevert) process.stderr.write(`ALERT reverted ${txHash} payer ${p.from}\n`);
+  const write = () => store.settle(authKey(p), feeWei, minedRevert);
+  await write().catch(write).catch(() => process.stderr.write( // one retry (security 037 L3)
+    `ALERT could not record the receipt of ${txHash}: its worst-case fee stays counted${minedRevert ? '; ban this payer by hand' : ''}\n`));
 }
 
 let feeRead: { at: number; fee: Promise<bigint> } | undefined;
@@ -186,9 +173,7 @@ function relayFee(client: RelayerClient): Promise<bigint> {
   return fee;
 }
 
-// ponytail: in-process, one relayer process. Upgrade: a rel_sent table + Postgres advisory lock (batch 006, multi-instance Vercel).
-const sentAuthorizations = new Set<string>();
-const sentKey = (p: Payment) => `${p.from.toLowerCase()}:${p.nonce.toLowerCase()}`;
+// One request at a time per instance, in arrival order, in front of the shared lease (so an instance never polls it twice).
 let sendQueue: Promise<unknown> = Promise.resolve();
 function serialized<T>(run: () => Promise<T>): Promise<T> {
   const result = sendQueue.then(run, run);
@@ -332,7 +317,6 @@ async function localChecks(client: RelayerClient, p: Payment): Promise<Reject | 
   }).catch(() => undefined);
   // An ECDSA signature never recovers to a contract, so ERC-1271 payers stop here.
   if (!signer || !isAddressEqual(signer, p.from)) return reject(422, 'bad_signature', 'the signature is not from args.from for this payment');
-  if (sentAuthorizations.has(sentKey(p))) return REPLAY;
   return ledgerChecks(client, p);
 }
 
@@ -416,13 +400,47 @@ let relays = 0; // the first /relay of this process is the cold one
 // shows it as "Nothing was charged; try again" (security 022 L1).
 const tooOld = (clock: Stopwatch) => clock.read().total > TIMING.maxRequestAgeMs;
 const QUEUED_TOO_LONG = reject(503, 'busy', 'the relayer was too slow to start this payment; nothing was sent, so retry');
+// Another instance took the send lock between our checks and the broadcast (its lease ran out on us): don't broadcast.
+const LEASE_LOST = reject(503, 'busy', 'another relayer instance took over the send lock; nothing was sent, so retry');
+const STORAGE_DOWN = reject(503, 'storage_error', 'the relayer database is unavailable; nothing was sent, so retry');
+function storageDown(e: store.StoreError): Reject {
+  console.error(`relayer: storage error (${e.causeName})`); // the name only: a driver message may quote the connection string
+  return STORAGE_DOWN;
+}
 
-/** Runs inside the send lock: re-simulate on fresh state, sign with capped fees, send once, poll our receipt. */
-async function send(client: RelayerClient, p: Payment, clock: Stopwatch): Promise<Reject | Sent> {
+/** The send lock across instances (FR-REL-10): a lease row, polled until the age gate, released in `finally`
+ *  (a crashed instance's lease expires after store.LEASE_MS). */
+async function leased(client: RelayerClient, clock: Stopwatch, run: (holder: string) => Promise<Reject | Sent>): Promise<Reject | Sent> {
+  const relayer = client.account.address;
+  const holder = crypto.randomUUID();
+  for (;;) {
+    // an upsert that committed but whose answer was lost would lock every instance out for 60 s: free it, best effort
+    const got = await store.acquire(relayer, holder).catch(async (e: unknown) => {
+      await store.release(relayer, holder).catch(() => undefined);
+      throw e;
+    });
+    if (got) break;
+    if (tooOld(clock)) return QUEUED_TOO_LONG;
+    await sleep(TIMING.leasePollMs);
+  }
+  try {
+    return await run(holder);
+  } finally {
+    await store.release(relayer, holder)
+      .catch(() => process.stderr.write(`relayer: lease release failed; it expires in ${store.LEASE_MS / 1000} s\n`));
+  }
+}
+
+/** Runs inside the send lock: re-check the shared ledger, re-simulate on fresh state, sign with capped fees, reserve
+ *  the send in the shared table (fencing), send once, poll our receipt. */
+async function send(client: RelayerClient, p: Payment, clock: Stopwatch, holder: string): Promise<Reject | Sent> {
   clock.lap('queue');
   if (tooOld(clock)) return QUEUED_TOO_LONG; // before any RPC in the lock (security 022 L2)
   if (tooLate(p)) return EXPIRED; // queue time counts
-  if (sentAuthorizations.has(sentKey(p))) return REPLAY;
+  // queued requests: the budget, the breaker or a copy's send may have moved while we waited; from here until the
+  // release no other instance can send, so this one read holds
+  const ledger = await ledgerChecks(client, p);
+  if (ledger) return ledger;
   let nonce: number;
   try {
     const [failedSimulation, pending] = await Promise.all([
@@ -436,39 +454,39 @@ async function send(client: RelayerClient, p: Payment, clock: Stopwatch): Promis
   }
   if (tooLate(p)) return EXPIRED; // and so does a slow simulate/nonce step: never sign what could expire unmined
   if (tooOld(clock)) return QUEUED_TOO_LONG; // and the simulate/nonce round may have been slow too
-  const ledger = ledgerChecks(client, p); // queued requests: the budget or the breaker may have moved while we waited
-  if (ledger) return ledger;
   const signed = await client.account.signTransaction({
     chainId: whitechainSepolia.id, type: 'eip1559', to: p.target, data: calldata(p), nonce, ...FEES,
   });
   const txHash = keccak256(signed);
-  sentAuthorizations.add(sentKey(p)); // kept even if the send fails: the tx may still be pending, so a re-POST must not pay twice
+  // Written before the broadcast with the worst-case fee and never deleted: the tx may still be pending after a failed
+  // send, so a re-POST to any instance must not pay twice. A database error here throws: nothing is broadcast.
+  const reserved = await store.reserve({
+    relayer: client.account.address, holder, key: authKey(p), payer: p.from, merchant: p.merchant, txHash, feeWei: CAP_FEE_WEI,
+  });
+  if (reserved === 'lost') return LEASE_LOST;
+  if (reserved === 'replay') return REPLAY;
   clock.lap('presend');
   try {
     await client.sendRawTransaction({ serializedTransaction: signed });
     clock.lap('send');
     const receipt = await ownReceipt(client, txHash);
     clock.lap('receipt');
-    if (!receipt) {
-      recordSend(client, p, CAP_FEE_WEI, false, txHash); // may still be mined: count the worst case
-      return reject(502, 'rpc_error', 'not mined within 8 s; poll the txHash', txHash);
-    }
+    // may still be mined: the reserved worst-case fee stays counted
+    if (!receipt) return reject(502, 'rpc_error', 'not mined within 8 s; poll the txHash', txHash);
     if (receipt.transactionHash.toLowerCase() !== txHash) {
-      recordSend(client, p, CAP_FEE_WEI, false, txHash);
       return reject(502, 'receipt_mismatch', 'the node returned a receipt for another transaction', txHash);
     }
     // OP Stack: the L1 data fee is charged on top of gasUsed × price (viem's OP formatter puts it on the receipt).
     const l1Fee = 'l1Fee' in receipt && typeof receipt.l1Fee === 'bigint' ? receipt.l1Fee : 0n;
     const gasCostWei = receipt.gasUsed * receipt.effectiveGasPrice + l1Fee;
     const reverted = receipt.status !== 'success';
-    recordSend(client, p, gasCostWei, reverted, txHash);
+    await settleSend(p, gasCostWei, reverted, txHash);
     if (reverted) return reject(502, 'reverted', 'the transaction was mined and reverted', txHash);
     const paid = parseEventLogs({ abi: merchantPayAbi, eventName: 'Paid', logs: receipt.logs })
       .find((log) => isAddressEqual(log.address, MERCHANT_PAY));
     return { txHash, blockNumber: receipt.blockNumber, paymentId: paid?.args.paymentId, gasUsed: receipt.gasUsed, gasCostWei };
   } catch (e) {
-    recordSend(client, p, CAP_FEE_WEI, false, txHash); // outcome unknown: count the worst case
-    return reject(502, 'rpc_error', reason(e), txHash);
+    return reject(502, 'rpc_error', reason(e), txHash); // outcome unknown: the worst-case fee stays counted
   } finally {
     sendCount += 1; // gas was (probably) spent: drop the cached balance and any read in flight
     balances.delete(client.account.address);
@@ -492,10 +510,13 @@ export async function relay(body: string, client: RelayerClient): Promise<Respon
     const pre = (await localChecks(client, p)) ?? (await rpcChecks(client, p));
     if (pre) return respond(pre);
   } catch (e) {
-    return respond(reject(502, 'rpc_error', reason(e)));
+    return respond(e instanceof store.StoreError ? storageDown(e) : reject(502, 'rpc_error', reason(e)));
   }
   clock.lap('checks');
-  const result = await serialized(() => send(client, p, clock));
+  const result = await serialized(() => leased(client, clock, (holder) => send(client, p, clock, holder))).catch((e: unknown) => {
+    if (e instanceof store.StoreError) return storageDown(e); // only before a broadcast: reserve is the last write before it
+    throw e;
+  });
   if ('code' in result) return respond(result);
   const timings = { cold, ...clock.read() };
   console.info(`relayed ${result.txHash} timings ${JSON.stringify(timings)}`); // the web app gets the body; this is ours
@@ -505,17 +526,20 @@ export async function relay(body: string, client: RelayerClient): Promise<Respon
   });
 }
 
-/** GET /health: the WBT balance (≤ 5 s old), today's relay spend and what is left of the 0.1 WBT budget (this process). */
+/** GET /health: the WBT balance (≤ 5 s old), today's relay spend and what is left of the 0.1 WBT budget (every instance). */
 export async function health(client: RelayerClient): Promise<Response> {
   try {
-    const wei = await wbtBalance(client);
-    const { spentWei } = ledgerOf(client);
+    const [wei, spentWei] = await Promise.all([wbtBalance(client), store.spentToday(client.account.address)]);
     return Response.json({
       relayer: client.account.address, wbt: formatEther(wei),
       gasSpentToday: formatEther(spentWei), budgetLeft: formatEther(spentWei < DAILY_BUDGET_WEI ? DAILY_BUDGET_WEI - spentWei : 0n),
       usdtFeesUnswapped: null, paused: false,
     });
   } catch (e) {
+    if (e instanceof store.StoreError) {
+      storageDown(e);
+      return Response.json({ error: 'the relayer database is unavailable', code: 'storage_error' }, { status: 502 });
+    }
     return Response.json({ error: reason(e), code: 'rpc_error' }, { status: 502 });
   }
 }
