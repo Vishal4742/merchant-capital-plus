@@ -56,6 +56,17 @@ const SQL_SIGN_IN = `WITH p AS (
   ), added AS (
     INSERT INTO wf_principal_wallets (principal_id, address, updated_at) SELECT p.id, a, $4 FROM p, unnest($5::text[]) AS a
     ON CONFLICT (principal_id, address) DO UPDATE SET updated_at = EXCLUDED.updated_at
+    RETURNING principal_id, address, (xmax = 0) AS fresh
+  ), linked AS (
+    -- round 2 H1: a wallet newly linked to an Owner is announced to every Owner of each of their workspaces (the Owner
+    -- included), so an email takeover that links a wallet is seen; the wallet is shortened (M2: no full addresses)
+    INSERT INTO wf_notifications (id, business_id, principal_id, kind, detail, created_at)
+    SELECT $12 || '_' || md5(o.business_id || o.principal_id || n.address), o.business_id, o.principal_id, 'wallet.linked',
+           jsonb_build_object('wallet', left(n.address, 6) || '...' || right(n.address, 4), 'member', n.principal_id), $4
+    FROM added n
+    JOIN wf_memberships mine ON mine.principal_id = n.principal_id AND mine.role = 'owner'
+    JOIN wf_memberships o ON o.business_id = mine.business_id AND o.role = 'owner'
+    WHERE n.fresh
   ), s AS (
     INSERT INTO wf_sessions (id, token_hash, principal_id, active_business_id, privy_sid, created_at, last_auth_at, expires_at)
     SELECT $6, $7, p.id,
@@ -92,6 +103,7 @@ export async function signInWithPrivy(request: Request, body: { idToken?: unknow
   const token = randomBytes(32).toString("base64url");
   const rows = await query<{ id: string; principal_id: string }>(SQL_SIGN_IN, [
     newId("pr"), user.did, user.email, now, user.wallets, newId("ses"), sha256(token), user.sid, now + WF_SESSION_TTL_MS, newId("aud"), requestIdOf(request),
+    newId("ntf"),
   ]);
   if (rows.length !== 1) throw new HttpError(503, "We couldn't start your session. Try again.");
   return {

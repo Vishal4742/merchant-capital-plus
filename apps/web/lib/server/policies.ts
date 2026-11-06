@@ -10,7 +10,8 @@ import { getAddress, isAddress, recoverMessageAddress, type Address, type Hex } 
 import { whitechainSepolia } from "viem/chains";
 import { createSiweMessage, generateSiweNonce } from "viem/siwe";
 import { USDT } from "../usdt.ts";
-import { merchantAdvance } from "./capital.ts";
+import { idempotencyKey, requestHash, storedAnswer } from "./businesses.ts";
+import { v1Obligations } from "./capital.ts";
 import { query } from "./db.ts";
 import { HttpError, sharedRateLimit } from "./http.ts";
 import { Forbidden, concurrencyConflict, requireScope, type AuthContext } from "./identity.ts";
@@ -22,6 +23,10 @@ export const PROOF_TTL_MS = 10 * 60 * 1000;
 export const APPROVAL_TTL_MS = 5 * 60 * 1000;
 const CHALLENGES_PER_MINUTE = 20; // per principal
 const EXPIRED = "That confirmation expired or was already used. Start again.";
+// every control, format (bidi, zero-width, tags) and line/paragraph separator character: a quoted workspace name must
+// not reshape a wallet prompt (round 2; the same rule as batch 051's legacy claim). Property classes, no raw characters.
+const PROMPT_UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
+export const promptSafe = (text: string) => text.replace(PROMPT_UNSAFE, " ");
 
 export interface SettlementPolicy {
   version: number;
@@ -92,7 +97,7 @@ export async function issueReceivingProof(ctx: AuthContext, input: { address: un
   const message = createSiweMessage({
     domain: origin.host,
     address: recipient,
-    statement: `WhiteFlow receiving-wallet proof: this wallet will receive USDT for "${biz.display_name.replace(/[\r\n]/g, " ")}" on Whitechain Testnet. It proves control of this wallet only; it moves no funds.`,
+    statement: `WhiteFlow receiving-wallet proof: this wallet will receive USDT for "${promptSafe(biz.display_name)}" on Whitechain Testnet. It proves control of this wallet only; it moves no funds.`,
     uri: origin.origin,
     version: "1",
     chainId: whitechainSepolia.id,
@@ -101,6 +106,8 @@ export async function issueReceivingProof(ctx: AuthContext, input: { address: un
     expirationTime: new Date(expiresAt),
     resources: [`urn:whiteflow:business:${ctx.businessId}`, `urn:whiteflow:token:${POLICY_TOKEN}`, `urn:whiteflow:policy:${hash}`],
   });
+  // prune unused challenges a day past expiry (round 2, L5); used ones stay: policy versions reference them
+  await query("DELETE FROM wf_challenges WHERE consumed_at IS NULL AND expires_at < $1", [now - 24 * 60 * 60 * 1000]);
   await query(
     `INSERT INTO wf_challenges (nonce, purpose, principal_id, business_id, address, chain_id, payload, message, created_at, expires_at)
      VALUES ($1, 'receiving', $2, $3, $4, $5, $6::jsonb, $7, $8, $9)`,
@@ -120,8 +127,23 @@ async function challenge(nonce: unknown, purpose: "receiving" | "approval", busi
   return c;
 }
 
+const NOT_ENROLLED =
+  "Approve with an enrolled approval wallet for this workspace. A wallet you linked later must first be endorsed by an enrolled approval wallet of an Owner (Settings, Approval wallets).";
+
+/** H1: may this Owner approve with `wallet`? Only an enrolled approval wallet of theirs, or any of their Privy wallets
+ *  for the workspace's first activation (no policy, none enrolled: that activation pins it). SQL_ACTIVATE re-checks. */
+async function approvalWalletAllowed(businessId: string, principalId: string, wallet: string): Promise<boolean> {
+  const [r] = await query<{ ok: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM wf_approval_wallets WHERE business_id = $1 AND principal_id = $2 AND wallet = $3)
+       OR (NOT EXISTS (SELECT 1 FROM wf_approval_wallets WHERE business_id = $1)
+           AND NOT EXISTS (SELECT 1 FROM wf_settlement_policies WHERE business_id = $1)) AS ok`,
+    [businessId, principalId, wallet],
+  );
+  return r?.ok === true;
+}
+
 /** Step 2 (Owner): the approval challenge for a pending proof, to be signed by `wallet`, which must be one Privy
- *  verified for this Owner. Shows the exact terms the Owner approves. */
+ *  verified for this Owner and (H1) one of their enrolled approval wallets. Shows the exact terms approved. */
 export async function issueOwnerApproval(ctx: AuthContext, input: { proofNonce: unknown; wallet: unknown }, now = Date.now()) {
   ownerCtx(ctx);
   const proof = await challenge(input.proofNonce, "receiving", ctx.businessId, now);
@@ -129,26 +151,26 @@ export async function issueOwnerApproval(ctx: AuthContext, input: { proofNonce: 
   const wallet = input.wallet.toLowerCase();
   const [mine] = await query("SELECT 1 FROM wf_principal_wallets WHERE principal_id = $1 AND address = $2", [ctx.principalId, wallet]);
   if (!mine) throw new HttpError(403, "Approve with a wallet linked to your WhiteFlow sign-in. Link one in the sign-in dialog, then sign in again.");
+  if (!(await approvalWalletAllowed(ctx.businessId, ctx.principalId, wallet))) throw new HttpError(403, NOT_ENROLLED);
   await sharedRateLimit(`wf-challenge:${ctx.principalId}`, CHALLENGES_PER_MINUTE, 60_000, "closed");
+  const origin = publicOrigin();
   const [biz] = await query<{ display_name: string }>("SELECT display_name FROM wf_businesses WHERE id = $1", [ctx.businessId]);
   const version = Number(proof.payload.proposedVersion);
   const nonce = generateSiweNonce();
   const expiresAt = now + APPROVAL_TTL_MS;
-  const message = [
-    "WhiteFlow: approve a receiving policy",
-    "",
-    `Workspace: ${biz.display_name.replace(/[\r\n]/g, " ")} (${ctx.businessId})`,
-    `Pay out to: ${getAddress(proof.address)}`,
-    `Token: USDT ${getAddress(POLICY_TOKEN)} on Whitechain Testnet (chain ${POLICY_CHAIN_ID})`,
-    `Policy version: ${version}`,
-    `Policy hash: ${String(proof.payload.policyHash)}`,
-    `Receiving proof: ${proof.nonce}`,
-    `Approver: ${getAddress(wallet)}`,
-    `Nonce: ${nonce}`,
-    `Expires: ${new Date(expiresAt).toISOString()}`,
-    "",
-    "Signing approves where this workspace is paid. It moves no funds.",
-  ].join("\n");
+  // EIP-4361 like the proof (review L2): the wallet checks the domain and URI, so a phishing site can't reuse it
+  const message = createSiweMessage({
+    domain: origin.host,
+    address: getAddress(wallet),
+    statement: `WhiteFlow: approve receiving policy version ${version} for "${promptSafe(biz.display_name)}": pay out to ${getAddress(proof.address)} in USDT ${getAddress(POLICY_TOKEN)} on Whitechain Testnet. Signing approves where this workspace is paid; it moves no funds.`,
+    uri: origin.origin,
+    version: "1",
+    chainId: whitechainSepolia.id,
+    nonce,
+    issuedAt: new Date(now),
+    expirationTime: new Date(expiresAt),
+    resources: [`urn:whiteflow:business:${ctx.businessId}`, `urn:whiteflow:policy:${String(proof.payload.policyHash)}`, `urn:whiteflow:proof:${proof.nonce}`],
+  });
   await query(
     `INSERT INTO wf_challenges (nonce, purpose, principal_id, business_id, address, chain_id, payload, message, created_at, expires_at)
      VALUES ($1, 'approval', $2, $3, $4, $5, $6::jsonb, $7, $8, $9)`,
@@ -166,9 +188,10 @@ async function signer(message: string, signature: unknown): Promise<string> {
   }
 }
 
-/** CON-11: does this wallet carry V1 Capital obligations (a running advance)? A failed read refuses activation (503). */
+/** CON-11: does this wallet carry V1 Capital obligations (an advance or an outstanding invoice claim; capital.ts
+ *  v1Obligations)? A failed read throws, and activation refuses (503). */
 export type ObligationsRead = (recipient: Address) => Promise<boolean>;
-export const readV1Obligations: ObligationsRead = async (recipient) => (await merchantAdvance(recipient)) !== null;
+export const readV1Obligations: ObligationsRead = (recipient) => v1Obligations(recipient);
 
 const SQL_ACTIVATE = `WITH actor AS (
     SELECT 1 FROM wf_memberships WHERE business_id = $1 AND principal_id = $2 AND role = 'owner' FOR SHARE
@@ -181,6 +204,9 @@ const SQL_ACTIVATE = `WITH actor AS (
       AND EXISTS (SELECT 1 FROM wf_challenges WHERE nonce = $5 AND purpose = 'approval' AND business_id = $1 AND principal_id = $2
                   AND consumed_at IS NULL AND expires_at > $6 AND payload->>'proofNonce' = $4 AND address = $11)
       AND EXISTS (SELECT 1 FROM wf_principal_wallets WHERE principal_id = $2 AND address = $11)
+      -- H1: the approver is an enrolled approval wallet of this Owner, or this is the first activation (none enrolled)
+      AND (EXISTS (SELECT 1 FROM wf_approval_wallets WHERE business_id = $1 AND principal_id = $2 AND wallet = $11)
+           OR ((SELECT v FROM cur) = 0 AND NOT EXISTS (SELECT 1 FROM wf_approval_wallets WHERE business_id = $1)))
   ), used AS (
     UPDATE wf_challenges SET consumed_at = $6 WHERE nonce IN ($4, $5) AND consumed_at IS NULL AND EXISTS (SELECT 1 FROM ok) RETURNING nonce
   ), pol AS (
@@ -188,6 +214,10 @@ const SQL_ACTIVATE = `WITH actor AS (
                                         approval_nonce, approval_wallet, v1_obligations, created_at)
     SELECT $1, $3::int + 1, $7, $9, $8, $10, $2, $4, $5, $11, $12, $6 WHERE (SELECT count(*) FROM used) = 2
     RETURNING ${POLICY_COLUMNS}
+  ), pin AS (
+    -- H1: the first activation pins its approval wallet (later ones need an endorsement: approval-wallets.ts)
+    INSERT INTO wf_approval_wallets (business_id, wallet, principal_id, enrolled_at, endorsed_by)
+    SELECT $1, $11, $2, $6, NULL FROM pol WHERE (SELECT v FROM cur) = 0 ON CONFLICT DO NOTHING
   ), n AS (
     INSERT INTO wf_notifications (id, business_id, principal_id, kind, detail, created_at)
     SELECT $13 || '_' || m.principal_id, $1, m.principal_id, 'policy.activated', jsonb_build_object('version', $3::int + 1, 'policyHash', $10::text), $6
@@ -196,19 +226,30 @@ const SQL_ACTIVATE = `WITH actor AS (
     INSERT INTO wf_audit_events (id, business_id, actor_principal_id, role, source, credential_id, request_id, action, target, version_hash, outcome, detail, at)
     SELECT $14, $1, $2, 'owner', 'session', $15, $16, 'policy.activate', $8, $10, 'ok',
            jsonb_build_object('version', $3::int + 1, 'approvalWallet', $11::text, 'v1Obligations', $12::boolean), $6 FROM pol
+  ), idem AS (
+    INSERT INTO wf_idempotency (business_id, principal_id, operation, key, request_hash, response, created_at)
+    SELECT $1, $2, 'policy.activate', $17, $18, to_jsonb(p), $6 FROM pol p
   )
   SELECT (SELECT count(*) FROM actor)::int AS is_owner, p.* FROM (SELECT 1) one LEFT JOIN pol p ON true`;
 
 /** Step 3 (Owner): verifies both signatures, re-checks everything inside one statement and inserts the next version. */
 export async function activatePolicy(
   ctx: AuthContext,
-  input: { proofNonce: unknown; proofSignature: unknown; approvalNonce: unknown; approvalSignature: unknown; expectedCurrentVersion: unknown },
+  input: { proofNonce: unknown; proofSignature: unknown; approvalNonce: unknown; approvalSignature: unknown; expectedCurrentVersion: unknown; idempotencyKey: unknown },
   { now = Date.now(), obligations = readV1Obligations }: { now?: number; obligations?: ObligationsRead } = {},
 ): Promise<SettlementPolicy> {
   requireScope(ctx, "policy:activate");
   if (!ctx.principalId || ctx.source !== "session") throw new Forbidden();
   const expected = Number(input.expectedCurrentVersion);
   if (!Number.isInteger(expected) || expected < 0) throw new HttpError(400, "expectedCurrentVersion must be the version you saw (0 for none).");
+  // FR-AUTH-4 (review L3): the same request again returns the version it created, before the consumed challenges are
+  // checked; the same key for a different request is 409
+  const slot = {
+    businessId: ctx.businessId, principalId: ctx.principalId, operation: "policy.activate", key: idempotencyKey(input.idempotencyKey),
+    hash: requestHash({ proofNonce: input.proofNonce, approvalNonce: input.approvalNonce, expectedCurrentVersion: expected }),
+  };
+  const stored = await storedAnswer<Record<string, unknown>>(slot);
+  if (stored !== undefined) return toPolicy(stored);
   const proof = await challenge(input.proofNonce, "receiving", ctx.businessId, now);
   const approval = await challenge(input.approvalNonce, "approval", ctx.businessId, now);
   if (approval.principal_id !== ctx.principalId || approval.payload.proofNonce !== proof.nonce) throw new HttpError(409, EXPIRED);
@@ -223,12 +264,19 @@ export async function activatePolicy(
   const hash = String(proof.payload.policyHash);
   const rows = await query<Record<string, unknown> & { is_owner: number }>(SQL_ACTIVATE, [
     ctx.businessId, ctx.principalId, expected, proof.nonce, approval.nonce, now, POLICY_CHAIN_ID, proof.address, POLICY_TOKEN, hash,
-    approval.address, v1Obligations, newId("ntf"), newId("aud"), ctx.credentialId, ctx.requestId,
-  ]).catch((err) => {
-    if ((err as { code?: unknown })?.code === "23505") throw new HttpError(409, "The receiving policy changed at the same time. Reload and try again.");
+    approval.address, v1Obligations, newId("ntf"), newId("aud"), ctx.credentialId, ctx.requestId, slot.key, slot.hash,
+  ]).catch(async (err) => {
+    const e = err as { code?: unknown; constraint?: unknown };
+    if (e?.code === "23505" && e.constraint === "wf_idempotency_pkey") return null; // a concurrent duplicate won: its answer below
+    if (e?.code === "23505") throw new HttpError(409, "The receiving policy changed at the same time. Reload and try again.");
     throw concurrencyConflict(err);
   });
-  const row = rows[0];
+  const row = rows?.[0];
+  if (!row || row.version === null || row.version === undefined) {
+    // nothing inserted: a concurrent duplicate of this request may have won (same key, same hash) → its answer
+    const raced = await storedAnswer<Record<string, unknown>>(slot);
+    if (raced !== undefined) return toPolicy(raced);
+  }
   if (!row || row.is_owner === 0) throw new Forbidden();
   if (row.version === null || row.version === undefined) throw new HttpError(409, "The receiving policy changed, or this confirmation expired. Reload and start again.");
   return toPolicy(row);

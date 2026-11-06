@@ -7,6 +7,7 @@ import { createInterface } from "node:readline";
 const op = JSON.parse(process.env.WF_OP ?? "{}");
 const businesses = await import("../../apps/web/lib/server/businesses.ts");
 const policies = await import("../../apps/web/lib/server/policies.ts");
+const approvalWallets = await import("../../apps/web/lib/server/approval-wallets.ts");
 const { scopesFor } = await import("../../apps/web/lib/server/identity.ts");
 
 const ctx = {
@@ -22,6 +23,7 @@ const run = {
   role: () => businesses.setMemberRole(ctx, op.args),
   remove: () => businesses.removeMember(ctx, op.args),
   activate: () => policies.activatePolicy(ctx, op.args, { obligations: async () => false }),
+  enroll: () => approvalWallets.confirmEnrollment(ctx, op.args), // round 2 H1
 }[op.kind];
 
 const rl = createInterface({ input: process.stdin });

@@ -68,10 +68,11 @@ CREATE TABLE IF NOT EXISTS wf_sessions (
 );
 CREATE INDEX IF NOT EXISTS wf_sessions_principal ON wf_sessions (principal_id);
 
--- Single-use, purpose-bound challenges: receiving (wallet-control proof), approval (Owner step-up). Login is Privy's.
+-- Single-use, purpose-bound challenges: receiving (wallet-control proof), approval (Owner step-up), enroll (an enrolled
+-- approval wallet endorses another; round 2 H1). Login is Privy's.
 CREATE TABLE IF NOT EXISTS wf_challenges (
   nonce TEXT PRIMARY KEY,
-  purpose TEXT NOT NULL CHECK (purpose IN ('receiving', 'approval')),
+  purpose TEXT NOT NULL CHECK (purpose IN ('receiving', 'approval', 'enroll')),
   principal_id TEXT REFERENCES wf_principals (id),
   business_id TEXT REFERENCES wf_businesses (id),
   address TEXT NOT NULL CHECK (address ~ '^0x[0-9a-f]{40}$'),
@@ -100,6 +101,20 @@ CREATE TABLE IF NOT EXISTS wf_settlement_policies (
   created_at BIGINT NOT NULL,
   PRIMARY KEY (business_id, version)
 );
+
+-- Pinned approval wallets (round 2 H1, owner decision 2026-11-06): only these sign an Owner's policy approval. The
+-- first is pinned by the workspace's first activation (no policy, none enrolled); every later one needs an endorsement
+-- signed by an already-enrolled wallet of a current Owner (endorsed_by). Never deleted when Privy's linked set changes,
+-- so a newly linked wallet (e.g. after an email takeover) can't approve. No delete path in code.
+CREATE TABLE IF NOT EXISTS wf_approval_wallets (
+  business_id TEXT NOT NULL REFERENCES wf_businesses (id),
+  wallet TEXT NOT NULL CHECK (wallet ~ '^0x[0-9a-f]{40}$'),
+  principal_id TEXT NOT NULL REFERENCES wf_principals (id),
+  enrolled_at BIGINT NOT NULL,
+  endorsed_by TEXT CHECK (endorsed_by IS NULL OR endorsed_by ~ '^0x[0-9a-f]{40}$'),
+  PRIMARY KEY (business_id, wallet)
+);
+CREATE INDEX IF NOT EXISTS wf_approval_wallets_principal ON wf_approval_wallets (business_id, principal_id);
 
 -- Idempotency for every Stage 3 write (FR-AUTH-4, R1-8, R2-4): a plain INSERT in the same statement as the mutation.
 CREATE TABLE IF NOT EXISTS wf_idempotency (

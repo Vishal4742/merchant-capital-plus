@@ -6,8 +6,8 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 
-let advance = async () => null; // CON-11: V1 CapitalMarket advance read (RPC in production)
-mock.module("../lib/server/capital.ts", { namedExports: { merchantAdvance: (a) => advance(a) } });
+let advance = async () => false; // CON-11: V1 CapitalMarket obligations read (RPC in production; capital-obligations.test.mjs tests the rule)
+mock.module("../lib/server/capital.ts", { namedExports: { v1Obligations: (a) => advance(a) } });
 
 const ORIGIN = "http://localhost";
 const APP_ID = "clabcdefghijklmnopqrstuvw";
@@ -17,7 +17,7 @@ process.env.NEXT_PUBLIC_PRIVY_APP_ID = APP_ID;
 process.env.PRIVY_VERIFICATION_KEY = publicKey.export({ type: "spki", format: "pem" });
 
 const { setupDb, resetDb, req, params } = await import("./gw-helpers.mjs");
-const pg = await setupDb();
+let pg = await setupDb(); // reassigned by test 15, which installs a fresh database after simulating an outage
 const privyRoute = await import("../app/api/v2/auth/privy/route.ts");
 const signoutRoute = await import("../app/api/v2/auth/signout/route.ts");
 const meRoute = await import("../app/api/v2/me/route.ts");
@@ -28,6 +28,8 @@ const memberRoute = await import("../app/api/v2/business/members/[principalId]/r
 const policyRoute = await import("../app/api/v2/business/policy/route.ts");
 const proofRoute = await import("../app/api/v2/business/policy/proof/route.ts");
 const approvalRoute = await import("../app/api/v2/business/policy/approval/route.ts");
+const walletsRoute = await import("../app/api/v2/business/approval-wallets/route.ts");
+const walletsConfirmRoute = await import("../app/api/v2/business/approval-wallets/confirm/route.ts");
 
 const b64 = (v) => Buffer.from(JSON.stringify(v)).toString("base64url");
 const jwt = (claims) => {
@@ -43,6 +45,13 @@ function user(name, { email = `${name}@example.com`, wallets = 1 } = {}) {
   const linked = [...(email ? [{ type: "email", address: email }] : []), ...accounts.map((a) => ({ type: "wallet", address: a.address, chain_type: "ethereum", wallet_client_type: "metamask" }))];
   const claims = { iss: "privy.io", aud: APP_ID, sub: did, iat: s() - 5, exp: s() + 3600 };
   return { name, did, email, accounts, access: jwt({ ...claims, sid: `sid_${name}` }), identity: jwt({ ...claims, linked_accounts: JSON.stringify(linked) }) };
+}
+
+/** The same Privy user signing in again with another set of linked wallets (e.g. after someone took over the email). */
+function relink(u, accounts) {
+  const linked = [...(u.email ? [{ type: "email", address: u.email }] : []), ...accounts.map((acc) => ({ type: "wallet", address: acc.address, chain_type: "ethereum", wallet_client_type: "metamask" }))];
+  const claims = { iss: "privy.io", aud: APP_ID, sub: u.did, iat: s() - 5, exp: s() + 3600 };
+  return { ...u, accounts, access: jwt({ ...claims, sid: `sid_${u.name}_relinked` }), identity: jwt({ ...claims, linked_accounts: JSON.stringify(linked) }) };
 }
 
 const call = async (handler, method, path, { cookie, body, origin = ORIGIN, auth, p } = {}) => {
@@ -64,6 +73,7 @@ const addMember = (cookie, body) => call(membersRoute.POST, "POST", "/api/v2/bus
 const setRole = (cookie, principalId, role, key) => call(memberRoute.PATCH, "PATCH", `/api/v2/business/members/${principalId}`, { cookie, body: { role, idempotencyKey: key }, p: { principalId } });
 const remove = (cookie, principalId, key) => call(memberRoute.DELETE, "DELETE", `/api/v2/business/members/${principalId}?idempotencyKey=${key}`, { cookie, p: { principalId } });
 
+let activations = 0; // a fresh idempotency key per activation request (round 2, L3)
 /** The full receiving-policy step: proof (recipient signs) → approval (approver signs) → activate. */
 async function activate(cookie, recipient, approver, expected = 0, over = {}) {
   const proof = await call(proofRoute.POST, "POST", "/api/v2/business/policy/proof", { cookie, body: { address: recipient.address } });
@@ -73,7 +83,7 @@ async function activate(cookie, recipient, approver, expected = 0, over = {}) {
   const body = {
     proofNonce: proof.body.nonce, proofSignature: await (over.proofSigner ?? recipient).signMessage({ message: proof.body.message }),
     approvalNonce: approval.body.nonce, approvalSignature: await (over.approvalSigner ?? approver).signMessage({ message: approval.body.message }),
-    expectedCurrentVersion: expected, ...over.body,
+    expectedCurrentVersion: expected, idempotencyKey: `act-${++activations}`, ...over.body,
   };
   const done = await call(policyRoute.POST, "POST", "/api/v2/business/policy", { cookie, body });
   return { stage: "activate", ...done, proof, approval, sent: body };
@@ -81,7 +91,7 @@ async function activate(cookie, recipient, approver, expected = 0, over = {}) {
 
 beforeEach(async () => {
   await resetDb();
-  advance = async () => null;
+  advance = async () => false;
 });
 
 test("1, 4, 5: Privy sign-in starts a revocable session; /me shows the verified email and wallets; logout kills a copied cookie", async () => {
@@ -162,7 +172,6 @@ test("6, 7, 8, 9: roles are enforced in every service; guessed ids are 404; a re
   assert.equal((await call(membersRoute.GET, "GET", "/api/v2/business/members", { cookie: b.cookie, origin: null })).status, 401);
   assert.equal((await me(b.cookie)).body.active, null);
   // a mutation from another site is refused even with a valid cookie (CSRF)
-  assert.equal((await addMember(a.cookie.replace("", ""), { wallet: ub.accounts[0].address, role: "viewer", idempotencyKey: "x" })).status, 201);
   assert.equal((await call(membersRoute.POST, "POST", "/api/v2/business/members", { cookie: a.cookie, origin: "https://evil.example", body: { wallet: ub.accounts[0].address, role: "owner", idempotencyKey: "x2" } })).status, 403);
 });
 
@@ -179,6 +188,49 @@ test("10: a workspace never loses its last Owner; two Owners may hand over; idem
   const { rows } = await pg.query("SELECT owner_count, (SELECT count(*)::int FROM wf_memberships m WHERE m.business_id = b.id AND m.role = 'owner') AS real FROM wf_businesses b");
   assert.deepEqual(rows[0], { owner_count: 1, real: 1 });
   void b;
+});
+
+test("round 2 (M1): a replayed member write gets its stored answer; the same key with another payload is 409", async () => {
+  const [ua, ub] = [user("alice"), user("bob")];
+  const a = await signIn(ua);
+  await signIn(ub);
+  await create(a.cookie);
+  const add = (role) => addMember(a.cookie, { wallet: ub.accounts[0].address, role, idempotencyKey: "m1" });
+  const first = await add("viewer");
+  assert.equal(first.status, 201);
+  const again = await add("viewer");
+  assert.deepEqual([again.status, again.body], [first.status, first.body], "replay: the stored answer, not 'already in this workspace'");
+  assert.equal((await add("operator")).status, 409, "same key, different payload");
+  const bob = first.body.principalId;
+  const r1 = await setRole(a.cookie, bob, "operator", "m2");
+  assert.equal(r1.status, 200);
+  const r2 = await setRole(a.cookie, bob, "operator", "m2");
+  assert.deepEqual([r2.status, r2.body], [r1.status, r1.body]);
+  const rm = await remove(a.cookie, bob, "m3");
+  assert.equal(rm.status, 200);
+  const rm2 = await remove(a.cookie, bob, "m3");
+  assert.deepEqual([rm2.status, rm2.body], [rm.status, rm.body], "removal replay: the stored answer, not 404");
+});
+
+test("round 2 (M2): the team list shows a member's email and linked wallets only to that member; adds are rate-limited", async () => {
+  const [ua, ub] = [user("alice"), user("bobby", { wallets: 2 })];
+  const a = await signIn(ua);
+  const b = await signIn(ub);
+  const biz = (await create(a.cookie)).body.id;
+  assert.equal((await addMember(a.cookie, { wallet: ub.accounts[0].address, role: "viewer", idempotencyKey: "v1" })).status, 201);
+  await call(activeRoute.POST, "POST", "/api/v2/me/active-business", { cookie: b.cookie, body: { businessId: biz } });
+  const list = async (cookie) => (await call(membersRoute.GET, "GET", "/api/v2/business/members", { cookie, origin: null })).body.members;
+  const byOwner = await list(a.cookie);
+  const self = byOwner.find((m) => m.you), other = byOwner.find((m) => !m.you);
+  assert.deepEqual([self.email, self.wallets], ["alice@example.com", [ua.accounts[0].address.toLowerCase()]], "your own details");
+  assert.deepEqual([other.email, other.wallets, other.label], [null, [], "bo...@example.com"], "another member: a masked label only");
+  assert.ok(!JSON.stringify(byOwner).includes(ub.accounts[1].address.toLowerCase()), "no other linked wallet leaks");
+  const byViewer = await list(b.cookie);
+  assert.deepEqual(byViewer.find((m) => !m.you), { ...byViewer.find((m) => !m.you), email: null, wallets: [], label: "al...@example.com" });
+  // adds: at most 10 a minute per Owner (enumeration of who has signed up is slowed; known/unknown still differ)
+  const statuses = [];
+  for (let i = 0; i < 11; i++) statuses.push((await addMember(a.cookie, { email: `nobody${i}@example.com`, role: "viewer", idempotencyKey: `n${i}` })).status);
+  assert.deepEqual(statuses, [404, 404, 404, 404, 404, 404, 404, 404, 404, 429, 429], "the add above counted: 10 a minute");
 });
 
 test("10 (race): two Owners demoting themselves at once on one connection still leave exactly one Owner", async () => {
@@ -206,9 +258,13 @@ test("FR-BIZ-3/4: receiving proof + Owner approval activate version 1; GET shows
   assert.equal(r.body.token, "0xcedfb56113143d55b2358b8cfbb0deb5ad2f55a7");
   assert.match(r.proof.body.message, /^localhost wants you to sign in with your Ethereum account:\n0x[0-9a-fA-F]{40}\n\nWhiteFlow receiving-wallet proof/);
   assert.match(r.proof.body.message, /Chain ID: 1874/);
-  assert.match(r.approval.body.message, new RegExp(`Policy hash: ${r.body.policyHash}`));
-  // replaying the same signed pair is refused (both challenges were consumed)
-  assert.equal((await call(policyRoute.POST, "POST", "/api/v2/business/policy", { cookie: a.cookie, body: r.sent })).status, 409);
+  assert.ok(r.approval.body.message.includes(`urn:whiteflow:policy:${r.body.policyHash}`), "the approval binds the policy hash (EIP-4361 resource)");
+  // the same request again (same idempotency key) gets the stored answer (round 2, L3); the same signed pair under a
+  // new key is refused: both challenges were consumed
+  const same = await call(policyRoute.POST, "POST", "/api/v2/business/policy", { cookie: a.cookie, body: r.sent });
+  assert.deepEqual([same.status, same.body], [201, r.body]);
+  assert.equal((await call(policyRoute.POST, "POST", "/api/v2/business/policy", { cookie: a.cookie, body: { ...r.sent, idempotencyKey: "fresh-key" } })).status, 409);
+  assert.equal((await call(policyRoute.POST, "POST", "/api/v2/business/policy", { cookie: a.cookie, body: { ...r.sent, idempotencyKey: undefined } })).status, 400, "the key is required");
   const g = await call(policyRoute.GET, "GET", "/api/v2/business/policy", { cookie: a.cookie, origin: null });
   assert.equal(g.body.current.version, 1);
   // version 2 needs expectedCurrentVersion 1; a stale expectation is 409 and consumes nothing new
@@ -236,7 +292,7 @@ test("11, 12: the proof must be signed by the receiving wallet, the approval by 
   assert.equal(ok.status, 201, "the second linked wallet approves");
   const p = await call(proofRoute.POST, "POST", "/api/v2/business/policy/proof", { cookie: a.cookie, body: { address: recipient.address } });
   const swapped = await call(policyRoute.POST, "POST", "/api/v2/business/policy", {
-    cookie: a.cookie, body: { proofNonce: p.body.nonce, proofSignature: await recipient.signMessage({ message: p.body.message }), approvalNonce: p.body.nonce, approvalSignature: await recipient.signMessage({ message: p.body.message }), expectedCurrentVersion: 1 },
+    cookie: a.cookie, body: { proofNonce: p.body.nonce, proofSignature: await recipient.signMessage({ message: p.body.message }), approvalNonce: p.body.nonce, approvalSignature: await recipient.signMessage({ message: p.body.message }), expectedCurrentVersion: 1, idempotencyKey: "swap-1" },
   });
   assert.equal(swapped.status, 409);
   assert.equal((await call(proofRoute.POST, "POST", "/api/v2/business/policy/proof", { cookie: a.cookie, body: { address: "0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7" } })).status, 400, "not the token address");
@@ -260,7 +316,7 @@ test("CON-11: a failed Capital obligations read refuses activation (503) and con
   advance = async () => { throw new Error("rpc down"); };
   const down = await activate(a.cookie, recipient, ua.accounts[0]);
   assert.equal(down.status, 503);
-  advance = async () => ({ claim_id: "7" });
+  advance = async () => true;
   const again = await call(policyRoute.POST, "POST", "/api/v2/business/policy", { cookie: a.cookie, body: down.sent });
   assert.equal(again.status, 201, "the same signed pair still works: nothing was consumed by the refusal");
   assert.equal(again.body.v1Obligations, true);
@@ -273,7 +329,171 @@ test("15: with the database unreachable every v2 route fails closed with 503 and
   try {
     assert.equal((await signIn(user("alice"))).status, 503);
     assert.equal((await me("wf_session=abc")).status, 503);
+    // every other v2 route too (round 2, L5: the title claimed more than two routes were checked)
+    const cookie = "wf_session=abc";
+    const p = { principalId: "pr_x" };
+    const routes = [
+      [signoutRoute.POST, "POST", "/api/v2/auth/signout"], [activeRoute.POST, "POST", "/api/v2/me/active-business", { businessId: "biz_x" }],
+      [bizRoute.POST, "POST", "/api/v2/businesses", { displayName: "X", timezone: "UTC", idempotencyKey: "k" }],
+      [membersRoute.GET, "GET", "/api/v2/business/members"], [membersRoute.POST, "POST", "/api/v2/business/members", { email: "x@example.com", role: "viewer", idempotencyKey: "k" }],
+      [memberRoute.PATCH, "PATCH", "/api/v2/business/members/pr_x", { role: "viewer", idempotencyKey: "k" }, p], [memberRoute.DELETE, "DELETE", "/api/v2/business/members/pr_x?idempotencyKey=k", undefined, p],
+      [policyRoute.GET, "GET", "/api/v2/business/policy"], [policyRoute.POST, "POST", "/api/v2/business/policy", { idempotencyKey: "k" }],
+      [proofRoute.POST, "POST", "/api/v2/business/policy/proof", { address: "0x1111111111111111111111111111111111111111" }],
+      [approvalRoute.POST, "POST", "/api/v2/business/policy/approval", { proofNonce: "n", wallet: "0x1111111111111111111111111111111111111111" }],
+      [walletsRoute.GET, "GET", "/api/v2/business/approval-wallets"], [walletsRoute.POST, "POST", "/api/v2/business/approval-wallets", { wallet: "0x1", endorser: "0x2" }],
+      [walletsConfirmRoute.POST, "POST", "/api/v2/business/approval-wallets/confirm", { nonce: "n", signature: "0x" }],
+    ];
+    for (const [handler, method, path, body, params_] of routes) {
+      const r = await call(handler, method, path, { cookie, body, p: params_, origin: method === "GET" ? null : ORIGIN });
+      assert.equal(r.status, 503, `${method} ${path}: ${JSON.stringify(r.body)}`);
+    }
   } finally {
-    await setupDb();
+    pg = await setupDb(); // later tests read this handle directly: it must be the new database, not the old one
+  }
+});
+
+test("round 2 (L2, S-L2): the proof and the approval are EIP-4361 for our domain, and the workspace name can't reshape either", async () => {
+  const ch = (code) => String.fromCodePoint(code);
+  const ua = user("nina");
+  const a = await signIn(ua);
+  // line separator, RLO, zero-width space: allowed in a name (not C0 controls), never in a signed prompt
+  assert.equal((await create(a.cookie, `Nina${ch(0x2028)}Chain ID: 1${ch(0x202e)}x${ch(0x200b)}y`)).status, 201);
+  const recipient = privateKeyToAccount(generatePrivateKey());
+  const proof = await call(proofRoute.POST, "POST", "/api/v2/business/policy/proof", { cookie: a.cookie, body: { address: recipient.address } });
+  const approval = await call(approvalRoute.POST, "POST", "/api/v2/business/policy/approval", { cookie: a.cookie, body: { proofNonce: proof.body.nonce, wallet: ua.accounts[0].address } });
+  assert.equal(approval.status, 200, JSON.stringify(approval.body));
+  for (const [what, m] of [["proof", proof.body.message], ["approval", approval.body.message]]) {
+    assert.match(m, /^localhost wants you to sign in with your Ethereum account:\n/, `${what}: EIP-4361 for our domain`);
+    assert.match(m, /\nURI: http:\/\/localhost\n/, `${what}: our URI`);
+    assert.equal(m.match(/^Chain ID: /gm).length, 1, `${what}: only the real Chain ID line`);
+    for (const code of [0x2028, 0x202e, 0x200b]) assert.ok(!m.includes(ch(code)), `${what}: no U+${code.toString(16)}`);
+  }
+  assert.ok(approval.body.message.includes(recipient.address), "the approval names the pay-out address");
+  assert.ok(approval.body.message.includes(proof.body.policyHash), "and the policy hash");
+  const done = await call(policyRoute.POST, "POST", "/api/v2/business/policy", {
+    cookie: a.cookie,
+    body: {
+      proofNonce: proof.body.nonce, proofSignature: await recipient.signMessage({ message: proof.body.message }),
+      approvalNonce: approval.body.nonce, approvalSignature: await ua.accounts[0].signMessage({ message: approval.body.message }),
+      expectedCurrentVersion: 0, idempotencyKey: "nina-1",
+    },
+  });
+  assert.equal(done.status, 201, JSON.stringify(done.body));
+});
+
+// ---- round 2, H1 (owner decision 2026-11-06): pinned approval wallets
+const freshWallet = () => privateKeyToAccount(generatePrivateKey());
+const enroll = (cookie, wallet, endorser) => call(walletsRoute.POST, "POST", "/api/v2/business/approval-wallets", { cookie, body: { wallet, endorser } });
+const confirmEnroll = (cookie, nonce, signature) => call(walletsConfirmRoute.POST, "POST", "/api/v2/business/approval-wallets/confirm", { cookie, body: { nonce, signature } });
+const enrolled = (cookie) => call(walletsRoute.GET, "GET", "/api/v2/business/approval-wallets", { cookie, origin: null });
+const notices = async (kind) => (await pg.query("SELECT principal_id, detail FROM wf_notifications WHERE kind = $1 ORDER BY principal_id", [kind])).rows;
+
+test("H1: the first activation pins its approval wallet; a wallet linked later (e.g. after an email takeover) can't approve", async () => {
+  const ua = user("alice");
+  const a = await signIn(ua);
+  await create(a.cookie);
+  assert.deepEqual((await enrolled(a.cookie)).body, { wallets: [], firstPinOpen: true });
+  assert.equal((await activate(a.cookie, freshWallet(), ua.accounts[0])).status, 201);
+  const list = (await enrolled(a.cookie)).body;
+  assert.deepEqual([list.firstPinOpen, list.wallets.map((w) => [w.wallet, w.you, w.endorsedBy])], [false, [[ua.accounts[0].address, true, null]]], "pinned, checksummed");
+  // someone signs in as alice (same Privy user, e.g. a taken-over email) and links their own wallet
+  const evil = freshWallet();
+  const t = await signIn(relink(ua, [evil]));
+  assert.equal(t.status, 200);
+  const r = await activate(t.cookie, freshWallet(), evil, 1);
+  assert.deepEqual([r.stage, r.status], ["approval", 403], "a newly linked wallet isn't an enrolled approval wallet");
+  assert.match(r.body.error, /enrolled approval wallet/);
+  // the new link was announced to every Owner of alice's workspaces (alice herself here)
+  const linked = await notices("wallet.linked");
+  const shortEvil = `${evil.address.toLowerCase().slice(0, 6)}...${evil.address.toLowerCase().slice(-4)}`;
+  assert.ok(linked.some((n) => n.detail.wallet === shortEvil), JSON.stringify(linked));
+  assert.equal((await pg.query("SELECT count(*)::int AS n FROM wf_settlement_policies")).rows[0].n, 1, "still one version");
+});
+
+test("H1: an enrolled approval wallet endorses another; only then can it approve; every Owner is told", async () => {
+  const [ua, ub] = [user("alice"), user("bobby")];
+  const [a1, b1] = [ua.accounts[0], ub.accounts[0]];
+  const a = await signIn(ua), b = await signIn(ub);
+  const biz = (await create(a.cookie)).body.id;
+  assert.equal((await activate(a.cookie, freshWallet(), a1)).status, 201); // pins a1
+  assert.equal((await addMember(a.cookie, { wallet: b1.address, role: "owner", idempotencyKey: "own-b" })).status, 201);
+  await call(activeRoute.POST, "POST", "/api/v2/me/active-business", { cookie: b.cookie, body: { businessId: biz } });
+  const blocked = await activate(b.cookie, freshWallet(), b1, 1);
+  assert.deepEqual([blocked.stage, blocked.status], ["approval", 403], "bob's wallet isn't enrolled yet");
+  assert.equal((await enroll(b.cookie, b1.address, b1.address)).status, 403, "a wallet can't endorse itself");
+  assert.equal((await enroll(b.cookie, freshWallet().address, a1.address)).status, 400, "only a wallet Privy verified for you");
+  const c = await enroll(b.cookie, b1.address, a1.address); // bob asks; alice's enrolled wallet must sign
+  assert.equal(c.status, 200, JSON.stringify(c.body));
+  assert.match(c.body.message, new RegExp(`^localhost wants you to sign in with your Ethereum account:\\n${a1.address}\\n`));
+  assert.ok(c.body.message.includes(b1.address), "the message names the wallet being enrolled");
+  assert.equal((await confirmEnroll(b.cookie, c.body.nonce, await b1.signMessage({ message: c.body.message }))).status, 403, "not signed by the endorser");
+  const done = await confirmEnroll(b.cookie, c.body.nonce, await a1.signMessage({ message: c.body.message }));
+  assert.equal(done.status, 200, JSON.stringify(done.body));
+  assert.deepEqual(await confirmEnroll(b.cookie, c.body.nonce, await a1.signMessage({ message: c.body.message })), done, "a replay is the same answer");
+  assert.equal((await activate(b.cookie, freshWallet(), b1, 1)).status, 201, "now bob approves version 2");
+  const all = (await pg.query("SELECT kind, principal_id FROM wf_notifications ORDER BY kind")).rows;
+  const told = all.filter((n) => n.kind === "approval_wallet.enrolled").map((n) => n.principal_id).sort();
+  assert.ok(told.length, `notices: ${JSON.stringify(all)}`);
+  const [alice, bob] = [(await me(a.cookie)).body.principal.id, (await me(b.cookie)).body.principal.id];
+  assert.deepEqual(told, [alice, bob].sort(), "every Owner, the requester included");
+  assert.equal((await enroll(b.cookie, b1.address, a1.address)).status, 409, "already enrolled");
+});
+
+test("H1: an endorser must be an enrolled wallet of a current Owner; Operators and Viewers can't enroll", async () => {
+  const [ua, ub] = [user("alice"), user("bobby")];
+  const [a1, b1] = [ua.accounts[0], ub.accounts[0]];
+  const a = await signIn(ua), b = await signIn(ub);
+  const biz = (await create(a.cookie)).body.id;
+  assert.equal((await activate(a.cookie, freshWallet(), a1)).status, 201);
+  assert.equal((await addMember(a.cookie, { wallet: b1.address, role: "operator", idempotencyKey: "op-b" })).status, 201);
+  await call(activeRoute.POST, "POST", "/api/v2/me/active-business", { cookie: b.cookie, body: { businessId: biz } });
+  assert.equal((await enroll(b.cookie, b1.address, a1.address)).status, 403, "an Operator can't enroll");
+  assert.equal((await enroll(a.cookie, a1.address, a1.address)).status, 409, "already enrolled");
+  // the endorsement is checked again at confirm: alice issues a request, then loses her Owner role before it's signed
+  const second = freshWallet();
+  const a2 = await signIn(relink(ua, [a1, second]));
+  const c = await enroll(a2.cookie, second.address, a1.address);
+  assert.equal(c.status, 200, JSON.stringify(c.body));
+  const bob = (await me(b.cookie)).body.principal.id;
+  const promoted = await setRole(a2.cookie, bob, "owner", "promote-b");
+  assert.equal(promoted.status, 200, JSON.stringify(promoted.body));
+  const alice = (await me(a2.cookie)).body.principal.id;
+  assert.equal((await setRole(a2.cookie, alice, "viewer", "demote-a")).status, 200);
+  assert.equal((await confirmEnroll(a2.cookie, c.body.nonce, await a1.signMessage({ message: c.body.message }))).status, 403, "no longer an Owner");
+});
+
+test("NFR-17 (round 2, L5): no token, signature, signed message or session cookie in logs, audit rows or notices", async () => {
+  const logged = [];
+  const original = { error: console.error, warn: console.warn, log: console.log, info: console.info };
+  for (const k of Object.keys(original)) console[k] = (...args) => logged.push(args.map(String).join(" "));
+  const secrets = [];
+  try {
+    const ua = user("alice", { wallets: 2 });
+    const [a1, a2w] = ua.accounts;
+    secrets.push(ua.access, ua.identity);
+    assert.equal((await signIn(ua, { access: `${ua.access}x` })).status, 401, "a bad token is refused (and logged by reason only)");
+    const a = await signIn(ua);
+    secrets.push(a.cookie.split("=")[1]);
+    await create(a.cookie);
+    const recipient = freshWallet();
+    const bad = await activate(a.cookie, recipient, a1, 0, { approvalSigner: a2w }); // a wrong approval signature first
+    assert.equal(bad.status, 400);
+    secrets.push(bad.sent.proofSignature, bad.sent.approvalSignature, bad.proof.body.message, bad.approval.body.message);
+    const good = await activate(a.cookie, freshWallet(), a1);
+    assert.equal(good.status, 201);
+    secrets.push(good.sent.proofSignature, good.sent.approvalSignature, good.proof.body.message, good.approval.body.message);
+    const c = await enroll(a.cookie, a2w.address, a1.address);
+    const sig = await a1.signMessage({ message: c.body.message });
+    secrets.push(c.body.message, sig);
+    assert.equal((await confirmEnroll(a.cookie, c.body.nonce, sig)).status, 200);
+  } finally {
+    Object.assign(console, original);
+  }
+  const rows = JSON.stringify((await pg.query("SELECT * FROM wf_audit_events")).rows) + JSON.stringify((await pg.query("SELECT * FROM wf_notifications")).rows);
+  const logs = logged.join("\n");
+  assert.ok(logs.includes("sign-in refused"), "the refusal was logged (by reason)");
+  for (const secret of secrets) {
+    assert.ok(!logs.includes(secret), `not in logs: ${secret.slice(0, 12)}…`);
+    assert.ok(!rows.includes(secret), `not in audit or notices: ${secret.slice(0, 12)}…`);
   }
 });

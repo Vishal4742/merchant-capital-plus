@@ -30,7 +30,14 @@ if (!raw) {
 }
 const DB = "wf_s2_web";
 const urlFor = (db) => {
-  const u = new URL(raw);
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    // never the parser's error: it quotes the whole input, password included (051 review S-L4 pattern)
+    console.log("FAIL  configuration: DATABASE_URL isn't a valid URL");
+    process.exit(1);
+  }
   u.pathname = `/${db}`;
   return u.toString();
 };
@@ -53,12 +60,13 @@ if (wf.length) await sql.query(`DROP TABLE IF EXISTS ${wf.map((r) => r.t).join("
 const files = readdirSync(DB_DIR).filter((f) => /^\d{3}_.+\.sql$/.test(f)).sort();
 for (const pass of [1, 2]) for (const f of files) for (const s of sqlStatements(readFileSync(new URL(f, DB_DIR), "utf8"))) await sql.query(s);
 const tables = (await sql.query("SELECT string_agg(table_name, ',' ORDER BY table_name) AS t FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE 'wf\\_%'"))[0].t;
-check("schema: all web migrations (through 053) applied twice on the production driver", tables.split(",").length === 10, `wf tables: ${tables}`);
+check("schema: all web migrations (through 053) applied twice on the production driver", tables.split(",").length === 11, `wf tables: ${tables}`); // 11 with wf_approval_wallets (round 2 H1)
 
 // the services in this process (to issue challenges) use the same target through the production adapter
 process.env.DATABASE_URL = TARGET;
 process.env.PUBLIC_ORIGIN = ORIGIN;
 const policies = await import("../../apps/web/lib/server/policies.ts");
+const approvalWallets = await import("../../apps/web/lib/server/approval-wallets.ts");
 const { scopesFor } = await import("../../apps/web/lib/server/identity.ts");
 
 const now = Date.now();
@@ -99,7 +107,7 @@ const lockWaits = async () => (await sql.query("SELECT count(*)::int AS n FROM p
 
 /** Fires the contenders together (barrier), waits until `minWaits` of them are blocked on a Lock behind the holder,
  *  then lets the holder commit. Returns each contender's JSON answer and the most lock waits seen. */
-async function race(ops, holder, minWaits) {
+async function race(ops, holder, minWaits, { staged = false } = {}) {
   const kids = ops.map((op) => spawn(process.execPath, ["--disable-warning=ExperimentalWarning", CHILD], { env: { ...process.env, DATABASE_URL: TARGET, PUBLIC_ORIGIN: ORIGIN, WF_OP: JSON.stringify(op) }, stdio: ["pipe", "pipe", "pipe"] }));
   const bufs = kids.map(() => ({ out: "" }));
   kids.forEach((k, i) => k.stdout.on("data", (d) => (bufs[i].out += d)));
@@ -108,9 +116,13 @@ async function race(ops, holder, minWaits) {
     const t = setInterval(() => bufs[i].out.includes("READY") && (clearInterval(t), res()), 10);
     k.on("exit", (c) => (clearInterval(t), bufs[i].out.includes("READY") || rej(new Error(`child exited ${c} before READY`))));
   })));
-  for (const k of kids) k.stdin.write("GO\n");
   let seen = 0;
   const deadline = Date.now() + 20_000;
+  // staged (round 2): each contender starts only after the previous one is blocked on a Lock
+  for (const [i, k] of kids.entries()) {
+    k.stdin.write("GO\n");
+    while (staged && Date.now() < deadline && (seen = Math.max(seen, await lockWaits())) < i + 1) await new Promise((r) => setTimeout(r, 100));
+  }
   while (Date.now() < deadline) {
     seen = Math.max(seen, await lockWaits());
     if (seen >= minWaits) break;
@@ -166,6 +178,7 @@ async function signedPair(owner, ownerWallet, biz, expected) {
     proofNonce: proof.nonce, proofSignature: await recipient.signMessage({ message: proof.message }),
     approvalNonce: approval.nonce, approvalSignature: await ownerWallet.signMessage({ message: approval.message }),
     expectedCurrentVersion: expected,
+    idempotencyKey: `race-${approval.nonce.slice(0, 24)}`, // one key per signed pair (round 2, L3)
   };
 }
 
@@ -186,7 +199,8 @@ async function signedPair(owner, ownerWallet, biz, expected) {
     `lock waits seen=${seen}; statuses=${statuses(answers)}; versions=${versions.map((v) => v.version).join(",")}`);
 }
 
-// ---- acceptance 3: one signed pair replayed by 3 processes at once → exactly one activation, both challenges consumed once
+// ---- acceptance 3: one signed pair replayed by 3 processes at once (the same request: same idempotency key) → exactly
+// one activation, both challenges consumed once, and every process gets that version (FR-AUTH-4, round 2 L3)
 {
   const wallet = privateKeyToAccount(generatePrivateKey());
   const a = await principal(wallet.address);
@@ -196,9 +210,50 @@ async function signedPair(owner, ownerWallet, biz, expected) {
   const { answers, seen } = await race([1, 2, 3].map(() => ({ kind: "activate", ctx: ctxOf(a, biz), args: pair })), holder, 3);
   const versions = await sql.query("SELECT version FROM wf_settlement_policies WHERE business_id = $1", [biz]);
   const consumed = await sql.query("SELECT count(*)::int AS n FROM wf_challenges WHERE nonce IN ($1, $2) AND consumed_at IS NOT NULL", [pair.proofNonce, pair.approvalNonce]);
+  const sameVersion = answers.every((x) => x.ok && x.result.version === 1);
   check("3: one signed proof + approval replayed concurrently by 3 processes",
-    seen >= 3 && statuses(answers) === "200,409,409" && versions.length === 1 && consumed[0].n === 2,
-    `lock waits seen=${seen}; statuses=${statuses(answers)}; versions=${versions.length}; consumed=${consumed[0].n}`);
+    seen >= 3 && statuses(answers) === "200,200,200" && sameVersion && versions.length === 1 && consumed[0].n === 2,
+    `lock waits seen=${seen}; statuses=${statuses(answers)}; every answer version 1=${sameVersion}; versions=${versions.length}; consumed=${consumed[0].n}`);
+}
+
+// ---- round 2 H1: endorsements. Setup: owner A has an enrolled approval wallet (pinned row), owner B asks to enroll a
+// Privy-verified wallet of B's; A's enrolled wallet signs the endorsement (in-process, production driver).
+async function endorsement() {
+  const [aWallet, bWallet] = [privateKeyToAccount(generatePrivateKey()), privateKeyToAccount(generatePrivateKey())];
+  const [a, b] = [await principal(aWallet.address), await principal(bWallet.address)];
+  const biz = await business([a, b]);
+  await sql.query("INSERT INTO wf_approval_wallets (business_id, wallet, principal_id, enrolled_at, endorsed_by) VALUES ($1, $2, $3, $4, NULL)", [biz, aWallet.address.toLowerCase(), a.principalId, now]);
+  const c = await approvalWallets.requestEnrollment(serviceCtx(b, biz), { wallet: bWallet.address, endorser: aWallet.address });
+  return { a, b, biz, bWallet, args: { nonce: c.nonce, signature: await aWallet.signMessage({ message: c.message }) } };
+}
+const enrolledRows = async (biz, wallet) => (await sql.query("SELECT count(*)::int AS n FROM wf_approval_wallets WHERE business_id = $1 AND wallet = $2", [biz, wallet.address.toLowerCase()]))[0].n;
+
+// E1: one signed endorsement confirmed by 3 processes at once → one enrollment, one audit row, the same answer for all
+{
+  const e = await endorsement();
+  const holder = await hold("SELECT 1 FROM wf_memberships WHERE business_id = $1 AND principal_id = $2 FOR UPDATE", [e.biz, e.b.principalId]);
+  const { answers, seen } = await race([1, 2, 3].map(() => ({ kind: "enroll", ctx: ctxOf(e.b, e.biz), args: e.args })), holder, 3);
+  const audits = (await sql.query("SELECT count(*)::int AS n FROM wf_audit_events WHERE business_id = $1 AND action = 'approval_wallet.enroll'", [e.biz]))[0].n;
+  const same = answers.every((x) => x.ok && x.result.wallet === e.bWallet.address);
+  check("H1 E1: one endorsement confirmed concurrently by 3 processes (requester's membership held)",
+    seen >= 3 && statuses(answers) === "200,200,200" && same && (await enrolledRows(e.biz, e.bWallet)) === 1 && audits === 1,
+    `lock waits seen=${seen}; statuses=${statuses(answers)}; same answer=${same}; enrolled=${await enrolledRows(e.biz, e.bWallet)}; audits=${audits}`);
+}
+
+// E2: the endorser's Owner is being demoted (already waiting, holding that membership row) when the confirm arrives →
+// the confirm waits on that row, finds the endorser no longer an Owner, and enrolls nothing (403)
+{
+  const e = await endorsement();
+  const holder = await hold("SELECT id FROM wf_businesses WHERE id = $1 FOR UPDATE", [e.biz]);
+  const { answers, seen } = await race([
+    { kind: "role", ctx: ctxOf(e.b, e.biz), args: { principalId: e.a.principalId, role: "viewer", idempotencyKey: "demote-endorser" } },
+    { kind: "enroll", ctx: ctxOf(e.b, e.biz), args: e.args },
+  ], holder, 2, { staged: true });
+  const [demoted, enrolled] = answers;
+  const unused = (await sql.query("SELECT consumed_at FROM wf_challenges WHERE nonce = $1", [e.args.nonce]))[0].consumed_at === null;
+  check("H1 E2: a confirm races the demotion of the endorser's Owner (staged; business row held)",
+    seen >= 2 && demoted.status === 200 && enrolled.status === 403 && (await enrolledRows(e.biz, e.bWallet)) === 0 && unused,
+    `lock waits seen=${seen}; demote=${demoted.status} enroll=${enrolled.status} (${enrolled.error}); enrolled=${await enrolledRows(e.biz, e.bWallet)}; challenge unused=${unused}`);
 }
 
 const failed = results.filter((ok) => !ok).length;

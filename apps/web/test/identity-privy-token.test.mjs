@@ -88,3 +88,10 @@ test("privyConfig: the app id and verification key come from the environment; mi
   // dashboards and env editors often store the PEM with literal \n
   assert.deepEqual(privyConfig({ NEXT_PUBLIC_PRIVY_APP_ID: APP_ID, PRIVY_VERIFICATION_KEY: PEM.replaceAll("\n", "\\n") }).appId, APP_ID);
 });
+
+test("round 2 (L5): a verification key on any curve but P-256 is refused (ES256 is P-256 only)", () => {
+  for (const namedCurve of ["secp256k1", "P-384"]) {
+    const pem = generateKeyPairSync("ec", { namedCurve }).publicKey.export({ type: "spki", format: "pem" });
+    assert.equal(privyConfig({ NEXT_PUBLIC_PRIVY_APP_ID: APP_ID, PRIVY_VERIFICATION_KEY: pem }), null, namedCurve);
+  }
+});
