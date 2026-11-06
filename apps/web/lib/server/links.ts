@@ -94,7 +94,7 @@ export async function openCheckout(
   const merchant = getAddress(from.merchant);
   const fx = { currency, amount: total, rate: rate.rate, rateAt: rate.rateAt, source: rate.source, fetchedAt: rate.fetchedAt };
   const usdt = currency === "USDT";
-  const session = createSession(
+  const session = await createSession(
     {
       merchant,
       merchantName: merchantName(merchant),

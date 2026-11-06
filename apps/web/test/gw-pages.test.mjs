@@ -127,7 +127,7 @@ test("checkout: line items priced from the stored page only, 303 to the session,
   const { data } = await newPage();
   const res = await pay(data.slug, { items: [{ name: "Cold brew", qty: 2, price: "0.01" }, { name: "Cookie", qty: 1 }], amount: "1.00" });
   assert.equal(res.status, 303);
-  const session = sessionOf(res);
+  const session = await sessionOf(res);
   assert.deepEqual(session.items, [{ name: "Cold brew", qty: 2, price: 4_500_000n }, { name: "Cookie", qty: 1, price: 500_000n }]);
   assert.equal(session.amount, 9_500_000n);
   assert.equal(session.priced, undefined); // USDT: no priced, the 30-min session
@@ -168,7 +168,7 @@ test("open-amount page: the payer's amount within the page's min and max; JSON c
   const res = await pay(data.slug, { amount: "20.00" }, { accept: "application/json" });
   assert.equal(res.status, 200);
   const body = await res.json();
-  const session = getSession(body.session_id);
+  const session = await getSession(body.session_id);
   assert.equal(new URL(body.checkout_url).pathname, `/checkout/${session.id}`);
   assert.equal(session.amount, 20_000_000n);
   assert.deepEqual(session.items, [{ name: "Tip jar", qty: 1, price: 20_000_000n }]);
@@ -179,7 +179,7 @@ test("open-amount page: the payer's amount within the page's min and max; JSON c
 
 test("a fiat page converts the cart total once at the live rate; the session is priced, items stay in EUR, 10-min lock (AT-13)", async () => {
   const { data } = await newPage({ currency: "EUR" });
-  const session = sessionOf(await pay(data.slug, { items: [{ name: "Cold brew", qty: 3 }, { name: "Banana bread", qty: 1 }] }));
+  const session = await sessionOf(await pay(data.slug, { items: [{ name: "Cold brew", qty: 3 }, { name: "Banana bread", qty: 1 }] }));
   // H1: 16.75 EUR at 0.8 EUR per USD = 20.9375 → 20.94, rounded up once (per line it was 5.63 × 3 + 4.07 = 20.96)
   assert.equal(session.amount, 20_940_000n);
   assert.deepEqual(session.items, [{ name: "Cold brew", qty: 3, price: 4_500_000n }, { name: "Banana bread", qty: 1, price: 3_250_000n }]);
@@ -196,7 +196,7 @@ test("a fiat page converts the cart total once at the live rate; the session is 
 test("H1: 2 × 10 EUR at 0.88875 charges 22.51, the same as a quote for 20 EUR", async () => {
   eurRate = 0.88875;
   const { data } = await newPage({ currency: "EUR", items: [{ name: "Thali", price: "10.00" }] });
-  const session = sessionOf(await pay(data.slug, { items: [{ name: "Thali", qty: 2 }] }));
+  const session = await sessionOf(await pay(data.slug, { items: [{ name: "Thali", qty: 2 }] }));
   assert.equal(session.amount, 22_510_000n); // per line it was 11.26 × 2 = 22.52
   assert.equal(session.amount, (await createQuote("20.00", "EUR")).usdtAmount);
   assert.equal((await checkoutOf(session.id)).usdtAmount, 22_510_000n);
@@ -232,7 +232,7 @@ test("LOW: FX down at creation skips the price check (best effort; the checkout 
 
 test("a USD open-amount page is priced at rate 1 and keeps the 30-min session", async () => {
   const { data } = await newPage({ title: "Tip jar", items: undefined, open_amount: {}, currency: "USD" });
-  const session = getSession((await (await pay(data.slug, { amount: "20.00" }, { accept: "application/json" })).json()).session_id);
+  const session = await getSession((await (await pay(data.slug, { amount: "20.00" }, { accept: "application/json" })).json()).session_id);
   assert.equal(session.amount, 20_000_000n);
   assert.deepEqual([session.priced.currency, session.priced.amount, session.priced.rate], ["USD", 20_000_000n, "1"]);
   assert.equal(session.expiresAt - session.createdAt, SESSION_TTL_MS);

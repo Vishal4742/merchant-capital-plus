@@ -164,8 +164,10 @@ function VoucherTicket({ v }: { v: VoucherRow }) {
   );
 }
 
-function ArkivKey({ v }: { v: Voucher }) {
+function ArkivKey({ v }: { v: VoucherRow }) {
   const key = v.arkiv_entity_key;
+  // the publish route refuses expired and deactivated codes (409), so only a live one offers the retry
+  if (!key && v.active && v.status !== "expired") return <Publish v={v} />;
   if (!key) return <span className="inline-flex min-h-11 items-center text-ink-muted">Not on Arkiv</span>;
   return (
     <span className="flex min-w-0 items-center gap-2">
@@ -175,6 +177,42 @@ function ArkivKey({ v }: { v: Voucher }) {
       </span>
       <CopyButton text={key} name={`the Arkiv entity key for ${v.code}`} />
     </span>
+  );
+}
+
+/** Retries the code's Arkiv mirror (FR-GW-12, batch 028). One Arkiv write can take up to 3 minutes. */
+function Publish({ v }: { v: Voucher }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function publish() {
+    setError(null);
+    setBusy(true);
+    try {
+      const { voucher, arkivError } = await moneyClient().publishVoucher(v.id);
+      if (voucher.arkiv_entity_key) return router.refresh(); // the card re-renders with its entity
+      setError(arkivError ?? "It isn't on Arkiv yet. Try again in a few minutes.");
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="grid justify-items-start">
+      <span className="flex flex-wrap items-center gap-x-2">
+        <span className="text-ink-muted">Not on Arkiv</span>
+        <Button variant="quiet" className="whitespace-nowrap" onClick={publish} aria-disabled={busy}>
+          {busy ? "Publishing…" : "Publish to Arkiv"}
+        </Button>
+      </span>
+      {error && (
+        <p role="alert" className="max-w-64 text-sm text-critical">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 

@@ -2,7 +2,7 @@
 
 // Webhooks on the Developers screen (FR-GW-7): add an https endpoint (checked here, then by the gateway, which also
 // needs a public address), see its signing secret once, and for each endpoint its last 20 deliveries with a status
-// pill, tries, the next try and the answer code. "Send test event", "Resend" (the same event id) and a two-step delete.
+// pill, tries, the next try, the answer code and a plain reason when it failed. "Send test event", "Resend" (the same event id) and a two-step delete.
 // At 5 endpoints the form says so instead of failing. The list is read on our server; actions call the gateway from
 // this browser, then the list reloads.
 import { useRouter } from "next/navigation";
@@ -11,7 +11,7 @@ import { Button } from "@/components/Button";
 import { SectionLabel, card, field } from "@/components/gateway/Frame";
 import { RevealOnce } from "@/components/gateway/RevealOnce";
 import { errorText } from "@/lib/gateway-client";
-import { DELIVERY_LABEL, MAX_ENDPOINTS, devClient, httpsProblem, nextTryText, signedOut, type Delivery, type DeliveryStatus, type NewWebhook, type Webhook } from "@/lib/gateway-dev";
+import { DELIVERY_LABEL, MAX_ENDPOINTS, deliveryProblem, devClient, httpsProblem, nextTryText, signedOut, type Delivery, type DeliveryStatus, type NewWebhook, type Webhook } from "@/lib/gateway-dev";
 
 /** A delivery with its times already written out on our server. */
 export interface DeliveryRow extends Delivery {
@@ -90,8 +90,8 @@ function NewEndpoint({ full }: { full: boolean }) {
             <input name="url" type="url" inputMode="url" maxLength={500} autoComplete="off" spellCheck={false} placeholder="https://shop.example/webhooks" className={`${field} data`} />
           </label>
           <p className="text-sm text-ink-muted">
-            We send <code className="data">payment.succeeded</code> and <code className="data">payment.refunded</code>, signed with this endpoint&apos;s secret, and retry
-            after 1, 5 and 30 minutes.
+            We send <code className="data">payment.succeeded</code> and <code className="data">payment.refunded</code>, signed with this
+            endpoint&apos;s secret, and retry after 1, 5 and 30 minutes.
           </p>
           <Button type="submit" aria-disabled={busy} className="justify-self-start">
             {busy ? "Adding…" : "Add endpoint"}
@@ -104,7 +104,7 @@ function NewEndpoint({ full }: { full: boolean }) {
         </p>
       )}
       {created && (
-        <RevealOnce title={`Signing secret · ${created.url.replace(/^https:\/\//, "")}`} value={created.secret} noun="secret" onDone={() => setCreated(null)}>
+        <RevealOnce title={`Signing secret · ${created.url.replace(/^https:\/\//, "")}`} value={created.secret} noun="secret" envName="GATEWAY_WEBHOOK_SECRET" onDone={() => setCreated(null)}>
           Put it in GATEWAY_WEBHOOK_SECRET on your server. It checks the MC-Signature on every event.
         </RevealOnce>
       )}
@@ -144,6 +144,7 @@ function Endpoint({ hook }: { hook: WebhookRow }) {
 
 function DeliveryLine({ delivery: d }: { delivery: DeliveryRow }) {
   const next = nextTryText(d, d.nextText);
+  const problem = deliveryProblem(d);
   return (
     <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 border-b border-hairline py-2 text-sm last:border-b-0 md:grid-cols-[minmax(0,1fr)_92px_minmax(0,1.3fr)_auto]">
       <span className="data min-w-0 truncate" title={d.event}>
@@ -153,6 +154,7 @@ function DeliveryLine({ delivery: d }: { delivery: DeliveryRow }) {
       <span className="col-span-2 text-ink-muted tabular-nums md:col-span-1">
         {d.atText} · {tries(d.attempts)} · {d.response_status === null ? "no answer" : `HTTP ${d.response_status}`}
         {next && ` · ${next}`}
+        {problem && <span className="block text-ink">{problem}</span>}
       </span>
       <Resend delivery={d} />
     </li>
@@ -186,7 +188,8 @@ function useAction(run: () => Promise<string | void>) {
 function SendTest({ hook }: { hook: WebhookRow }) {
   const { busy, error, done, act } = useAction(async () => {
     const d = await devClient().sendTest(hook.id);
-    return `Test event sent: ${DELIVERY_LABEL[d.status].toLowerCase()}${d.response_status === null ? ", no answer" : `, HTTP ${d.response_status}`}.`;
+    const problem = deliveryProblem(d);
+    return `Test event sent: ${DELIVERY_LABEL[d.status].toLowerCase()}${d.response_status === null ? ", no answer" : `, HTTP ${d.response_status}`}.${problem ? ` ${problem}.` : ""}`;
   });
   return (
     <div className="grid min-w-0 gap-1">

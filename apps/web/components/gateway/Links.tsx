@@ -8,7 +8,7 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { Button } from "@/components/Button";
 import { SectionLabel, card, field } from "@/components/gateway/Frame";
-import { LinkPill, QrActions } from "@/components/gateway/Share";
+import { LinkPill, QrActions, WebhookId } from "@/components/gateway/Share";
 import { PRICE_CURRENCIES, errorText, gatewayClient, type Link, type LinkStatus } from "@/lib/gateway-client";
 import { amountText, linkBody } from "@/lib/gateway-forms";
 
@@ -159,6 +159,7 @@ function LinkCard({ link, origin }: { link: LinkRow; origin: string }) {
         <span className="eyebrow text-ink-muted">{link.currency}</span>
       </p>
       <LinkPill url={`${origin}/l/${link.slug}`} name={`the link for ${link.description}`} />
+      <WebhookId field="link_id" id={link.id} name={`the link for ${link.description}`} />
       <div className="grid gap-1 border-t border-hairline pt-2 text-sm">
         <div className="flex flex-wrap items-center justify-between gap-x-4">
           <span className="text-ink-muted tabular-nums">

@@ -17,6 +17,7 @@ import {
   zeroAddress,
   type Address,
   type EIP1193Provider,
+  type Hex,
 } from "viem";
 import { whitechainSepolia } from "viem/chains";
 import { getChainClient } from "./anon.ts";
@@ -42,6 +43,9 @@ const usdtAbi = parseAbi([
   "function balanceOf(address owner) view returns (uint256)",
 ]);
 const NOT_ENOUGH_USDT = "Your wallet doesn't have enough USDT for this refund.";
+/** The tx was sent but its receipt couldn't be read: it may still land, so the merchant must not simply send it again
+ *  (security review 027 F1). */
+export const SENT_UNCONFIRMED = "It was sent, but it isn't confirmed yet. Check the table before you try again.";
 
 const COPY: Record<string, string> = {
   NotMerchant: "Switch to the wallet that received this payment.",
@@ -138,7 +142,9 @@ type Call = Parameters<MerchantWallet["reader"]["simulateContract"]>[0];
 async function send(w: MerchantWallet, call: Call) {
   const { request } = await w.reader.simulateContract({ ...call, account: w.account } as Call);
   const hash = await w.wallet.writeContract(request as Parameters<MerchantWallet["wallet"]["writeContract"]>[0]);
-  const receipt = await w.reader.waitForTransactionReceipt({ hash });
+  const receipt = await w.reader.waitForTransactionReceipt({ hash }).catch(() => {
+    throw new Error(SENT_UNCONFIRMED);
+  });
   if (receipt.status !== "success") throw new Error("That didn't go through, and nothing changed. Try again.");
   return receipt;
 }
@@ -158,7 +164,8 @@ export const cancelInvoice = (w: MerchantWallet, id: bigint) => send(w, { addres
 
 /** Returns `amount` of payment `paymentId` to its payer from the merchant's wallet. MerchantPay pulls it with
  *  transferFrom, so a short allowance is first raised by approving exactly this amount. */
-export async function refund(w: MerchantWallet, paymentId: bigint, amount: bigint): Promise<void> {
+/** Returns the refund tx hash, for the gateway's refund sync (batch 027). */
+export async function refund(w: MerchantWallet, paymentId: bigint, amount: bigint): Promise<Hex> {
   const call = { address: w.merchantPay, abi: merchantPayAbi, functionName: "refund", args: [paymentId, amount] } as const;
   const allowance = await w.reader.readContract({ address: USDT, abi: usdtAbi, functionName: "allowance", args: [w.account, w.merchantPay] });
   if (allowance < amount) {
@@ -172,7 +179,7 @@ export async function refund(w: MerchantWallet, paymentId: bigint, amount: bigin
     });
     await send(w, { address: USDT, abi: usdtAbi, functionName: "approve", args: [w.merchantPay, amount] });
   }
-  await send(w, call);
+  return (await send(w, call)).transactionHash;
 }
 
 function revertReason(error: unknown): string {

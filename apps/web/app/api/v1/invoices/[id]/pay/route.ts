@@ -9,7 +9,11 @@ import { invoicePaid, readInvoice, readRelayFee, readUsdtBalance } from "../../.
 import { invoiceAuthorization, parseApproval } from "../../../../../../lib/pay.ts";
 import { NOT_FUNDED, UNKNOWN, relayPayInvoice } from "../../../../../../lib/relay.ts";
 import { invoiceState, isShopInvoice, type InvoiceState } from "../../../../../../lib/settle.ts";
+import { handle } from "../../../../../../lib/server/http.ts";
 import { claimPayment, invoiceAttempt, invoiceLock, releasePayment, setInvoiceAttempt } from "../../../../../../lib/sessions.ts";
+
+// the lock (lib/sessions.ts LOCK_S = 300 s) must outlast the function (security 026 F1)
+export const maxDuration = 300;
 
 const fail = (status: number, error: string) => Response.json({ error }, { status });
 const NOT_FOUND = "This invoice doesn't exist. Check the link with whoever sent it.";
@@ -21,8 +25,8 @@ const logged = (what: string) => (error: unknown) => {
   return null;
 };
 
-function alreadyPaid(id: string) {
-  const receipt = invoiceAttempt(id).receipt;
+async function alreadyPaid(id: string) {
+  const receipt = (await invoiceAttempt(id)).receipt;
   return Response.json({ error: "This invoice is already paid.", paid: true, receiptId: receipt?.paymentId ?? null, txHash: receipt?.txHash ?? null }, { status: 409 });
 }
 
@@ -33,7 +37,10 @@ function closed(id: string, state: Exclude<InvoiceState, "open">) {
   return alreadyPaid(id);
 }
 
-export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+// Any other failure is handle()'s 500, which the sheet shows as "confirming", never "nothing was charged" (outcome.ts).
+export const POST = (request: Request, context: { params: Promise<{ id: string }> }) => handle(() => post(request, context));
+
+async function post(request: Request, { params }: { params: Promise<{ id: string }> }): Promise<Response> {
   const { id } = await params;
   if (!/^[1-9]\d{0,19}$/.test(id)) return fail(404, NOT_FOUND);
   const pay = payConfig();
@@ -51,7 +58,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   ]);
   if (!invoice || fee === null) return fail(503, NOT_READ);
   if (!isShopInvoice(invoice, merchantConfig()?.merchant)) return fail(404, NOT_FOUND); // only our shop's invoices
-  const before = invoiceState(id, invoice.status);
+  // the attempt store is the database (batch 023): one we can't read refuses before anything is locked or relayed
+  const before = await invoiceState(id, invoice.status).catch((error: unknown) => {
+    console.error(`invoice ${id}: attempt read failed: ${error instanceof Error ? error.name : "error"}`); // never a database message (NFR-8)
+    return null;
+  });
+  if (before === null) return fail(503, NOT_READ);
   if (before !== "open") return closed(id, before);
 
   // what is still owed, and the fee on top: exactly what MerchantPay will credit and pull
@@ -64,21 +76,22 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (balance !== null && balance < terms.amount + terms.fee) return fail(400, NOT_FUNDED);
 
   const lock = invoiceLock(id);
-  if (!claimPayment(lock)) return fail(409, "This invoice is already being paid.");
+  const token = await claimPayment(lock);
+  if (!token) return fail(409, "This invoice is already being paid.");
   try {
     // a request that held the lock before us may have paid it or left an unknown outcome
-    if (invoiceAttempt(id).receipt) return alreadyPaid(id);
-    const state = invoiceState(id, invoice.status);
-    if (state !== "open") return closed(id, state);
-    const markPending = () => setInvoiceAttempt(id, { ...invoiceAttempt(id), pending: { from: payer, validBefore } });
+    if ((await invoiceAttempt(id)).receipt) return await alreadyPaid(id);
+    const state = await invoiceState(id, invoice.status);
+    if (state !== "open") return await closed(id, state);
+    const markPending = async () => setInvoiceAttempt(id, { ...(await invoiceAttempt(id)), pending: { from: payer, validBefore } });
 
     const result = await relayPayInvoice({ relayerUrl: pay.relayerUrl, invoiceId, from: payer, amount: terms.amount, validBefore, salt, signature });
     if (!result.ok) {
-      if (result.unknown) markPending(); // it may settle: the chain decides later
+      if (result.unknown) await markPending(); // it may settle: the chain decides later
       else if (result.refused) {
         // a refusal can mean someone paid or cancelled it meanwhile (InvoiceNotOpen in the relayer's simulation)
         const now = await readInvoice(pay.merchantPay, invoiceId, { tries: READ_TRIES }).catch(logged(`invoice ${id}: chain read after refusal`));
-        if (now && now.status !== "open") return closed(id, now.status);
+        if (now && now.status !== "open") return await closed(id, now.status);
       }
       return fail(result.status, result.message);
     }
@@ -89,12 +102,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       paymentId !== null &&
       Boolean(await invoicePaid({ ...terms, paymentId: BigInt(paymentId), payer, paidBefore: invoice.paid }, { blockNumber }).catch(logged(`invoice ${id}: chain read after relay`)));
     if (!confirmed) {
-      markPending(); // the relayer says it went through: never invite a second payment
+      await markPending(); // the relayer says it went through: never invite a second payment
       return fail(504, UNKNOWN);
     }
-    setInvoiceAttempt(id, { receipt: { paymentId, txHash: result.txHash } });
+    await setInvoiceAttempt(id, { receipt: { paymentId, txHash: result.txHash } });
     return Response.json({ receiptId: paymentId, txHash: result.txHash });
   } finally {
-    releasePayment(lock); // only guards concurrent requests; an unknown outcome is kept as the attempt's `pending`
+    await releasePayment(lock, token); // only guards concurrent requests; an unknown outcome is kept as the attempt's `pending`
   }
 }

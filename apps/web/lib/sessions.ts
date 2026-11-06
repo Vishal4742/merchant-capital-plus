@@ -2,6 +2,7 @@
 // a shop asked to be paid and which payment settled it, so the pay page needs no browser chain reads.
 import { randomBytes, randomUUID } from "node:crypto";
 import type { Address, Hex } from "viem";
+import { query } from "./server/db.ts";
 import type { Currency } from "./server/http.ts";
 import { plainUsdt } from "./usdt.ts";
 
@@ -65,14 +66,41 @@ export interface Session {
   pending?: { from: Address; validBefore: bigint; amount?: bigint };
 }
 
-// ponytail: in-memory store, so sessions vanish on restart and aren't shared between serverless
-// instances. Move to Neon (`app_sessions`) when the Vercel project and DATABASE_URL exist.
-const globalStore = globalThis as unknown as { __mcSessions?: Map<string, Session>; __mcInvoiceAttempts?: Map<string, InvoiceAttempt> };
-const sessions = (globalStore.__mcSessions ??= new Map<string, Session>());
+// Stored in Postgres (db/050_web_sessions.sql), never in this process: on Vercel the checkout page and the API run on
+// different instances, so every read and every lock goes to the database (batch 023).
+const COLUMNS =
+  "id, merchant, merchant_name, amount::text, order_ref, reference, items::text, priced::text, return_url, created_at::text, expires_at::text, payment::text, pending::text";
+type SessionRow = Record<"id" | "merchant" | "merchant_name" | "amount" | "order_ref" | "reference" | "items" | "created_at" | "expires_at", string> &
+  Record<"priced" | "return_url" | "payment" | "pending", string | null>;
+
+/** JSON with every bigint as its decimal string: exact, never a float. */
+const json = (value: unknown) => JSON.stringify(value, (_key, v: unknown) => (typeof v === "bigint" ? v.toString() : v));
+
+function sessionOf(r: SessionRow): Session {
+  const items = (JSON.parse(r.items) as (Omit<LineItem, "price"> & { price: string })[]).map((i) => ({ ...i, price: BigInt(i.price) }));
+  const priced = r.priced === null ? undefined : (JSON.parse(r.priced) as Omit<Priced, "amount"> & { amount: string });
+  const payment = r.payment === null ? undefined : (JSON.parse(r.payment) as Omit<Payment, "amount"> & { amount: string });
+  const pending = r.pending === null ? undefined : (JSON.parse(r.pending) as { from: Address; validBefore: string; amount?: string });
+  return {
+    id: r.id,
+    merchant: r.merchant as Address,
+    merchantName: r.merchant_name,
+    amount: BigInt(r.amount),
+    orderRef: r.order_ref as Hex,
+    reference: r.reference,
+    items,
+    ...(priced && { priced: { ...priced, amount: BigInt(priced.amount) } }),
+    ...(r.return_url !== null && { returnUrl: r.return_url }),
+    createdAt: Number(r.created_at),
+    expiresAt: Number(r.expires_at),
+    ...(payment && { payment: { ...payment, amount: BigInt(payment.amount) } }),
+    ...(pending && { pending: { from: pending.from, validBefore: BigInt(pending.validBefore), ...(pending.amount !== undefined && { amount: BigInt(pending.amount) }) } }),
+  };
+}
 
 /** Every way in (the sessions API, links and pages) passes here, so the returnUrl rule lives here too. Throws on a bad
  *  returnUrl; the API checks first and answers 400. */
-export function createSession(input: Omit<Session, "id" | "orderRef" | "createdAt" | "expiresAt" | "payment" | "pending">, now = Date.now(), ttlMs = SESSION_TTL_MS): Session {
+export async function createSession(input: Omit<Session, "id" | "orderRef" | "createdAt" | "expiresAt" | "payment" | "pending">, now = Date.now(), ttlMs = SESSION_TTL_MS): Promise<Session> {
   const returnUrl = input.returnUrl === undefined ? undefined : webUrl(input.returnUrl);
   if (returnUrl === null) throw new Error(BAD_RETURN_URL);
   const session: Session = {
@@ -83,12 +111,17 @@ export function createSession(input: Omit<Session, "id" | "orderRef" | "createdA
     createdAt: now,
     expiresAt: now + ttlMs,
   };
-  sessions.set(session.id, session);
+  await query(
+    `INSERT INTO app_web_sessions (id, merchant, merchant_name, amount, order_ref, reference, items, priced, return_url, created_at, expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11)`,
+    [session.id, session.merchant, session.merchantName, session.amount.toString(), session.orderRef, session.reference, json(session.items), session.priced ? json(session.priced) : null, returnUrl ?? null, now, session.expiresAt],
+  );
   return session;
 }
 
-export function getSession(id: string): Session | undefined {
-  return sessions.get(id);
+export async function getSession(id: string): Promise<Session | undefined> {
+  const [row] = await query<SessionRow>(`SELECT ${COLUMNS} FROM app_web_sessions WHERE id = $1`, [id]);
+  return row && sessionOf(row);
 }
 
 /** A checkout's currency in API replies (FR-GW-11): the currency the shop asked for, and `priced` for any but USDT. */
@@ -98,62 +131,81 @@ export function currencyFields(session: Session) {
   return { currency: p.currency, priced: { currency: p.currency, amount: plainUsdt(p.amount), rate: p.rate, rateAt: p.rateDate, source: p.source } };
 }
 
-
-/** Paid checkouts for one merchant, newest first (the dashboard's payments table). */
-export function listPayments(merchant: string): { session: Session; payment: Payment }[] {
-  const out: { session: Session; payment: Payment }[] = [];
-  for (const session of sessions.values()) {
-    if (session.payment && session.merchant.toLowerCase() === merchant.toLowerCase()) out.push({ session, payment: session.payment });
-  }
-  return out.sort((a, b) => b.payment.paidAt - a.payment.paidAt);
+/** Paid checkouts for one merchant, newest first (the dashboard's payments table).
+ *  ponytail: every paid checkout of the merchant, unpaged, as before; page it when a merchant has thousands. */
+export async function listPayments(merchant: string): Promise<{ session: Session; payment: Payment }[]> {
+  const rows = await query<SessionRow>(
+    `SELECT ${COLUMNS} FROM app_web_sessions WHERE lower(merchant) = lower($1) AND payment IS NOT NULL ORDER BY (payment->>'paidAt')::bigint DESC`,
+    [merchant],
+  );
+  return rows.map(sessionOf).map((session) => ({ session, payment: session.payment! }));
 }
 
 // One payment in flight per checkout (key: the session id) or invoice (key: "invoice:<id>"): without this, two quick
-// requests with different salts could both settle and charge the customer twice.
-const inFlight = new Set<string>();
+// requests with different salts could both settle and charge the customer twice. A row in app_web_locks, so it holds
+// across instances. LOCK_S outlasts any route: Vercel stops a function at 300 s by default (fluid compute, every plan),
+// so a live attempt's lock never lapses under it, and one left by a crashed instance frees itself after LOCK_S.
+// The lock's expiry is its owner token: a release deletes only its own row, so an attempt that outlived a lapsed lock
+// can't free the lock a later attempt took (security review 026 F1). Raise LOCK_S with maxDuration if it ever exceeds 300 s.
+const LOCK_S = 300;
 
 /** The in-flight key of an invoice, shared by its pay route and its page. */
 export const invoiceLock = (id: string) => `invoice:${id}`;
 
-/** True if this caller may relay a payment for this checkout or invoice now; false if one is already in flight. */
-export function claimPayment(id: string): boolean {
-  if (inFlight.has(id)) return false;
-  inFlight.add(id);
-  return true;
+/** This caller's lock token if it may relay a payment for this checkout or invoice now; null if one is already in
+ *  flight. One statement, so two instances racing for a free or lapsed lock: exactly one gets a row back. */
+export async function claimPayment(key: string): Promise<string | null> {
+  const rows = await query<{ token: string }>(
+    `INSERT INTO app_web_locks (key, until) VALUES ($1, now() + interval '${LOCK_S} seconds')
+     ON CONFLICT (key) DO UPDATE SET until = EXCLUDED.until WHERE app_web_locks.until < now()
+     RETURNING until::text AS token`,
+    [key],
+  );
+  return rows[0]?.token ?? null;
 }
 
-export function releasePayment(id: string): void {
-  inFlight.delete(id);
+/** Called in a `finally`: a failed delete is logged, never thrown over the route's answer, and the lock lapses on its own. */
+export async function releasePayment(key: string, token: string): Promise<void> {
+  await query("DELETE FROM app_web_locks WHERE key = $1 AND until = $2::timestamptz", [key, token]).catch((error: unknown) =>
+    console.error(`lock ${key}: not released (it lapses in ${LOCK_S} s): ${error instanceof Error ? error.name : "error"}`),
+  );
 }
 
-export function isInFlight(id: string): boolean {
-  return inFlight.has(id);
+export async function isInFlight(key: string): Promise<boolean> {
+  return (await query("SELECT 1 FROM app_web_locks WHERE key = $1 AND until > now()", [key])).length === 1;
 }
 
-function update(id: string, change: (session: Session) => Session): Session {
-  const session = sessions.get(id);
+const pendingJson = (pending: NonNullable<Session["pending"]>) => json({ from: pending.from, validBefore: pending.validBefore, ...(pending.amount !== undefined && { amount: pending.amount }) });
+
+async function changed(id: string, rows: unknown[]): Promise<void> {
+  if (rows.length === 0 && !(await getSession(id))) throw new Error("No such checkout");
+}
+
+/** First write wins: a later record (e.g. a reconcile without a txHash) never replaces a relayed payment. Returns the
+ *  checkout as stored, so its payment is the first one. */
+export async function recordPayment(id: string, payment: Payment): Promise<Session> {
+  await query("UPDATE app_web_sessions SET payment = $2::jsonb, pending = NULL WHERE id = $1 AND payment IS NULL", [id, json(payment)]);
+  const session = await getSession(id);
   if (!session) throw new Error("No such checkout");
-  const next = change(session);
-  sessions.set(id, next);
-  return next;
+  return session;
 }
 
-/** First write wins: a later record (e.g. a reconcile without a txHash) never replaces a relayed payment. */
-export function recordPayment(id: string, payment: Payment): Session {
-  return update(id, (session) => (session.payment ? session : { ...session, payment, pending: undefined }));
+export async function markPending(id: string, pending: NonNullable<Session["pending"]>): Promise<void> {
+  await changed(id, await query("UPDATE app_web_sessions SET pending = $2::jsonb WHERE id = $1 RETURNING id", [id, pendingJson(pending)]));
 }
 
-export function markPending(id: string, pending: NonNullable<Session["pending"]>): Session {
-  return update(id, (session) => ({ ...session, pending }));
+/** Clears `expected` only if it is still the pending attempt, compared by value in the same statement: a newer one that
+ *  arrived meanwhile stays. (A newer attempt equal in every field is the same chain question, so it is decided too.) */
+export async function clearPending(id: string, expected: Session["pending"]): Promise<void> {
+  if (!expected) return;
+  await changed(id, await query("UPDATE app_web_sessions SET pending = NULL WHERE id = $1 AND pending = $2::jsonb RETURNING id", [id, pendingJson(expected)]));
 }
 
-/** Clears `expected` only if it is still the pending attempt: a newer one that arrived meanwhile stays. */
-export function clearPending(id: string, expected: Session["pending"]): Session {
-  return update(id, (session) => (session.pending === expected ? { ...session, pending: undefined } : session));
-}
+/** The same attempt, by value: what clearPending compares (reads return fresh objects, so never by reference). */
+export const samePending = (a: Session["pending"], b: Session["pending"]) => (a && b ? pendingJson(a) === pendingJson(b) : a === b);
 
 /** What our server remembers about paying one invoice (FR-PAY-3), by invoice id. The invoice itself lives on chain;
- *  this only decides what its pay page shows. Losing it on restart is safe: MerchantPay never takes more than is owed
+ *  this only decides what its pay page shows. Losing it is safe: MerchantPay never takes more than is owed
  *  (WrongAmount) and refuses a paid invoice (InvoiceNotOpen); a lost `pending` only drops a "Don't pay again". */
 export interface InvoiceAttempt {
   /** An attempt whose outcome is unknown: the chain decides (lib/settle.ts invoiceState). */
@@ -161,10 +213,22 @@ export interface InvoiceAttempt {
   receipt?: { paymentId: string; txHash: Hex | null };
 }
 
-const invoiceAttempts = (globalStore.__mcInvoiceAttempts ??= new Map<string, InvoiceAttempt>());
+export async function invoiceAttempt(id: string): Promise<InvoiceAttempt> {
+  const [row] = await query<{ attempt: string }>("SELECT attempt::text FROM app_web_invoice_attempts WHERE id = $1", [id]);
+  if (!row) return {};
+  const { pending, receipt } = JSON.parse(row.attempt) as { pending?: { from: Address; validBefore: string }; receipt?: InvoiceAttempt["receipt"] };
+  return { ...(pending && { pending: { from: pending.from, validBefore: BigInt(pending.validBefore) } }), ...(receipt && { receipt }) };
+}
 
-export const invoiceAttempt = (id: string): InvoiceAttempt => invoiceAttempts.get(id) ?? {};
+export async function setInvoiceAttempt(id: string, attempt: InvoiceAttempt): Promise<void> {
+  const stored = { ...(attempt.pending && { pending: { from: attempt.pending.from, validBefore: attempt.pending.validBefore } }), ...(attempt.receipt && { receipt: attempt.receipt }) };
+  await query("INSERT INTO app_web_invoice_attempts (id, attempt) VALUES ($1, $2::jsonb) ON CONFLICT (id) DO UPDATE SET attempt = EXCLUDED.attempt", [id, json(stored)]);
+}
 
-export function setInvoiceAttempt(id: string, attempt: InvoiceAttempt): void {
-  invoiceAttempts.set(id, attempt);
+/** Drops an invoice's `expected` pending attempt only if it is still the one stored (compare and clear, one statement). */
+export async function clearInvoicePending(id: string, expected: NonNullable<InvoiceAttempt["pending"]>): Promise<void> {
+  await query("UPDATE app_web_invoice_attempts SET attempt = attempt - 'pending' WHERE id = $1 AND attempt->'pending' = $2::jsonb", [
+    id,
+    json({ from: expected.from, validBefore: expected.validBefore }),
+  ]);
 }

@@ -2,8 +2,9 @@
 // (value = amount + relayFee, nonce over the credited amount only), partial payments are allowed, and an invoice is Paid
 // only when fully paid. POST /api/v1/invoices/:id/pay keeps the checkout's money rules. The relayer doesn't relay
 // payInvoice yet, so it is faked via globalThis.fetch. Run from apps/web: npm test
-import { test, beforeEach, mock } from "node:test";
+import { test, before, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
+import { setupDb, resetDb } from "./gw-helpers.mjs";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { toHex, verifyTypedData } from "viem";
 
@@ -50,7 +51,7 @@ mock.module("../lib/onchain.ts", {
 
 const { POST: pay } = await import("../app/api/v1/invoices/[id]/pay/route.ts");
 const { invoiceAuthorization, invoiceNonce, KIND_INVOICE } = await import("../lib/pay.ts");
-const { invoiceAttempt, invoiceLock, claimPayment, releasePayment } = await import("../lib/sessions.ts");
+const { invoiceAttempt, invoiceLock, claimPayment, releasePayment, setInvoiceAttempt } = await import("../lib/sessions.ts");
 const { isShopInvoice, pageState } = await import("../lib/settle.ts");
 
 const customer = privateKeyToAccount(generatePrivateKey());
@@ -70,7 +71,9 @@ globalThis.fetch = async (url, init) => {
 
 let nextId = 7;
 let id;
-beforeEach(() => {
+before(setupDb);
+beforeEach(async () => {
+  await resetDb();
   id = String(nextId++); // the server remembers attempts per invoice id: a fresh invoice per test
   invoice = { merchant: MERCHANT, dueDate: 1_900_000_000n, status: "open", amount: 25_000_000n, paid: 0n };
   fee = FEE;
@@ -155,7 +158,7 @@ test("a correct approval is relayed once as payInvoice (credited amount, fee on 
   const [rule, opts] = confirmCalls[0];
   assert.deepEqual(rule, { merchantPay: MERCHANT_PAY, invoiceId: BigInt(id), paymentId: 41n, amount: 25_000_000n, fee: FEE, payer: customer.address, paidBefore: 0n });
   assert.equal(opts.blockNumber, 5n, "read at the relay's block");
-  assert.deepEqual(invoiceAttempt(id).receipt, { paymentId: "41", txHash: `0x${"ab".repeat(32)}` });
+  assert.deepEqual((await invoiceAttempt(id)).receipt, { paymentId: "41", txHash: `0x${"ab".repeat(32)}` });
   assert.equal(invoice.status, "paid", "fully paid");
   const again = await callPay(await signed({ amount: 25_000_000n }));
   assert.equal(again.status, 409);
@@ -239,7 +242,8 @@ test("an unknown outcome (timeout) is pending: 'Don't pay again' until its appro
   assert.equal(pending.status, 409);
   assert.match((await pending.json()).error, /Don't pay again/);
   assert.equal(relayCalls.length, 1);
-  invoiceAttempt(id).pending.validBefore = 0n; // past its validBefore: USDT can never settle it
+  const attempt = await invoiceAttempt(id);
+  await setInvoiceAttempt(id, { ...attempt, pending: { ...attempt.pending, validBefore: 0n } }); // past its validBefore: USDT can never settle it
   relayReply = async () => OK();
   assert.equal((await callPay(await signed())).status, 200);
   assert.equal(relayCalls.length, 2);
@@ -268,7 +272,7 @@ test("a relayer 200 the chain doesn't confirm (or a failed read, or no payment i
     const res = await callPay(await signed());
     assert.equal(res.status, 504);
     assert.match((await res.json()).error, /Don't pay again/);
-    assert.equal(invoiceAttempt(id).receipt, undefined);
+    assert.equal((await invoiceAttempt(id)).receipt, undefined);
     invoice = { ...invoice, status: "open", paid: 0n }; // still open on chain: the pending attempt holds it
     assert.equal((await callPay(await signed())).status, 409);
   }
@@ -310,7 +314,7 @@ test("a guest holding less than amount + fee gets the demo message from our serv
   assert.equal(error, "This is a demo: paying needs test USDT, and this browser doesn't have enough yet. Nothing was charged.");
   assert.doesNotMatch(error, /wallet/);
   assert.equal(relayCalls.length, 0);
-  assert.equal(invoiceAttempt(id).pending, undefined);
+  assert.equal((await invoiceAttempt(id)).pending, undefined);
   balance = 25_100_000n; // exactly enough: no lock was left behind
   assert.equal((await callPay(await signed())).status, 200);
 });
@@ -343,22 +347,24 @@ test("only the shop's own invoices are payable here: another merchant's is 404 b
   assert.equal(relayCalls.length, 0);
 });
 
-test("isShopInvoice and pageState: what /pay shows (the shop's invoices only; in flight reads as pending)", () => {
+test("isShopInvoice and pageState: what /pay shows (the shop's invoices only; in flight reads as pending)", async () => {
   const ours = { id: 7n, merchant: MERCHANT, dueDate: 1n, status: "open", amount: 1n, paid: 0n };
   assert.equal(isShopInvoice(ours, MERCHANT), true);
   assert.equal(isShopInvoice(ours, MERCHANT.toUpperCase().replace("0X", "0x")), true, "case-insensitive");
   assert.equal(isShopInvoice({ ...ours, merchant: OTHER_MERCHANT }, MERCHANT), false);
   assert.equal(isShopInvoice(ours, undefined), false);
   assert.equal(invoiceLock("7"), "invoice:7", "the page and the route use the same lock key");
-  assert.equal(pageState("open", invoiceLock("77")), "open");
-  assert.ok(claimPayment(invoiceLock("77")));
+  assert.equal(await pageState("open", invoiceLock("77")), "open");
+  const held = await claimPayment(invoiceLock("77"));
+  assert.ok(held);
   try {
-    assert.equal(pageState("open", invoiceLock("77")), "pending");
-    assert.equal(pageState("paid", invoiceLock("77")), "paid");
-    assert.equal(pageState("open", "77"), "open", "the invoice lock isn't the checkout lock");
+    assert.equal(await pageState("open", invoiceLock("77")), "pending");
+    assert.equal(await pageState("paid", invoiceLock("77")), "paid");
+    assert.equal(await pageState("open", "77"), "open", "the invoice lock isn't the checkout lock");
   } finally {
-    releasePayment(invoiceLock("77"));
+    await releasePayment(invoiceLock("77"), held);
   }
+  assert.equal(await pageState("open", invoiceLock("77")), "open", "released");
 });
 
 test("a request that read 'open' before another paid it, and gets the lock after, answers paid and never relays again (S5)", async () => {
@@ -379,7 +385,7 @@ test("today's relayer (400 'supports pull') sent nothing: 400, nothing charged, 
   const res = await callPay(await signed());
   assert.equal(res.status, 400);
   assert.match((await res.json()).error, /Nothing was charged/);
-  assert.equal(invoiceAttempt(id).pending, undefined);
+  assert.equal((await invoiceAttempt(id)).pending, undefined);
 });
 
 test("without MerchantPay or a relayer configured, nothing is read or relayed", async () => {

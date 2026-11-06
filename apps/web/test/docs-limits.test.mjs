@@ -61,7 +61,7 @@ for (const limit of RATE_LIMITS) {
   const names = limit.endpoints.map((e) => `${e.method} ${e.path}`);
   test(`rate limit: ${names.join(" + ")} lets ${limit.limit} through per ${limit.per}, then 429 until the window ends`, async (t) => {
     t.mock.timers.enable({ apis: ["Date"], now: Date.now() }); // the clock stands still until we tick it
-    const session = createSession({ merchant: MERCHANT, merchantName: "Bandra Beans", amount: 25_000_000n, reference: "docs", items: [] });
+    const session = await createSession({ merchant: MERCHANT, merchantName: "Bandra Beans", amount: 25_000_000n, reference: "docs", items: [] });
     await recordCheckout(session.id, "link", "lnk_docs", MERCHANT, 25_000_000n); // the voucher route works on link checkouts
     // spread over every endpoint that shares the limit, so "together" is checked too
     for (let i = 0; i < limit.limit; i++) {

@@ -58,7 +58,7 @@ function refundsOf(receipt: RefundReceipt, merchantPay: Address, paymentId: bigi
 /** Fires payment.refunded for each refund of the merchant's payment `paymentId` in tx `txHash`, as the chain records it. */
 export async function syncRefund(merchant: Address, paymentId: bigint, txHash: Hex, { readReceipt = chainReceipt }: { readReceipt?: ReadReceipt } = {}) {
   const merchantPay = merchantPayAddress(); // 503 until the contracts are configured
-  const paid = listPayments(merchant).find(({ payment }) => payment.paymentId === paymentId.toString());
+  const paid = (await listPayments(merchant)).find(({ payment }) => payment.paymentId === paymentId.toString());
   if (!paid) throw new HttpError(404, "No such payment.");
   const receipt = await readReceipt(txHash).catch((error: unknown) => {
     console.error("refund sync: receipt read failed:", error instanceof Error ? error.name : typeof error); // never the message: it can hold the RPC URL

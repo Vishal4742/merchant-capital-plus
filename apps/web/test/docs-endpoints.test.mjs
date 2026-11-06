@@ -6,7 +6,7 @@
 // Run from apps/web: npm test
 import { test, before, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
-import { setupDb, resetDb, req, params, MERCHANT } from "./gw-helpers.mjs";
+import { setupDb, resetDb, req, params, MERCHANT, expireSession } from "./gw-helpers.mjs";
 
 process.env.MERCHANT_ADDRESS = MERCHANT;
 process.env.MERCHANT_NAME = "Bandra Beans";
@@ -84,7 +84,7 @@ async function createExample(key = `docs-${++keys}`) {
   return { res, json: await res.json() };
 }
 const getCheckout = async (id) => (await routes["GET /api/v1/sessions/{id}"](req("GET", `/api/v1/sessions/${id}`, { headers: shopKey }), params({ id }))).json();
-const markPaid = (id) => recordPayment(id, { txHash: PAYMENT.txHash, blockNumber: "9", paymentId: "42", from: MERCHANT, paidAt: Date.now(), amount: getSession(id).amount });
+const markPaid = async (id) => recordPayment(id, { txHash: PAYMENT.txHash, blockNumber: "9", paymentId: "42", from: MERCHANT, paidAt: Date.now(), amount: (await getSession(id)).amount });
 
 test("POST /api/v1/sessions: the documented example gets the documented status and exactly the documented keys", async () => {
   const { detail } = detailOf("POST /api/v1/sessions");
@@ -100,7 +100,7 @@ test("POST /api/v1/sessions: the documented example gets the documented status a
 test("GET /api/v1/sessions/{id}: a paid checkout's reply has exactly the documented keys", async () => {
   const { detail } = detailOf("GET /api/v1/sessions/{id}");
   const { json: created } = await createExample();
-  markPaid(created.id);
+  await markPaid(created.id);
   const json = await getCheckout(created.id);
   assert.deepEqual(shape(json), shape(detail.response));
   for (const key of ["status", "amount", "currency", "reference", "paymentId", "refunded"]) assert.equal(json[key], detail.response[key], key);
@@ -109,20 +109,20 @@ test("GET /api/v1/sessions/{id}: a paid checkout's reply has exactly the documen
 test("GET /api/v1/payments: the documented query gets exactly the documented keys", async () => {
   const { detail } = detailOf("GET /api/v1/payments");
   const { json: created } = await createExample();
-  markPaid(created.id);
+  await markPaid(created.id);
   const res = await routes["GET /api/v1/payments"](req("GET", `/api/v1/payments${detail.query}`, { headers: shopKey }));
   assert.equal(res.status, detail.status);
   const json = await res.json();
   assert.deepEqual(shape(json), shape(detail.response));
   // checkouts live in this process's memory, so earlier tests' paid checkouts share payment 42: it names one of them
-  assert.equal(getSession(json.data[0].sessionId)?.payment?.paymentId, "42", "a checkout's payment names its checkout");
+  assert.equal((await getSession(json.data[0].sessionId))?.payment?.paymentId, "42", "a checkout's payment names its checkout");
 });
 
 test("scenario paid: the checkout reads paid, and payment.succeeded carries the documented data fields", async () => {
   assert.ok(scenario("paid"));
   await createWebhook(MERCHANT, "https://93.184.215.10/hook");
   const { json: created } = await createExample();
-  const session = markPaid(created.id);
+  const session = await markPaid(created.id);
   await onSessionPaid(session, session.amount);
   assert.equal((await getCheckout(created.id)).status, "paid");
   assert.equal(delivered.length, 1, "one delivery");
@@ -131,16 +131,21 @@ test("scenario paid: the checkout reads paid, and payment.succeeded carries the 
   assert.deepEqual(Object.keys(event.data), EVENT_FIELDS.flatMap(([names]) => names.split(", ")));
 });
 
-test("scenario expired: after the documented time the checkout reads expired, and paying it answers the documented 410", async (t) => {
+// Batch 023: checkouts are in the database, so the clock isn't mocked here: PGlite run under a mocked Date keeps the test
+// process alive for the whole mocked span (30 min). The documented times are read from the stored checkouts instead.
+test("scenario expired: after the documented time the checkout reads expired, and paying it answers the documented 410", async () => {
   const { status, messages } = scenario("expired");
-  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
   const usdt = await routes["POST /api/v1/sessions"](req("POST", "/api/v1/sessions", { body: { amount: "25.00" }, headers: shopKey }));
   const { json: eur } = await createExample(); // priced in EUR: ends with its 10-minute quote
   const { id } = await usdt.json();
-  t.mock.timers.tick(10 * 60_000 + 1);
+  const lasts = async (sessionId) => ((s) => s.expiresAt - s.createdAt)(await getSession(sessionId));
+  assert.equal(await lasts(eur.id), 10 * 60_000, "a EUR checkout ends with its 10-minute quote");
+  assert.equal(await lasts(id), 30 * 60_000, "a USDT checkout lasts 30 minutes");
+  assert.equal((await getCheckout(id)).status, "open");
+  await expireSession(eur.id);
   assert.equal((await getCheckout(eur.id)).status, "expired");
-  assert.equal((await getCheckout(id)).status, "open", "a USDT checkout lasts 30 minutes");
-  t.mock.timers.tick(20 * 60_000);
+  assert.equal((await getCheckout(id)).status, "open", "only the one past its time");
+  await expireSession(id);
   assert.equal((await getCheckout(id)).status, "expired");
   const res = await pay(req("POST", `/api/v1/sessions/${id}/pay`, { body: {} }), params({ id }));
   assert.equal(res.status, status);
@@ -151,17 +156,18 @@ test("scenario paid twice: 409 while the first payment is going through, and 409
   const { status, messages } = scenario("paid-twice");
   const { json: created } = await createExample();
   const id = created.id;
-  await recordCheckout(id, "link", "lnk_docs", MERCHANT, getSession(id).amount); // a link checkout locks before checking the signature
+  await recordCheckout(id, "link", "lnk_docs", MERCHANT, (await getSession(id)).amount); // a link checkout locks before checking the signature
   const approval = { from: MERCHANT, salt: `0x${"11".repeat(32)}`, signature: `0x${"22".repeat(65)}`, validBefore: String(Math.floor(Date.now() / 1000) + 300) };
-  assert.ok(claimPayment(id), "the first payment is in flight");
+  const held = await claimPayment(id);
+  assert.ok(held, "the first payment is in flight");
   try {
     const during = await pay(req("POST", `/api/v1/sessions/${id}/pay`, { body: approval }), params({ id }));
     assert.equal(during.status, status);
     assert.equal((await during.json()).error, messages[0]);
   } finally {
-    releasePayment(id);
+    await releasePayment(id, held);
   }
-  markPaid(id);
+  await markPaid(id);
   const after = await pay(req("POST", `/api/v1/sessions/${id}/pay`, { body: approval }), params({ id }));
   assert.equal(after.status, status);
   const body = await after.json();

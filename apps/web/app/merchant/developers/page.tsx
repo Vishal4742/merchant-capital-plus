@@ -6,13 +6,14 @@ import { Suspense } from "react";
 import { Shell } from "@/components/dashboard/Shell";
 import { ApiKeys, type KeyRow } from "@/components/gateway/ApiKeys";
 import { Account, EditorialHeader, Problem, SignedOut } from "@/components/gateway/Frame";
+import { Setup } from "@/components/gateway/Setup";
 import { Webhooks, type WebhookRow } from "@/components/gateway/Webhooks";
 import { authSecret } from "@/lib/auth";
-import { keyOf, webhookOf } from "@/lib/gateway-dev";
+import { keyOf, setupSteps, webhookOf } from "@/lib/gateway-dev";
 import { readFailure } from "@/lib/gateway-server";
 import { currentMerchant } from "@/lib/merchant-session";
 import { keyJson, listKeys } from "@/lib/server/keys";
-import { listWebhooks } from "@/lib/server/webhooks";
+import { deliveredEvents, listWebhooks } from "@/lib/server/webhooks";
 
 const ist = (iso: string) => new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata" });
 /** A retry is at most 30 minutes away: the time is enough. */
@@ -44,16 +45,20 @@ type Read<T> = { rows: T[] } | { error: string };
 /** One plain sentence for a failed read (logged by the error's name only, NFR-8). */
 const readError = (what: string) => (error: unknown) => ({ error: readFailure(what, error) });
 
-async function read(merchant: `0x${string}`): Promise<{ keys: Read<KeyRow>; webhooks: Read<WebhookRow> }> {
+/** The endpoints, and which events have reached one (for the setup checklist), read together. */
+type HooksRead = { rows: WebhookRow[]; delivered: Awaited<ReturnType<typeof deliveredEvents>> } | { error: string };
+
+async function read(merchant: `0x${string}`): Promise<{ keys: Read<KeyRow>; webhooks: HooksRead }> {
   const keys = listKeys(merchant).then((list) => list.map(keyJson));
-  const hooks = listWebhooks(merchant);
+  const hooks = Promise.all([listWebhooks(merchant), deliveredEvents(merchant)]);
   // both reads run at once, each with its own error, so one failing still shows the other
   const keyRows = keys
     .then((list): Read<KeyRow> => ({ rows: list.map(keyOf).map((k) => ({ ...k, createdText: ist(k.created_at), lastUsedText: k.last_used_at && ist(k.last_used_at) })) }))
     .catch(readError("API keys"));
   const hookRows = hooks
     .then(
-      (list): Read<WebhookRow> => ({
+      ([list, delivered]): HooksRead => ({
+        delivered,
         rows: list.map(webhookOf).map((h) => ({
           ...h,
           createdText: ist(h.created_at),
@@ -74,6 +79,8 @@ async function Developers() {
     <Shell active="keys" privateReads={false} account={<Account merchant={merchant} />}>
       {header}
       <div className="grid gap-10 px-4 py-6 md:px-8 md:py-8">
+        {/* the checklist needs both reads; when one fails, its notice below says so */}
+        {"rows" in keys && "rows" in webhooks && <Setup steps={setupSteps({ keys: keys.rows, hooks: webhooks.rows, delivered: webhooks.delivered })} />}
         {"error" in keys ? <Problem>{keys.error}</Problem> : <ApiKeys keys={keys.rows} />}
         {"error" in webhooks ? <Problem>{webhooks.error}</Problem> : <Webhooks hooks={webhooks.rows} />}
       </div>

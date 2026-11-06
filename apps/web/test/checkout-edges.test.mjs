@@ -1,8 +1,9 @@
 // Tester checks (batch 004 round 1) for spec criteria the builder's tests leave open: the create limits, the pay
 // route's input and window checks, 404/410, the pending margin, a failed chain read never reopening a checkout,
 // polling an expired checkout, cookie flags and per-wallet payments. Run from apps/web: npm test
-import { test, beforeEach, mock } from "node:test";
+import { test, before, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
+import { setupDb, resetDb, expireSession, agePending } from "./gw-helpers.mjs";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { toHex } from "viem";
 
@@ -36,7 +37,9 @@ globalThis.fetch = async (url) => {
 };
 const ok = () => Response.json({ txHash: `0x${"ab".repeat(32)}`, blockNumber: "7" });
 
-beforeEach(() => {
+before(setupDb);
+beforeEach(async () => {
+  await resetDb();
   relayCalls.length = 0;
   settled = async () => null;
   relayReply = async () => ok();
@@ -51,7 +54,7 @@ const create = async (body) => {
 };
 const now = () => Math.floor(Date.now() / 1000);
 async function signed(id, { validBefore = BigInt(now() + 600), signer = customer, from = customer.address, orderRef } = {}) {
-  const s = getSession(id);
+  const s = await getSession(id);
   const salt = toHex(crypto.getRandomValues(new Uint8Array(32)));
   const sale = { merchantPay: MERCHANT_PAY, merchant: s.merchant, orderRef: orderRef ?? s.orderRef, amount: s.amount };
   const signature = await signer.signTypedData(saleAuthorization(sale, from, salt, validBefore));
@@ -91,7 +94,7 @@ test("pay: an unknown checkout is 404 and an expired one 410, before anything is
   assert.equal((await callPay("00000000-0000-0000-0000-000000000000", {})).status, 404);
   const { data } = await create({ amount: "25.00" });
   const body = await signed(data.id);
-  getSession(data.id).expiresAt = Date.now() - 1;
+  await expireSession(data.id);
   assert.equal((await callPay(data.id, body)).status, 410);
   assert.equal(relayCalls.length, 0);
 });
@@ -158,7 +161,7 @@ test("pay: a relayer 500 (any 5xx) is an unknown outcome: pending, never 'Nothin
   const res = await callPay(data.id, await signed(data.id));
   assert.equal(res.status, 504);
   assert.doesNotMatch((await res.json()).error, /Nothing was charged/);
-  assert.ok(getSession(data.id).pending, "pending recorded");
+  assert.ok((await getSession(data.id)).pending, "pending recorded");
 });
 
 test("pay: ENOTFOUND and EAI_AGAIN never reached the relayer: unlock with 'Nothing was charged'", async () => {
@@ -170,7 +173,7 @@ test("pay: ENOTFOUND and EAI_AGAIN never reached the relayer: unlock with 'Nothi
     const res = await callPay(data.id, await signed(data.id));
     assert.equal(res.status, 503, code);
     assert.match((await res.json()).error, /Nothing was charged/);
-    assert.equal(getSession(data.id).pending, undefined, code);
+    assert.equal((await getSession(data.id)).pending, undefined, code);
   }
 });
 
@@ -178,9 +181,9 @@ test("pending: still pending inside the 60 s clock margin after validBefore, ope
   const { data } = await create({ amount: "25.00" });
   relayReply = timeout;
   assert.equal((await callPay(data.id, await signed(data.id))).status, 504);
-  getSession(data.id).pending.validBefore = BigInt(now() - 30);
+  await agePending(data.id, BigInt(now() - 30));
   assert.equal((await callPay(data.id, await signed(data.id))).status, 409, "30 s past validBefore: USDT might still settle on a skewed chain clock");
-  getSession(data.id).pending.validBefore = BigInt(now() - 61);
+  await agePending(data.id, BigInt(now() - 61));
   let relayed = false;
   relayReply = async () => ((relayed = true), ok());
   settled = async () => (relayed ? "4" : null); // not on chain until the new attempt is relayed
@@ -192,7 +195,7 @@ test("pending: a failed chain read never reopens the checkout, even long past va
   const { data } = await create({ amount: "25.00" });
   relayReply = timeout;
   await callPay(data.id, await signed(data.id));
-  getSession(data.id).pending.validBefore = 0n;
+  await agePending(data.id);
   settled = async () => {
     throw new Error("rpc down");
   };
@@ -205,20 +208,20 @@ test("pending: a failed chain read never reopens the checkout, even long past va
 
 test("poll: an open checkout past its expiry reads 'expired'; a paid one stays 'paid'", async () => {
   const open = await create({ amount: "25.00" });
-  getSession(open.data.id).expiresAt = Date.now() - 1;
+  await expireSession(open.data.id);
   assert.equal((await (await poll(open.data.id)).json()).status, "expired");
   const paid = await create({ amount: "25.00" });
   settled = async () => "2";
   assert.equal((await callPay(paid.data.id, await signed(paid.data.id))).status, 200);
-  getSession(paid.data.id).expiresAt = Date.now() - 1;
+  await expireSession(paid.data.id);
   assert.equal((await (await poll(paid.data.id)).json()).status, "paid");
 });
 
 test("dashboard data: each wallet lists only payments made to its own address", async () => {
   const { data } = await create({ amount: "25.00" });
-  recordPayment(data.id, { txHash: null, blockNumber: null, paymentId: "77", from: customer.address, paidAt: Date.now() });
-  assert.ok(listPayments(process.env.MERCHANT_ADDRESS.toUpperCase().replace("0X", "0x")).some((p) => p.session.id === data.id), "the shop's wallet, any case");
-  assert.deepEqual(listPayments("0x9999999999999999999999999999999999999999"), []);
+  await recordPayment(data.id, { txHash: null, blockNumber: null, paymentId: "77", from: customer.address, paidAt: Date.now(), amount: 25_000_000n });
+  assert.ok((await listPayments(process.env.MERCHANT_ADDRESS.toUpperCase().replace("0X", "0x"))).some((p) => p.session.id === data.id), "the shop's wallet, any case");
+  assert.deepEqual(await listPayments("0x9999999999999999999999999999999999999999"), []);
 });
 
 test("cookies: nonce 5 min and session 8 h, HttpOnly, SameSite=Lax, Secure only on https; logout clears the session", async () => {
@@ -249,9 +252,8 @@ test("pay: an expired checkout whose pending attempt is dead (chain: not paid) a
   const { data } = await create({ amount: "25.00", reference: "BB-X1" });
   relayReply = timeout;
   assert.equal((await callPay(data.id, await signed(data.id))).status, 504);
-  const session = getSession(data.id);
-  session.pending = { ...session.pending, validBefore: BigInt(now() - 120) }; // past validBefore + 60 s
-  session.expiresAt = Date.now() - 1;
+  await agePending(data.id, BigInt(now() - 120)); // past validBefore + 60 s
+  await expireSession(data.id);
   relayReply = async () => ok();
   const res = await callPay(data.id, await signed(data.id));
   assert.equal(res.status, 410);
@@ -264,7 +266,7 @@ test("pay: a relayer 200 with a malformed txHash is an unknown outcome, never a 
   relayReply = async () => Response.json({ txHash: "0xnothex", blockNumber: "7" });
   const res = await callPay(data.id, await signed(data.id));
   assert.equal(res.status, 504);
-  assert.equal(getSession(data.id).payment, undefined);
+  assert.equal((await getSession(data.id)).payment, undefined);
 });
 
 // Batch 005: security review 004 R2 F1, and code review 004 R2 F5 (guards no test pinned yet).
@@ -273,8 +275,8 @@ test("pay: a payment still in flight when the checkout expires answers 409 (conf
   let release;
   relayReply = () => new Promise((resolve) => (release = () => resolve(ok())));
   const paying = callPay(data.id, await signed(data.id));
-  await new Promise((r) => setTimeout(r, 20));
-  getSession(data.id).expiresAt = Date.now() - 1;
+  while (!release) await new Promise((r) => setTimeout(r, 5)); // the relay was called: the lock is held
+  await expireSession(data.id);
   const second = await callPay(data.id, await signed(data.id));
   assert.equal(second.status, 409);
   assert.doesNotMatch((await second.json()).error, /new one/);

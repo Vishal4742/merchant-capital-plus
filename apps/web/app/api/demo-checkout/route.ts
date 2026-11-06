@@ -23,15 +23,21 @@ export async function POST(request: Request) {
   const config = merchantConfig();
   if (!config) return to("/merchant"); // the dashboard explains what isn't set up
   orderNumber += 1;
-  const session = createSession({
-    merchant: config.merchant,
-    merchantName: config.merchantName,
-    amount: 25_000_000n,
-    reference: `A-${orderNumber}`,
-    items: [
-      { name: "Cold brew", qty: 2, price: 10_000_000n },
-      { name: "Banana bread", qty: 1, price: 5_000_000n },
-    ],
-  });
-  return to(`/checkout/${session.id}`);
+  try {
+    const session = await createSession({
+      merchant: config.merchant,
+      merchantName: config.merchantName,
+      amount: 25_000_000n,
+      reference: `A-${orderNumber}`,
+      items: [
+        { name: "Cold brew", qty: 2, price: 10_000_000n },
+        { name: "Banana bread", qty: 1, price: 5_000_000n },
+      ],
+    });
+    return to(`/checkout/${session.id}`);
+  } catch (error) {
+    // the checkout store is the database (batch 023): no DATABASE_URL, or it can't be reached
+    console.error(`demo checkout: not created: ${error instanceof Error ? error.name : "error"}`);
+    return new Response("We can't open a test checkout right now. Nothing was charged. Try again in a minute.", { status: 503 });
+  }
 }

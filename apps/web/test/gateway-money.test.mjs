@@ -71,6 +71,32 @@ test("creates and deactivates a voucher with the right calls", async () => {
   assert.equal(calls[1].init.method, "POST");
 });
 
+test("publishVoucher: POSTs the encoded id, waits for an Arkiv write, and returns the voucher with arkiv_error", async () => {
+  const off = { ...VOUCHER, arkiv_entity_key: null };
+  const { client, calls } = fake(() => json({ ...off, arkiv_status: "not_on_arkiv", arkiv_tx_hash: null, arkiv_error: "Arkiv refused or timed out: busy" }));
+  const published = await client.publishVoucher("vch_a/b");
+  assert.equal(calls[0].url, "/api/v1/vouchers/vch_a%2Fb/publish");
+  assert.equal(calls[0].init.method, "POST");
+  assert.deepEqual(published, { voucher: off, arkivError: "Arkiv refused or timed out: busy" });
+  const on = await fake(() => json({ ...VOUCHER, arkiv_status: "on_arkiv", arkiv_tx_hash: null, arkiv_error: null })).client.publishVoucher("vch_FLAT5");
+  assert.deepEqual(on, { voucher: VOUCHER, arkivError: null });
+  assert.equal((await refused(fake(() => json({ ...off, arkiv_error: 7 })).client.publishVoucher("vch_a"))).status, 502, "a malformed reply is refused");
+});
+
+test("publishVoucher: waits longer than the Arkiv SDK's 180 s receipt wait; the other calls keep 10 s", async () => {
+  const seen = [];
+  const original = AbortSignal.timeout;
+  AbortSignal.timeout = (ms) => (seen.push(ms), original.call(AbortSignal, ms));
+  try {
+    const { client } = fake((url) => (url.endsWith("/publish") ? json({ ...VOUCHER, arkiv_error: null }) : json(VOUCHER, 201)));
+    await client.createVoucher(VOUCHER_BODY);
+    await client.publishVoucher("vch_FLAT5");
+  } finally {
+    AbortSignal.timeout = original;
+  }
+  assert.deepEqual(seen, [10_000, 200_000]);
+});
+
 test("a 404 page says the screen isn't on this server yet; 401 says sign in; the gateway's own sentence wins", async () => {
   const missing = await refused(fake(() => html(404)).client.createVoucher(VOUCHER_BODY));
   assert.equal(missing.status, 503);

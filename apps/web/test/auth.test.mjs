@@ -1,8 +1,9 @@
 // claude-frontend checks for merchant sign-in (SIWE + signed session cookie). Run from apps/web: npm test
-import { test } from "node:test";
+import { test, before } from "node:test";
 import assert from "node:assert/strict";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { createSiweMessage } from "viem/siwe";
+import { setupDb } from "./gw-helpers.mjs"; // used nonces are in the database (batch 023)
 
 process.env.AUTH_SECRET = "test-auth-secret-0123456789abcdef0123";
 const auth = await import("../lib/auth.ts");
@@ -10,6 +11,7 @@ const { GET: nonceRoute } = await import("../app/api/auth/nonce/route.ts");
 const { POST: verifyRoute } = await import("../app/api/auth/verify/route.ts");
 
 const SECRET = process.env.AUTH_SECRET;
+before(setupDb);
 const merchant = privateKeyToAccount(generatePrivateKey());
 const siwe = (over = {}) =>
   createSiweMessage({ address: merchant.address, chainId: 1874, domain: "shop.test", nonce: "abcdefgh12345678", uri: "http://shop.test", version: "1", expirationTime: new Date(Date.now() + 5 * 60_000), ...over });

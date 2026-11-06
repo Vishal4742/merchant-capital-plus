@@ -7,7 +7,7 @@ import { sqlStatements } from "../db/statements.mjs";
 export const AUTH_SECRET = "gw-test-auth-secret-0123456789abcdef";
 process.env.AUTH_SECRET = AUTH_SECRET;
 
-const { setTestDb } = await import("../lib/server/db.ts");
+const { query, setTestDb } = await import("../lib/server/db.ts");
 const { SESSION_COOKIE, signSession } = await import("../lib/auth.ts");
 const { resetRateLimits } = await import("../lib/server/http.ts");
 const { resetRateCache } = await import("../lib/server/quotes.ts");
@@ -16,7 +16,7 @@ export const MERCHANT = "0x1111111111111111111111111111111111111111";
 export const OTHER_MERCHANT = "0x2222222222222222222222222222222222222222";
 
 let pg;
-/** One PGlite per test file (startup is slow); call resetDb() in beforeEach to empty the app_gw_* tables. */
+/** One PGlite per test file (startup is slow); call resetDb() in beforeEach to empty the app_gw_* and app_web_* tables. */
 export async function setupDb() {
   pg = new PGlite();
   const dir = new URL("../db/", import.meta.url);
@@ -37,11 +37,17 @@ export async function setupDb() {
 }
 
 export async function resetDb() {
-  const { rows } = await pg.query("SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'app_gw_%'");
+  const { rows } = await pg.query("SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'app_gw_%' OR table_name LIKE 'app_web_%'");
   if (rows.length) await pg.exec(`TRUNCATE ${rows.map((r) => r.table_name).join(", ")} CASCADE`);
   resetRateLimits(); // the in-memory limiter would otherwise carry counts from one test into the next
   resetRateCache(); // and the FX cache would serve one test's mocked rates to the next
 }
+
+/** The checkout store is the database (batch 023): end a stored checkout at `at` (default: just now). */
+export const expireSession = (id, at = Date.now() - 1) => query("UPDATE app_web_sessions SET expires_at = $2 WHERE id = $1", [id, at]);
+
+/** Sets a checkout's pending attempt's validBefore (default 0: long past, so USDT can no longer settle it). */
+export const agePending = (id, validBefore = 0n) => query("UPDATE app_web_sessions SET pending = jsonb_set(pending, '{validBefore}', to_jsonb($2::text)) WHERE id = $1", [id, validBefore.toString()]);
 
 /** Cookie header for a merchant signed in to the dashboard. */
 export const signedIn = (merchant = MERCHANT) => ({ cookie: `${SESSION_COOKIE}=${encodeURIComponent(signSession(merchant, AUTH_SECRET))}` });

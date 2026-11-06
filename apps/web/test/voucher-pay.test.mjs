@@ -5,7 +5,7 @@ import { test, before, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { toHex } from "viem";
-import { setupDb, resetDb, req, params, MERCHANT } from "./gw-helpers.mjs";
+import { setupDb, resetDb, req, params, MERCHANT, expireSession, agePending } from "./gw-helpers.mjs";
 
 process.env.MERCHANT_ADDRESS = MERCHANT;
 process.env.MERCHANT_NAME = "Bandra Beans";
@@ -41,7 +41,7 @@ const relayed = () => Response.json({ txHash: `0x${"ab".repeat(32)}`, blockNumbe
 
 const { POST: pay } = await import("../app/api/v1/sessions/[id]/pay/route.ts");
 const voucherRoute = await import("../app/api/v1/sessions/[id]/voucher/route.ts");
-const { createSession, getSession, claimPayment, releasePayment } = await import("../lib/sessions.ts");
+const { createSession, getSession, claimPayment, releasePayment, isInFlight } = await import("../lib/sessions.ts");
 const { settlePending } = await import("../lib/settle.ts");
 const { recordCheckout, markCheckoutPaid } = await import("../lib/server/checkouts.ts");
 const { applyVoucher, claimAmountDue, HOLD_MS } = await import("../lib/server/vouchers.ts");
@@ -66,9 +66,9 @@ beforeEach(async () => {
   process.env.RELAYER_URL = "http://relayer.test";
 });
 
-/** A link checkout as lib/server/links.ts opens one: the session in memory, its row in app_gw_checkouts. */
+/** A link checkout as lib/server/links.ts opens one: the session (app_web_sessions), its row in app_gw_checkouts. */
 async function linkCheckout(amount = USDT(100)) {
-  const session = createSession({ merchant: MERCHANT, merchantName: "Bandra Beans", amount, reference: "", items: [] });
+  const session = await createSession({ merchant: MERCHANT, merchantName: "Bandra Beans", amount, reference: "", items: [] });
   await recordCheckout(session.id, "link", "lnk_test", MERCHANT, amount);
   return session.id;
 }
@@ -86,7 +86,7 @@ const voucherCall = async (method, id, body) => {
 const applyCode = (id, code) => voucherCall("POST", id, { code });
 
 async function signed(id, amount, { validBefore = BigInt(Math.floor(Date.now() / 1000) + 600) } = {}) {
-  const s = getSession(id);
+  const s = await getSession(id);
   const salt = toHex(crypto.getRandomValues(new Uint8Array(32)));
   const sale = { merchantPay: MERCHANT_PAY, merchant: s.merchant, orderRef: s.orderRef, amount };
   const signature = await customer.signTypedData(saleAuthorization(sale, customer.address, salt, validBefore));
@@ -126,7 +126,7 @@ test("F1: apply A → claim → 422 with the order paid on chain → no release 
   assert.equal((await applyVoucher(MERCHANT, "ONE", id, USDT(100))).ok, false, "and refused by vouchers.ts itself");
   await eventually(async () => (await timesRedeemed("HALF")) === 1);
   assert.equal(await timesRedeemed("ONE"), 0);
-  assert.equal(getSession(id).payment.amount, USDT(50), "recordPayment stores the paid amount");
+  assert.equal((await getSession(id)).payment.amount, USDT(50), "recordPayment stores the paid amount");
   const other = await linkCheckout(USDT(100));
   assert.match((await applyCode(other, "HALF")).data.error, /used up/, "HALF's only use went to the paid checkout");
 });
@@ -147,7 +147,7 @@ test("F1 (i): a bad signature after the claim releases the hold, relays nothing,
   assert.equal(await frozen(id), false);
   // F2: a frozen hold would count forever; released, it lapses with its checkout like any hold
   const later = Date.now() + HOLD_MS + 1;
-  const other = createSession({ merchant: MERCHANT, merchantName: "Bandra Beans", amount: USDT(100), reference: "", items: [] });
+  const other = await createSession({ merchant: MERCHANT, merchantName: "Bandra Beans", amount: USDT(100), reference: "", items: [] });
   await recordCheckout(other.id, "link", "lnk_test", MERCHANT, USDT(100), { now: later });
   assert.equal((await applyVoucher(MERCHANT, "HALF", other.id, USDT(100), later)).ok, true, "posting junk locked no use");
 });
@@ -192,7 +192,7 @@ test("F1 (3): unknown (5xx, timeout) never releases; the attempt goes pending wi
     assert.equal(res.status, 504);
     assert.match(res.data.error, /Don't pay again/);
     assert.equal(await frozen(id), true);
-    assert.equal(getSession(id).pending.amount, USDT(50), "session.pending stores the claimed price");
+    assert.equal((await getSession(id)).pending.amount, USDT(50), "session.pending stores the claimed price");
     const again = await callPay(id, { ...(await signed(id, USDT(50))), signature: `0x${"00".repeat(64)}1b` });
     assert.equal(again.status, 409, "STILL_PENDING: refused before any claim");
     assert.equal(await frozen(id), true, "and never released");
@@ -210,7 +210,7 @@ test("F1 (3): a relayer 200 the chain doesn't confirm never releases", async () 
   const res = await callPay(id, await signed(id, USDT(50)));
   assert.equal(res.status, 504);
   assert.equal(await frozen(id), true);
-  assert.deepEqual([getSession(id).pending.amount, chain.reads], [USDT(50), [USDT(50)]]);
+  assert.deepEqual([(await getSession(id)).pending.amount, chain.reads], [USDT(50), [USDT(50)]]);
 });
 
 test("F1 (ii): BUSY (503, 429, relayer unreachable) and other 4xx release the hold", async () => {
@@ -231,7 +231,7 @@ test("F1 (ii): BUSY (503, 429, relayer unreachable) and other 4xx release the ho
     assert.equal(res.status, i < 3 ? 503 : 400, `reply ${i}`);
     assert.match(res.data.error, /Nothing was charged/);
     assert.equal(await frozen(id), false, `reply ${i} released`);
-    assert.equal(getSession(id).pending, undefined);
+    assert.equal((await getSession(id)).pending, undefined);
   }
 });
 
@@ -253,7 +253,7 @@ test("F1 (ii): a 422 releases only after findPayment says exactly null; a failed
   assert.equal(b.status, 504, "we can't tell if the order is paid: never 'Nothing was charged'");
   assert.match(b.data.error, /Don't pay again/);
   assert.equal(await frozen(unread), true, "undefined: kept frozen");
-  assert.equal(getSession(unread).pending.amount, USDT(50), "the chain decides later, at the claimed price");
+  assert.equal((await getSession(unread)).pending.amount, USDT(50), "the chain decides later, at the claimed price");
 });
 
 test("F1 (ii): a 422 insufficient_funds is a refusal too: released after the chain says not paid", async () => {
@@ -274,20 +274,21 @@ test("F1 (iii): settle 'open' (validBefore + 60 s passed, chain says not paid) r
   await applyCode(id, "HALF");
   relayReply = async () => Response.json({ error: "rpc" }, { status: 502 });
   await callPay(id, await signed(id, USDT(50)));
-  getSession(id).pending.validBefore = BigInt(Math.floor(Date.now() / 1000) - 30); // within the 60 s margin
-  assert.equal(await settlePending(getSession(id), MERCHANT_PAY), "pending");
+  await agePending(id, BigInt(Math.floor(Date.now() / 1000) - 30)); // within the 60 s margin
+  assert.equal(await settlePending(await getSession(id), MERCHANT_PAY), "pending");
   assert.equal(await frozen(id), true);
-  getSession(id).pending.validBefore = 0n;
-  assert.equal(claimPayment(id), true); // a payment is in flight right now: it settles the dead attempt itself
+  await agePending(id);
+  const held = await claimPayment(id);
+  assert.ok(held); // a payment is in flight right now: it settles the dead attempt itself
   try {
-    assert.equal(await settlePending(getSession(id), MERCHANT_PAY), "pending", "never released without the in-flight lock");
+    assert.equal(await settlePending(await getSession(id), MERCHANT_PAY), "pending", "never released without the in-flight lock");
     assert.equal(await frozen(id), true);
   } finally {
-    releasePayment(id);
+    await releasePayment(id, held);
   }
-  assert.equal(await settlePending(getSession(id), MERCHANT_PAY), "open");
+  assert.equal(await settlePending(await getSession(id), MERCHANT_PAY), "open");
   assert.equal(await frozen(id), false, "released");
-  assert.equal(getSession(id).pending, undefined);
+  assert.equal((await getSession(id)).pending, undefined);
   assert.equal((await applyCode(id, "HALF")).status, 200, "the payer may change or keep the code");
 });
 
@@ -301,9 +302,9 @@ test("F3: settle 'paid' records with the claimed price and counts the code (webh
   await callPay(id, await signed(id, USDT(50)));
   chain.reads.length = 0;
   chain.paid = { payer: customer.address, amount: USDT(50) }; // it landed
-  assert.equal(await settlePending(getSession(id), MERCHANT_PAY), "paid");
+  assert.equal(await settlePending(await getSession(id), MERCHANT_PAY), "paid");
   assert.deepEqual(chain.reads, [USDT(50)], "read at pending.amount, not the checkout's 100");
-  assert.equal(getSession(id).payment.amount, USDT(50));
+  assert.equal((await getSession(id)).payment.amount, USDT(50));
   assert.equal(await frozen(id), true, "never released once paid");
   await eventually(async () => (await query("SELECT key FROM app_gw_events WHERE key = $1", [`paid:${id}`])).length === 1); // payment.succeeded queued
   assert.equal(await timesRedeemed("HALF"), 1, "counted at the paid 50");
@@ -316,7 +317,7 @@ test("F3: the relay success path confirms at the claimed price, records it, and 
   const res = await callPay(id, await signed(id, USDT(22.5)));
   assert.equal(res.status, 200);
   assert.equal(relayCalls[0].amount, "22500000");
-  assert.equal(getSession(id).payment.amount, USDT(22.5));
+  assert.equal((await getSession(id)).payment.amount, USDT(22.5));
   await eventually(async () => (await timesRedeemed("TEN")) === 1);
   const [row] = await query("SELECT paid_at FROM app_gw_checkouts WHERE session_id = $1", [id]);
   assert.notEqual(row.paid_at, null, "onSessionPaid marked the checkout paid");
@@ -345,7 +346,7 @@ test("F5: an apply during in-flight or pending gives 409", async () => {
 test("the code route: link/page checkouts only, open ones only, plain words for each refusal", async () => {
   await newVoucher("HALF", { max: 1 });
   await newVoucher("FIVE", { kind: "fixed", value: "5000000", max: 10 });
-  const shop = createSession({ merchant: MERCHANT, merchantName: "Bandra Beans", amount: USDT(25), reference: "", items: [] });
+  const shop = await createSession({ merchant: MERCHANT, merchantName: "Bandra Beans", amount: USDT(25), reference: "", items: [] });
   assert.deepEqual(await applyCode(shop.id, "FIVE"), { status: 404, data: { error: "Codes work on payment links and pages." } });
   assert.equal((await applyCode("no-such-session", "FIVE")).status, 404);
   const id = await linkCheckout(USDT(25));
@@ -358,7 +359,7 @@ test("the code route: link/page checkouts only, open ones only, plain words for 
   const holder = await linkCheckout(USDT(25));
   assert.equal((await applyCode(holder, "HALF")).status, 200);
   assert.deepEqual(await applyCode(id, "HALF"), { status: 400, data: { error: "That code has been used up." } });
-  getSession(id).expiresAt = Date.now() - 1;
+  await expireSession(id);
   assert.equal((await applyCode(id, "FIVE")).status, 410, "expired");
   const paid = await linkCheckout(USDT(25));
   await markCheckoutPaid(paid);
@@ -377,7 +378,7 @@ test("the code route is rate-limited per IP and checkout", async () => {
 // --- the shop's own session and a failed read ------------------------------------------------------------------------
 
 test("a shop's own session (no checkout row) keeps today's path: its amount, no claim", async () => {
-  const shop = createSession({ merchant: MERCHANT, merchantName: "Bandra Beans", amount: USDT(25), reference: "", items: [] });
+  const shop = await createSession({ merchant: MERCHANT, merchantName: "Bandra Beans", amount: USDT(25), reference: "", items: [] });
   const res = await callPay(shop.id, await signed(shop.id, USDT(25)));
   assert.equal(res.status, 200);
   assert.equal(relayCalls[0].amount, "25000000");
@@ -397,10 +398,12 @@ const pgDb = (seen = []) => ({
     }),
 });
 const dbDown = { query: async () => Promise.reject(new Error("db down")), transaction: async () => Promise.reject(new Error("db down")) };
+/** Only the gateway's tables fail: the checkout store (app_web_*) still answers. */
+const gatewayDown = { ...pgDb(), query: async (text, values) => (text.includes("app_gw_") ? Promise.reject(new Error("db down")) : (await pg.query(text, values)).rows) };
 
 test("a database failure while reading the checkout refuses before anything is relayed", async () => {
   const id = await linkCheckout();
-  setTestDb(dbDown);
+  setTestDb(gatewayDown);
   try {
     const res = await callPay(id, await signed(id, USDT(100)));
     assert.equal(res.status, 503);
@@ -410,6 +413,19 @@ test("a database failure while reading the checkout refuses before anything is r
   } finally {
     setTestDb(pgDb());
   }
+});
+
+test("batch 023: the checkout store down is a 503 'nothing was charged' before anything is locked, claimed or relayed", async () => {
+  const id = await linkCheckout();
+  const body = await signed(id, USDT(100));
+  setTestDb(dbDown);
+  try {
+    const res = await callPay(id, body);
+    assert.deepEqual([res.status, res.data.error], [503, "Payments are busy right now. Nothing was charged; try again in a moment."]);
+  } finally {
+    setTestDb(pgDb());
+  }
+  assert.deepEqual([relayCalls.length, await frozen(id), await isInFlight(id)], [0, false, false]);
 });
 
 // --- batch 021 (NFR-4): the sheet signs the amount it shows and sends it; no voucher read before approving ------------
@@ -435,7 +451,7 @@ test("a sheet amount that isn't the claimed price: 409 with the amount due, the 
   assert.deepEqual(res.data, { error: "The total is now 50.00 USDT. Check it, then hold to pay again.", amountDue: "50.00", discount: "50.00", amountUnits: "50000000" });
   assert.equal(relayCalls.length, 0);
   assert.equal(await frozen(id), false, "this attempt froze it and signed nothing for it: released");
-  assert.equal(getSession(id).pending, undefined);
+  assert.equal((await getSession(id)).pending, undefined);
   const again = await callPay(id, { ...(await signed(id, USDT(50))), amount: res.data.amountUnits });
   assert.equal(again.status, 200, "the payer approves the new total and pays");
   assert.equal(relayCalls[0].amount, "50000000");
@@ -485,14 +501,15 @@ test("the sheet amount is checked after the lock and the open check: there, a 40
   await newVoucher("HALF", { max: 10 });
   const busy = await linkCheckout();
   await applyCode(busy, "HALF");
-  assert.equal(claimPayment(busy), true); // another request is paying: it claimed and froze the hold
+  const other = await claimPayment(busy);
+  assert.ok(other); // another request is paying: it claimed and froze the hold
   try {
     assert.equal(await claimAmountDue(busy), USDT(50));
     const res = await callPay(busy, { ...(await signed(busy, USDT(100))), amount: "100000000" });
     assert.deepEqual([res.status, res.data.error, res.data.amountDue], [409, "This checkout is already being paid.", undefined]);
     assert.equal(await frozen(busy), true, "the other attempt's freeze stands");
   } finally {
-    releasePayment(busy);
+    await releasePayment(busy, other);
   }
 
   const id = await linkCheckout();

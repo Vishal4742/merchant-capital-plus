@@ -6,7 +6,7 @@ import { Suspense, type ReactNode } from "react";
 import { InvoicePay } from "@/components/InvoicePay";
 import { StaticScene } from "@/components/StaticScene";
 import { merchantConfig, payConfig } from "@/lib/config";
-import { readInvoice, readRelayFee } from "@/lib/onchain";
+import { readInvoice, readRelayFee, type Invoice } from "@/lib/onchain";
 import { invoiceAttempt, invoiceLock } from "@/lib/sessions";
 import { invoiceState, isShopInvoice, pageState } from "@/lib/settle";
 import { formatUsdt } from "@/lib/usdt";
@@ -50,10 +50,13 @@ async function InvoiceLoader({ params }: Pick<PageProps<"/pay/[invoiceId]">, "pa
   // only the shop's own invoices are served here (human, 2026-11-06 02:3x); anything else is "not found"
   const shop = merchantConfig();
   if (!shop || !isShopInvoice(invoice, shop.merchant)) notFound();
-  const settled = invoiceState(invoiceId, invoice.status);
-  if (settled === "missing") notFound();
-  // a payment being relayed right now may land: show "confirming", never the button (security review 004 R2 F1)
-  const state = pageState(settled, invoiceLock(invoiceId));
+  const read = await attemptOf(invoiceId, invoice.status).catch((error: unknown) => {
+    console.error(`invoice ${invoiceId}: attempt not read: ${error instanceof Error ? error.name : "error"}`); // the store is the database
+    return null;
+  });
+  if (!read) return <Notice title="We can't open this invoice right now">Nothing was charged. Try again in a minute.</Notice>;
+  if (read.state === "missing") notFound();
+  const { state } = read;
   const owed = invoice.amount - invoice.paid; // what MerchantPay credits; the fee comes on top
   return (
     <InvoicePay
@@ -67,7 +70,14 @@ async function InvoiceLoader({ params }: Pick<PageProps<"/pay/[invoiceId]">, "pa
       totalText={formatUsdt(owed + fee)}
       state={state}
       terms={{ merchantPay: pay.merchantPay, invoiceId, amount: owed.toString(), fee: fee.toString() }}
-      receiptId={invoiceAttempt(invoiceId).receipt?.paymentId ?? null}
+      receiptId={read.receiptId}
     />
   );
+}
+
+/** What our server remembers about paying this invoice (the database, batch 023). A payment being relayed right now may
+ *  land: then it shows "confirming", never the button (security review 004 R2 F1). */
+async function attemptOf(invoiceId: string, status: Invoice["status"]) {
+  const state = await pageState(await invoiceState(invoiceId, status), invoiceLock(invoiceId));
+  return { state, receiptId: (await invoiceAttempt(invoiceId)).receipt?.paymentId ?? null };
 }

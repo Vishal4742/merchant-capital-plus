@@ -13,10 +13,13 @@ import { announcePaid } from "../../../../../../lib/announce-paid.ts";
 import { BUSY, NOT_FUNDED, UNKNOWN, relaySale } from "../../../../../../lib/relay.ts";
 import { findPayment, gatewayCheckout, releaseClaim, settlePending } from "../../../../../../lib/settle.ts";
 import type { Checkout } from "../../../../../../lib/server/checkouts.ts";
-import { HttpError } from "../../../../../../lib/server/http.ts";
+import { HttpError, handle } from "../../../../../../lib/server/http.ts";
 import { claimAmountDue } from "../../../../../../lib/server/vouchers.ts";
 import { claimPayment, getSession, isInFlight, markPending, recordPayment, releasePayment, type Session } from "../../../../../../lib/sessions.ts";
 import { formatUsdt, plainUsdt } from "../../../../../../lib/usdt.ts";
+
+// the lock (lib/sessions.ts LOCK_S = 300 s) must outlast the function: pin the platform's limit here (security 026 F1)
+export const maxDuration = 300;
 
 const fail = (status: number, error: string) => Response.json({ error }, { status });
 const LONGER_THAN_CHECKOUT = "This approval would last longer than the checkout, which expires sooner. Nothing was charged. Please try again.";
@@ -24,17 +27,25 @@ const MISMATCH = "This approval doesn't match the checkout. Nothing was charged.
 const READ_TRIES = 2; // a customer is waiting: fail fast (a failed balance read isn't fatal: the relayer checks too)
 const EXPIRED = "This checkout has expired. Ask the shop for a new one.";
 const STILL_PENDING = "We're still confirming an earlier attempt. Don't pay again; check this page again in a few minutes.";
-const alreadyPaid = (id: string) => Response.json({ error: "Already paid.", receiptId: id, txHash: getSession(id)?.payment?.txHash ?? null }, { status: 409 });
+const alreadyPaid = async (id: string) => Response.json({ error: "Already paid.", receiptId: id, txHash: (await getSession(id))?.payment?.txHash ?? null }, { status: 409 });
 type Pay = NonNullable<ReturnType<typeof payConfig>>;
 
-export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+// Any other failure is handle()'s 500, which the sheet shows as "confirming", never "nothing was charged" (outcome.ts).
+export const POST = (request: Request, context: { params: Promise<{ id: string }> }) => handle(() => post(request, context));
+
+async function post(request: Request, { params }: { params: Promise<{ id: string }> }): Promise<Response> {
   const { id } = await params;
-  const session = getSession(id);
+  // the store is the database (batch 023): one we can't read refuses before anything is locked or relayed
+  const session = await getSession(id).catch((error: unknown) => {
+    console.error(`checkout ${id}: session read failed: ${error instanceof Error ? error.name : "error"}`);
+    return null;
+  });
+  if (session === null) return fail(503, BUSY);
   if (!session) return fail(404, "This checkout doesn't exist.");
   if (session.payment) return alreadyPaid(id);
   // a pending or in-flight attempt may pay: never send that customer to a new checkout before the chain says (security
   // R1 S1). In flight, the request falls through to claimPayment's 409, which the sheet shows as "confirming" (R2 F1).
-  if (Date.now() > session.expiresAt && !session.pending && !isInFlight(id)) return fail(410, EXPIRED);
+  if (Date.now() > session.expiresAt && !session.pending && !(await isInFlight(id))) return fail(410, EXPIRED);
   const pay = payConfig();
   if (!pay) return fail(503, "Payments aren't live on this server yet.");
 
@@ -65,25 +76,26 @@ async function payShopSession(id: string, session: Session, pay: Pay, { from: pa
   const balance = await readUsdtBalance(payer, { tries: READ_TRIES }).catch(() => null);
   if (balance !== null && balance < session.amount && !session.pending) return fail(400, NOT_FUNDED);
 
-  if (!claimPayment(id)) return fail(409, "This checkout is already being paid.");
+  const lock = await claimPayment(id);
+  if (!lock) return fail(409, "This checkout is already being paid.");
   try {
     // an earlier attempt with an unknown outcome is settled by the chain before anything new is relayed
-    const state = await settlePending(getSession(id) ?? session, pay.merchantPay);
-    if (state === "paid") return alreadyPaid(id);
+    const state = await settlePending((await getSession(id)) ?? session, pay.merchantPay);
+    if (state === "paid") return await alreadyPaid(id);
     if (state === "pending") return fail(409, STILL_PENDING);
     if (Date.now() > session.expiresAt) return fail(410, EXPIRED);
     // the approval never outlives the checkout (ARCHITECTURE §4b), so nothing can settle after it says "expired"
     if (validBefore > BigInt(Math.floor(session.expiresAt / 1000))) return fail(400, LONGER_THAN_CHECKOUT);
     const result = await relaySale({ relayerUrl: pay.relayerUrl, merchant: session.merchant, orderRef: session.orderRef, from: payer, amount: session.amount, validBefore, salt, signature });
     if (!result.ok) {
-      if (result.unknown) markPending(id, { from: payer, validBefore }); // it may settle: the chain decides later
+      if (result.unknown) await markPending(id, { from: payer, validBefore }); // it may settle: the chain decides later
       // a refusal can mean the order is already paid (OrderPaid): show the receipt, never "start again"
       else if (result.refused && (await findPayment(session, pay.merchantPay, payer))) return Response.json({ receiptId: id, txHash: null });
       return fail(result.status, result.message);
     }
     return await recordRelayed(id, session, sale, payer, result, { from: payer, validBefore });
   } finally {
-    releasePayment(id); // only guards concurrent requests; an unknown outcome is kept as session.pending
+    await releasePayment(id, lock); // only guards concurrent requests; an unknown outcome is kept as session.pending
   }
 }
 
@@ -98,10 +110,11 @@ async function payCheckout(id: string, session: Session, pay: Pay, { from: payer
   const signedFor = typeof shown === "string" && /^\d{1,30}$/.test(shown) ? BigInt(shown) : undefined;
   if (shown !== undefined && signedFor === undefined) return fail(400, "amount must be USDT units.");
   if (validBefore > BigInt(Math.floor(session.expiresAt / 1000))) return fail(400, LONGER_THAN_CHECKOUT);
-  if (!claimPayment(id)) return fail(409, "This checkout is already being paid.");
+  const lock = await claimPayment(id);
+  if (!lock) return fail(409, "This checkout is already being paid.");
   try {
-    const state = await settlePending(getSession(id) ?? session, pay.merchantPay, { locked: true });
-    if (state === "paid") return alreadyPaid(id);
+    const state = await settlePending((await getSession(id)) ?? session, pay.merchantPay, { locked: true });
+    if (state === "paid") return await alreadyPaid(id);
     if (state === "pending") return fail(409, STILL_PENDING);
     if (Date.now() > session.expiresAt) return fail(410, EXPIRED);
 
@@ -118,7 +131,7 @@ async function payCheckout(id: string, session: Session, pay: Pay, { from: payer
     );
     if ("error" in claimed) return claimed.error instanceof HttpError && claimed.error.status === 410 ? fail(410, claimed.error.message) : refuse(503, BUSY);
     const price = claimed.value;
-    if (price === null) return refuse(503, BUSY);
+    if (price === null) return await refuse(503, BUSY);
     // the sheet showed and signed another total (a code changed in another tab): unlike the lock's 409 and
     // STILL_PENDING, this attempt claimed and stops before the relay, so its claim is released (F1 (i)); the reply
     // carries the amount due for the sheet to show
@@ -129,28 +142,28 @@ async function payCheckout(id: string, session: Session, pay: Pay, { from: payer
     }
     const sale = { merchantPay: pay.merchantPay, merchant: session.merchant, orderRef: session.orderRef, amount: price };
     const valid = await verifyTypedData({ ...saleAuthorization(sale, payer, salt, validBefore), address: payer, signature }).catch(() => false);
-    if (!valid) return refuse(400, MISMATCH);
+    if (!valid) return await refuse(400, MISMATCH);
     const balance = await readUsdtBalance(payer, { tries: READ_TRIES }).catch(() => null);
-    if (balance !== null && balance < price) return refuse(400, NOT_FUNDED);
+    if (balance !== null && balance < price) return await refuse(400, NOT_FUNDED);
 
     const attempt = { from: payer, validBefore, amount: price };
     const result = await relaySale({ relayerUrl: pay.relayerUrl, merchant: session.merchant, orderRef: session.orderRef, from: payer, amount: price, validBefore, salt, signature });
     if (!result.ok) {
       if (result.unknown) {
-        markPending(id, attempt); // it may settle at this price: the chain decides later, and the hold stays frozen
+        await markPending(id, attempt); // it may settle at this price: the chain decides later, and the hold stays frozen
         return fail(result.status, result.message);
       }
-      if (!result.refused) return refuse(result.status, result.message); // busy or bad input: nothing was sent
+      if (!result.refused) return await refuse(result.status, result.message); // busy or bad input: nothing was sent
       // a 422 can mean the order is already paid (paySale is open to anyone holding a signature): ask the chain first
       const found = await findPayment(session, pay.merchantPay, payer, price);
       if (found) return Response.json({ receiptId: id, txHash: null });
-      if (found === null) return refuse(result.status, result.message);
-      markPending(id, attempt); // the read failed: keep the hold frozen until the chain says (settlePending)
+      if (found === null) return await refuse(result.status, result.message);
+      await markPending(id, attempt); // the read failed: keep the hold frozen until the chain says (settlePending)
       return fail(504, UNKNOWN);
     }
     return await recordRelayed(id, session, sale, payer, result, attempt);
   } finally {
-    releasePayment(id);
+    await releasePayment(id, lock);
   }
 }
 
@@ -170,9 +183,9 @@ async function recordRelayed(
     return null;
   });
   if (!paymentId) {
-    markPending(id, attempt); // the relayer says it went through: never invite a second payment
+    await markPending(id, attempt); // the relayer says it went through: never invite a second payment
     return fail(504, UNKNOWN);
   }
-  announcePaid(recordPayment(id, { txHash: result.txHash, blockNumber: result.blockNumber, paymentId, from: payer, paidAt: Date.now(), amount: sale.amount }), sale.amount);
+  announcePaid(await recordPayment(id, { txHash: result.txHash, blockNumber: result.blockNumber, paymentId, from: payer, paidAt: Date.now(), amount: sale.amount }), sale.amount);
   return Response.json({ receiptId: id, txHash: result.txHash });
 }

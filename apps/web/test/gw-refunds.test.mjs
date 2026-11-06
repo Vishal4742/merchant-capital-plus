@@ -6,7 +6,7 @@
 import { test, before, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import { encodeAbiParameters, encodeEventTopics, parseAbi } from "viem";
-import { MERCHANT, OTHER_MERCHANT, params, req, signedIn } from "./gw-helpers.mjs";
+import { MERCHANT, OTHER_MERCHANT, params, req, setupDb, signedIn } from "./gw-helpers.mjs";
 
 const MERCHANT_PAY = `0x${"ab".repeat(20)}`; // letters, so the log's upper-case copy below really differs in case
 const OTHER_CONTRACT = "0x4444444444444444444444444444444444444444";
@@ -61,11 +61,12 @@ const reader = (r) => {
 
 // payment 7 is MERCHANT's: the session asked 25.00, a voucher made the charged price 20.00. Payment 8 is another merchant's.
 let mine;
-before(() => {
-  mine = createSession({ merchant: MERCHANT, merchantName: "Bandra Beans", amount: USDT(25), reference: "A-1042", items: [{ name: "Beans", qty: 1, price: USDT(25) }] });
-  recordPayment(mine.id, { txHash: `0x${"01".repeat(32)}`, blockNumber: "10", paymentId: "7", from: PAYER, paidAt: Date.now(), amount: USDT(20) });
-  const theirs = createSession({ merchant: OTHER_MERCHANT, merchantName: "Other", amount: USDT(10), reference: "B-1", items: [{ name: "Tea", qty: 1, price: USDT(10) }] });
-  recordPayment(theirs.id, { txHash: `0x${"02".repeat(32)}`, blockNumber: "11", paymentId: "8", from: PAYER, paidAt: Date.now(), amount: USDT(10) });
+before(async () => {
+  await setupDb(); // the checkouts are in the database (batch 023)
+  mine = await createSession({ merchant: MERCHANT, merchantName: "Bandra Beans", amount: USDT(25), reference: "A-1042", items: [{ name: "Beans", qty: 1, price: USDT(25) }] });
+  await recordPayment(mine.id, { txHash: `0x${"01".repeat(32)}`, blockNumber: "10", paymentId: "7", from: PAYER, paidAt: Date.now(), amount: USDT(20) });
+  const theirs = await createSession({ merchant: OTHER_MERCHANT, merchantName: "Other", amount: USDT(10), reference: "B-1", items: [{ name: "Tea", qty: 1, price: USDT(10) }] });
+  await recordPayment(theirs.id, { txHash: `0x${"02".repeat(32)}`, blockNumber: "11", paymentId: "8", from: PAYER, paidAt: Date.now(), amount: USDT(10) });
 });
 beforeEach(() => {
   refunds.length = 0;

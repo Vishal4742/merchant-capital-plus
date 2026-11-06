@@ -51,6 +51,40 @@ export const DELIVERY_LABEL: Record<DeliveryStatus, string> = { pending: "Pendin
 export const nextTryText = (d: Pick<Delivery, "status" | "next_attempt_at">, nextText: string | null) =>
   d.status === "pending" && nextText ? `Next try ${nextText}` : d.status === "failed" ? "No more tries" : null;
 
+/** How long the gateway waits for an endpoint's answer (lib/server/webhooks.ts TIMEOUT_MS). */
+export const ANSWER_WITHIN_S = 5;
+
+/** Why a delivery got no 2xx, in plain words, by the gateway's rules: it waits 5 s for an answer and never follows a
+ *  redirect. null once delivered, or before its first try. */
+export function deliveryProblem(d: Pick<Delivery, "status" | "attempts" | "response_status">): string | null {
+  const code = d.response_status;
+  if (d.status === "succeeded" || d.attempts === 0) return null;
+  if (code === null) return `Answer within ${ANSWER_WITHIN_S} s`;
+  if (code >= 300 && code < 400) return "We don't follow redirects; use the final URL";
+  if (code === 401 || code === 403) return "Your route refused it: check the signature check and the secret";
+  if (code >= 400 && code < 500) return "Your route refused it";
+  return code >= 500 ? "Your handler failed" : null;
+}
+
+export interface SetupStep {
+  key: "key" | "endpoint" | "test" | "payment";
+  done: boolean;
+  title: string;
+  how: string;
+  href: string; // a part of the Developers screen, or the screen that does it
+  action: string;
+}
+
+/** The Developers setup checklist, from the merchant's active keys, endpoints and delivered events (read on our server). */
+export function setupSteps({ keys, hooks, delivered }: { keys: readonly Pick<ApiKey, "kind">[]; hooks: readonly unknown[]; delivered: { test: boolean; payment: boolean } }): SetupStep[] {
+  return [
+    { key: "key", done: keys.some((k) => k.kind === "sk"), title: "Create a secret key", how: "Your server sends it on every call. Keep it in GATEWAY_SECRET_KEY.", href: "#new-key", action: "New key" },
+    { key: "endpoint", done: hooks.length > 0, title: "Add a webhook endpoint", how: "An https URL on your server. We send it each payment, signed.", href: "#new-endpoint", action: "Add an endpoint" },
+    { key: "test", done: delivered.test, title: "Answer a test event", how: `Press Send test event. Your server answers with any 2xx within ${ANSWER_WITHIN_S} s.`, href: "#webhooks", action: "Your endpoints" },
+    { key: "payment", done: delivered.payment, title: "Get a real payment event", how: "Pay one of your links with test USDT. Your endpoint gets payment.succeeded.", href: "/merchant/links", action: "Payment links" },
+  ];
+}
+
 /** What's wrong with an endpoint URL before it is sent (the gateway also checks it's a public address), or null. */
 export function httpsProblem(raw: string): string | null {
   const text = raw.trim();

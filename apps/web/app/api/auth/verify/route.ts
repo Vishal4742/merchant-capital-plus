@@ -15,7 +15,14 @@ export async function POST(request: Request) {
   }
   const address = await verifySignIn({ message: body.message, signature: body.signature, nonce, domains: signInDomains(request.url) });
   // single use on the server too: the browser drops the cookie, but a captured request could be sent again
-  if (address && !consumeNonce(nonce)) return Response.json({ error: "Sign-in expired. Try again." }, { status: 401, headers: { "set-cookie": clearNonce } });
+  const fresh = address
+    ? await consumeNonce(nonce).catch((error: unknown) => {
+        console.error(`sign-in: nonce not checked: ${error instanceof Error ? error.name : "error"}`); // the used-nonce store is the database
+        return null;
+      })
+    : false;
+  if (fresh === null) return Response.json({ error: "Sign-in isn't available right now. Try again in a minute." }, { status: 503, headers: { "set-cookie": clearNonce } });
+  if (address && !fresh) return Response.json({ error: "Sign-in expired. Try again." }, { status: 401, headers: { "set-cookie": clearNonce } });
   if (!address) return Response.json({ error: "That signature didn't check out. Try again." }, { status: 401, headers: { "set-cookie": clearNonce } });
   const headers = new Headers();
   headers.append("set-cookie", clearNonce);

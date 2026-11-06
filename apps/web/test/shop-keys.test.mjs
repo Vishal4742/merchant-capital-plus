@@ -54,7 +54,7 @@ test("a merchant's sk_ key creates a checkout that belongs to that merchant", as
   const { key } = await createKey(MERCHANT, "Shop server", "sk");
   const { res, data } = await checkout(bearer(key));
   assert.equal(res.status, 201);
-  const session = getSession(data.id);
+  const session = await getSession(data.id);
   assert.equal(session.merchant.toLowerCase(), MERCHANT);
   assert.equal(session.merchantName, "0x1111…1111", "a merchant without a configured name shows its short address");
 });
@@ -81,8 +81,8 @@ test("a revoked sk_ key gets 401 on both routes", async () => {
 test("SHOP_API_KEY still opens checkouts for the demo shop", async () => {
   const { res, data } = await checkout(bearer(process.env.SHOP_API_KEY));
   assert.equal(res.status, 201);
-  assert.equal(getSession(data.id).merchant, DEMO_SHOP);
-  assert.equal(getSession(data.id).merchantName, "Bandra Beans");
+  assert.equal((await getSession(data.id)).merchant, DEMO_SHOP);
+  assert.equal((await getSession(data.id)).merchantName, "Bandra Beans");
 });
 
 test("another merchant's checkout stays invisible: its Idempotency-Key slot and its payments", async () => {
@@ -92,11 +92,11 @@ test("another merchant's checkout stays invisible: its Idempotency-Key slot and 
   const second = await checkout({ ...bearer(theirs), "idempotency-key": "order-42" });
   assert.equal(second.res.status, 201);
   assert.notEqual(second.data.id, first.data.id, "the same key from another merchant never replays the first checkout");
-  assert.equal(getSession(second.data.id).merchant.toLowerCase(), OTHER_MERCHANT);
+  assert.equal((await getSession(second.data.id)).merchant.toLowerCase(), OTHER_MERCHANT);
 
   // payment 1 is MERCHANT's (with a checkout), payment 2 is OTHER_MERCHANT's: each key lists only its own
-  const session = createSession({ merchant: MERCHANT, merchantName: "A", amount: 25_000_000n, reference: "A-secret", items: [] });
-  recordPayment(session.id, { txHash: tx(1n), blockNumber: "1", paymentId: "1", from: MERCHANT, paidAt: Date.now() });
+  const session = await createSession({ merchant: MERCHANT, merchantName: "A", amount: 25_000_000n, reference: "A-secret", items: [] });
+  await recordPayment(session.id, { txHash: tx(1n), blockNumber: "1", paymentId: "1", from: MERCHANT, paidAt: Date.now(), amount: 25_000_000n });
   logs = [1n, 2n].map((id) => ({ paymentId: id, invoiceId: 0n, gross: 25_000_000n, txHash: tx(id), time: Date.UTC(2026, 10, 6) }));
   chain = new Map([
     [1n, { merchant: MERCHANT, gross: 25_000_000n, payer: MERCHANT, refunded: 0n }],
@@ -112,8 +112,8 @@ test("another merchant's checkout stays invisible: its Idempotency-Key slot and 
 
 test("GET /api/v1/sessions/:id: a merchant's sk_ key polls its own checkout, never another merchant's", async () => {
   const { key } = await createKey(MERCHANT, "Shop server", "sk");
-  const own = createSession({ merchant: MERCHANT, merchantName: "Own shop", amount: 5_000_000n, reference: "K-1", items: [] });
-  const other = createSession({ merchant: OTHER_MERCHANT, merchantName: "Other shop", amount: 5_000_000n, reference: "K-2", items: [] });
+  const own = await createSession({ merchant: MERCHANT, merchantName: "Own shop", amount: 5_000_000n, reference: "K-1", items: [] });
+  const other = await createSession({ merchant: OTHER_MERCHANT, merchantName: "Other shop", amount: 5_000_000n, reference: "K-2", items: [] });
   const poll = (id) => statusRoute(new Request(`http://shop.test/api/v1/sessions/${id}`, { headers: { authorization: `Bearer ${key}` } }), { params: Promise.resolve({ id }) });
   const mine = await poll(own.id);
   assert.equal(mine.status, 200);

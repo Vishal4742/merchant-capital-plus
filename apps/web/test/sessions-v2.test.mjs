@@ -1,8 +1,9 @@
 // claude-frontend checks for the sessions API v2 (FR-GW-11, FR-GW-5, batch 006): currency and the locked FX quote,
 // returnUrl, the 40-character reference, plain amounts and Idempotency-Key. Frankfurter and the chain are faked.
 // Run from apps/web: npm test
-import { test, beforeEach, mock } from "node:test";
+import { test, before, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
+import { setupDb, resetDb } from "./gw-helpers.mjs";
 
 process.env.MERCHANT_ADDRESS = "0x1111111111111111111111111111111111111111";
 process.env.MERCHANT_NAME = "Bandra Beans";
@@ -39,6 +40,7 @@ const { createSession, getSession, recordPayment, SESSION_TTL_MS } = await impor
 const { QUOTE_TTL_MS: QUOTE_LOCK_MS, resetRateCache } = await import("../lib/server/quotes.ts");
 const SOURCE = "Frankfurter (ECB and central-bank reference rates)";
 const { resetRateLimits } = await import("../lib/server/http.ts");
+const { query } = await import("../lib/server/db.ts");
 
 const auth = { authorization: `Bearer ${process.env.SHOP_API_KEY}`, "content-type": "application/json" };
 async function create(body, headers = {}) {
@@ -46,9 +48,11 @@ async function create(body, headers = {}) {
   return { res, data: await res.json() };
 }
 const poll = async (id) => (await statusRoute(new Request(`http://shop.test/api/v1/sessions/${id}`, { headers: auth }), { params: Promise.resolve({ id }) })).json();
-const sessionCount = () => globalThis.__mcSessions.size;
+const sessionCount = async () => Number((await query("SELECT count(*)::text AS n FROM app_web_sessions"))[0].n);
 const near = (iso, ms) => Math.abs(Date.parse(iso) - (Date.now() + ms)) < 2_000;
-beforeEach(() => {
+before(setupDb);
+beforeEach(async () => {
+  await resetDb();
   fxDown = false;
   fxCalls.length = 0;
   refunded = 0n;
@@ -63,7 +67,7 @@ test("an EUR price becomes USDT at the locked quote: the reply has the asked cur
   assert.equal(data.currency, "EUR");
   assert.deepEqual(data.priced, { currency: "EUR", amount: "20.00", rate: "0.88877", rateAt: RATE_DATE, source: SOURCE }, "quotes.ts pricedJson's shape");
   assert.ok(near(data.expiresAt, QUOTE_LOCK_MS), "a quote lock is 10 minutes, and the checkout ends with it");
-  const session = getSession(data.id);
+  const session = await getSession(data.id);
   assert.equal(session.amount, 22_510_000n, "the USDT the contract charges is fixed at creation");
   assert.deepEqual([session.priced.currency, session.priced.amount, session.priced.rate], ["EUR", 20_000_000n, "0.88877"]);
 });
@@ -93,7 +97,7 @@ test("items are priced in the checkout's currency and must add up in it", async 
   const items = [{ name: "Cold brew", qty: 2, price: "8.00" }, { name: "Banana bread", qty: 1, price: "4.00" }];
   const { res, data } = await create({ amount: "20.00", currency: "EUR", items });
   assert.equal(res.status, 201);
-  assert.deepEqual(getSession(data.id).items.map((item) => item.price), [8_000_000n, 4_000_000n], "item prices stay in EUR");
+  assert.deepEqual((await getSession(data.id)).items.map((item) => item.price), [8_000_000n, 4_000_000n], "item prices stay in EUR");
   const wrong = await create({ amount: "25.00", currency: "EUR", items });
   assert.equal(wrong.res.status, 400);
   assert.match(wrong.data.error, /add up to 20\.00 EUR, but amount is 25\.00 EUR/);
@@ -101,11 +105,11 @@ test("items are priced in the checkout's currency and must add up in it", async 
 
 test("when the FX rate can't be fetched, an EUR checkout is a 503 in plain words and nothing is created", async () => {
   fxDown = true;
-  const before = sessionCount();
+  const before = await sessionCount();
   const { res, data } = await create({ amount: "20.00", currency: "GBP" });
   assert.equal(res.status, 503);
   assert.equal(data.error, "Exchange rates are unavailable right now. Price in USD or USDT, or try again in a minute.");
-  assert.equal(sessionCount(), before);
+  assert.equal(await sessionCount(), before);
   assert.equal((await create({ amount: "20.00", currency: "USD" })).res.status, 201, "USD needs no rate");
 });
 
@@ -121,7 +125,7 @@ test("the converted amount must still be 1.00–1,000.00 USDT (§4b: 1,000 per p
 test("returnUrl: http or https up to 200 characters is kept; any other scheme or a longer one is a 400", async () => {
   const { res, data } = await create({ amount: "25.00", returnUrl: "https://shop.example/thanks?order=42" });
   assert.equal(res.status, 201);
-  assert.equal(getSession(data.id).returnUrl, "https://shop.example/thanks?order=42");
+  assert.equal((await getSession(data.id)).returnUrl, "https://shop.example/thanks?order=42");
   assert.equal((await create({ amount: "25.00", returnUrl: "http://localhost:3000/" })).res.status, 201);
   for (const returnUrl of ["javascript:alert(1)", "JavaScript:alert(1)", "data:text/html,hi", "ftp://shop.example/", "/thanks", "shop.example", `https://shop.example/${"a".repeat(180)}`, 42]) {
     const bad = await create({ amount: "25.00", returnUrl });
@@ -135,7 +139,7 @@ test("a reference over 40 characters is a 400, never silently cut (claude-sdk)",
   assert.equal(res.status, 400);
   assert.equal(data.error, "reference must be at most 40 characters.");
   const ok = await create({ amount: "25.00", reference: ` ${"x".repeat(40)} ` });
-  assert.equal(getSession(ok.data.id).reference, "x".repeat(40), "trimmed, then counted");
+  assert.equal((await getSession(ok.data.id)).reference, "x".repeat(40), "trimmed, then counted");
   assert.equal((await create({ amount: "25.00", reference: 42 })).res.status, 400);
 });
 
@@ -164,17 +168,17 @@ test("Idempotency-Key: the same key and body give the first checkout back; anoth
 });
 
 test("Idempotency-Key: two requests at the same moment create one checkout", async () => {
-  const before = sessionCount();
+  const before = await sessionCount();
   const [a, b] = await Promise.all([create({ amount: "20.00", currency: "EUR" }, { "idempotency-key": "k-3" }), create({ amount: "20.00", currency: "EUR" }, { "idempotency-key": "k-3" })]);
   assert.equal(a.data.id, b.data.id);
-  assert.equal(sessionCount(), before + 1);
+  assert.equal(await sessionCount(), before + 1);
 });
 
 test("GET adds currency, priced and refunded (read from payments(id) on chain once paid)", async () => {
   const { data } = await create({ amount: "20.00", currency: "EUR", reference: "A-10" });
   const open = await poll(data.id);
   assert.deepEqual([open.status, open.currency, open.priced, open.refunded, open.amount], ["open", "EUR", data.priced, "0.00", "22.51"]);
-  recordPayment(data.id, { txHash: `0x${"ab".repeat(32)}`, blockNumber: "1", paymentId: "9", from: "0x5555555555555555555555555555555555555555", paidAt: Date.now() });
+  await recordPayment(data.id, { txHash: `0x${"ab".repeat(32)}`, blockNumber: "1", paymentId: "9", from: "0x5555555555555555555555555555555555555555", paidAt: Date.now(), amount: 22_510_000n });
   refunded = 2_500_000n;
   const paid = await poll(data.id);
   assert.deepEqual([paid.status, paid.paymentId, paid.refunded], ["paid", "9", "2.50"]);
@@ -187,35 +191,37 @@ test("GET adds currency, priced and refunded (read from payments(id) on chain on
 test("returnUrl is stored as the parsed URL, so a leading control character can't turn it into a link on our site", async () => {
   const { res, data } = await create({ amount: "25.00", returnUrl: "\u0000https://shop.example/thanks" });
   assert.equal(res.status, 201);
-  assert.equal(getSession(data.id).returnUrl, "https://shop.example/thanks");
-  assert.equal(getSession((await create({ amount: "25.00", returnUrl: "HTTPS://Shop.Example" })).data.id).returnUrl, "https://shop.example/");
+  assert.equal((await getSession(data.id)).returnUrl, "https://shop.example/thanks");
+  assert.equal((await getSession((await create({ amount: "25.00", returnUrl: "HTTPS://Shop.Example" })).data.id)).returnUrl, "https://shop.example/");
 });
 
-test("createSession itself refuses a returnUrl that isn't http or https, and keeps the parsed one", () => {
+test("createSession itself refuses a returnUrl that isn't http or https, and keeps the parsed one", async () => {
   const input = { merchant: process.env.MERCHANT_ADDRESS, merchantName: "Bandra Beans", amount: 25_000_000n, reference: "", items: [] };
-  assert.throws(() => createSession({ ...input, returnUrl: "javascript:alert(1)" }), /returnUrl must be an http or https URL/);
-  assert.throws(() => createSession({ ...input, returnUrl: `https://shop.example/${"a".repeat(180)}` }), /returnUrl/);
-  assert.equal(createSession({ ...input, returnUrl: " https://shop.example " }).returnUrl, "https://shop.example/");
-  assert.equal(createSession(input).returnUrl, undefined);
+  await assert.rejects(createSession({ ...input, returnUrl: "javascript:alert(1)" }), /returnUrl must be an http or https URL/);
+  await assert.rejects(createSession({ ...input, returnUrl: `https://shop.example/${"a".repeat(180)}` }), /returnUrl/);
+  assert.equal((await createSession({ ...input, returnUrl: " https://shop.example " })).returnUrl, "https://shop.example/");
+  assert.equal((await getSession((await createSession({ ...input, returnUrl: " https://shop.example " })).id)).returnUrl, "https://shop.example/", "stored parsed");
+  assert.equal((await createSession(input)).returnUrl, undefined);
+  assert.equal((await getSession((await createSession(input)).id)).returnUrl, undefined, "none stored");
 });
 
 // Security review 006 R2-F5: links and pages create checkouts for other merchants, so the shop key reads only its own.
 test("GET /api/v1/sessions/:id: another merchant's checkout is a 404 for this shop's key", async () => {
-  const other = createSession({ merchant: "0x9999999999999999999999999999999999999999", merchantName: "Elsewhere", amount: 5_000_000n, reference: "X-1", items: [] });
+  const other = await createSession({ merchant: "0x9999999999999999999999999999999999999999", merchantName: "Elsewhere", amount: 5_000_000n, reference: "X-1", items: [] });
   const res = await statusRoute(new Request(`http://shop.test/api/v1/sessions/${other.id}`, { headers: auth }), { params: Promise.resolve({ id: other.id }) });
   assert.equal(res.status, 404);
 });
 
-// Security review 006 F6: the Idempotency-Key store is capped (oldest dropped), so a shop can't grow it without limit.
-test("Idempotency-Key: the store keeps the newest 1,000 keys and forgets the oldest", async () => {
-  const body = (n) => ({ amount: "25.00", reference: `cap-${n}` });
-  for (let n = 0; n <= 1000; n++) {
-    if (n % 50 === 0) resetRateLimits(); // the 60-a-minute checkout limit (security 012 F3) isn't what this test is about
-    assert.equal((await create(body(n), { "idempotency-key": `cap-${n}` })).res.status, 201);
-  }
-  resetRateLimits();
-  assert.equal((await create(body(9999), { "idempotency-key": "cap-0" })).res.status, 201, "the oldest key was dropped: a new body is a new checkout");
-  assert.equal((await create(body(9999), { "idempotency-key": "cap-1000" })).res.status, 422, "the newest is kept");
+// Security review 006 F6: the Idempotency-Key store can't grow without limit. Batch 023: it is in the database, and a
+// slot is forgotten 24 h after it was taken (expiry by age replaces the 1,000-key cap).
+test("Idempotency-Key: a slot is kept for 24 h, then forgotten", async () => {
+  const body = (n) => ({ amount: "25.00", reference: `age-${n}` });
+  assert.equal((await create(body(1), { "idempotency-key": "age" })).res.status, 201);
+  await query("UPDATE app_web_idempotency SET created_at = created_at - $1", [23 * 60 * 60 * 1000]);
+  assert.equal((await create(body(2), { "idempotency-key": "age" })).res.status, 422, "23 h on: still kept");
+  await query("UPDATE app_web_idempotency SET created_at = created_at - $1", [60 * 60 * 1000 + 1]);
+  assert.equal((await create(body(2), { "idempotency-key": "age" })).res.status, 201, "past 24 h: a new body is a new checkout");
+  assert.equal(Number((await query("SELECT count(*)::text AS n FROM app_web_idempotency"))[0].n), 1, "the old slot is gone, not kept beside the new one");
 });
 
 // Security review 012 F3: any signed-in wallet can mint a key, so one merchant's key can't flood the checkout store.
@@ -234,11 +240,11 @@ test("a rate outside quotes.ts's ±15% band (here a flipped EUR rate) is refused
   const usual = globalThis.fetch;
   globalThis.fetch = async (url) => (fxCalls.push(String(url)), Response.json(flipped));
   try {
-    const before = sessionCount();
+    const before = await sessionCount();
     const { res, data } = await create({ amount: "20.00", currency: "EUR" });
     assert.equal(res.status, 503);
     assert.equal(data.error, "Prices in EUR are unavailable right now. Try again in a minute.");
-    assert.equal(sessionCount(), before);
+    assert.equal(await sessionCount(), before);
     assert.equal((await create({ amount: "20.00", currency: "GBP" })).res.status, 201, "the other rates in the same answer still price");
   } finally {
     globalThis.fetch = usual;

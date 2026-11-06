@@ -6,6 +6,7 @@ import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { Checkout } from "@/components/Checkout";
+import { HostedNotice } from "@/components/gateway/Hosted";
 import { StaticScene } from "@/components/StaticScene";
 import { payConfig } from "@/lib/config";
 import { amountDue } from "@/lib/server/vouchers";
@@ -49,15 +50,35 @@ async function codeTerms(session: Session): Promise<{ total: bigint; due: bigint
   }
 }
 
+/** The checkout from the store (the database, batch 023), settled first if an earlier attempt's outcome is unknown: our
+ *  server asks the chain (never the browser, FR-PRIV-1). `pending`: that attempt, or one being relayed right now, may
+ *  land, so the sheet shows "confirming", never "expired" (security review 004 R2 F1). Undefined: no such checkout. */
+async function readCheckout(id: string): Promise<{ session: Session; pending: boolean } | undefined> {
+  const found = await getSession(id);
+  if (!found) return undefined;
+  const pay = payConfig();
+  const state = found.pending && pay ? await settlePending(found, pay.merchantPay) : null;
+  const session = (await getSession(id)) ?? found;
+  return { session, pending: (await pageState(state ?? "open", session.id)) === "pending" };
+}
+
 async function CheckoutLoader({ params }: Pick<PageProps<"/checkout/[sessionId]">, "params">) {
   const { sessionId } = await params;
   await connection(); // the session and its code are read per request, never in a prerender pass
-  const found = getSession(sessionId);
-  if (!found) notFound();
+  const read = await readCheckout(sessionId).catch((error: unknown) => {
+    console.error(`checkout ${sessionId}: not read: ${error instanceof Error ? error.name : "error"}`);
+    return null;
+  });
+  if (read === null) {
+    return (
+      <HostedNotice eyebrow="Checkout" title="We can't open this checkout right now" action={{ href: `/checkout/${encodeURIComponent(sessionId)}`, label: "Try again" }}>
+        Nothing was charged. Try again in a minute.
+      </HostedNotice>
+    );
+  }
+  if (!read) notFound();
+  const { session } = read;
   const pay = payConfig();
-  // an earlier attempt with an unknown outcome: our server asks the chain (never the browser, FR-PRIV-1)
-  const state = found.pending && pay ? await settlePending(found, pay.merchantPay) : null;
-  const session = getSession(sessionId) ?? found;
   // paid: re-announce (idempotent), so a lost payment.succeeded or uncounted code recovers on a visit (G4 code M2);
   // open: warm the relayer this customer is about to use (claude-relayer 09:42)
   if (session.payment) announcePaid(session, session.payment.amount ?? session.amount);
@@ -79,8 +100,7 @@ async function CheckoutLoader({ params }: Pick<PageProps<"/checkout/[sessionId]"
       sale={pay ? { merchantPay: pay.merchantPay, merchant: session.merchant, orderRef: session.orderRef, amount: amount.toString() } : null}
       expiresAt={session.expiresAt}
       paid={Boolean(session.payment)}
-      // a payment being relayed right now may land: show "confirming", never "expired" (security review 004 R2 F1)
-      pending={pageState(state ?? "open", session.id) === "pending"}
+      pending={read.pending}
     />
   );
 }

@@ -25,7 +25,9 @@ test("no source names Whitechain mainnet (chain id 1875 or viem's `whitechain`)"
 test("every chain id and chain the app signs or reads with is Whitechain Sepolia (1874)", () => {
   // the one exception: lib/anon.ts reads Nym's specifier contract on Ethereum mainnet to find its worker
   // (a disclosed read, FR-PRIV-4); no money moves there
-  const allowed = new Set(["whitechainSepolia", "whitechainSepolia.id", "SIGN_IN_CHAIN_ID", "1874"]);
+  // WHITECHAIN_TESTNET.chainId: the network the onboarding asks a wallet to add, pinned to toHex(whitechainSepolia.id)
+  // by test/onboarding.test.mjs
+  const allowed = new Set(["whitechainSepolia", "whitechainSepolia.id", "SIGN_IN_CHAIN_ID", "1874", "WHITECHAIN_TESTNET.chainId"]);
   for (const { file, text } of sources) {
     for (const [, value] of text.matchAll(/[{,]\s*\bchain(?:Id)?:\s*([\w.]+)/g)) {
       if (file === "lib/anon.ts" && value === "mainnet") continue;

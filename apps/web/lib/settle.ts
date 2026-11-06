@@ -10,7 +10,7 @@ import { saleSettled, type Invoice } from "./onchain.ts";
 import { checkoutOf, type Checkout } from "./server/checkouts.ts";
 import { DbUnavailable } from "./server/db.ts";
 import { releaseHold } from "./server/vouchers.ts";
-import { claimPayment, clearPending, getSession, invoiceAttempt, isInFlight, recordPayment, releasePayment, setInvoiceAttempt, type Session } from "./sessions.ts";
+import { claimPayment, clearInvoicePending, clearPending, getSession, invoiceAttempt, isInFlight, recordPayment, releasePayment, samePending, type Session } from "./sessions.ts";
 
 // our server clock vs chain time: wait this long past validBefore before calling an approval dead
 const CLOCK_MARGIN_S = 60n;
@@ -41,7 +41,7 @@ export async function findPayment(session: Session, merchantPay: Address, payer:
     console.error(`checkout ${session.id}: chain read failed: ${error instanceof Error ? error.message : String(error)}`);
     return undefined;
   });
-  if (paymentId) announcePaid(recordPayment(session.id, { txHash: null, blockNumber: null, paymentId, from: payer, paidAt: Date.now(), amount }), amount);
+  if (paymentId) announcePaid(await recordPayment(session.id, { txHash: null, blockNumber: null, paymentId, from: payer, paidAt: Date.now(), amount }), amount);
   return paymentId;
 }
 
@@ -55,38 +55,38 @@ export async function settlePending(session: Session, merchantPay: Address, { no
   if (paymentId) return "paid";
   if (paymentId === null && BigInt(Math.floor(now / 1000)) > pending.validBefore + CLOCK_MARGIN_S) {
     if (pending.amount !== undefined) return reopen(session.id, pending, locked);
-    clearPending(session.id, pending); // only this attempt: a newer one may have arrived during the read
-    return getSession(session.id)?.pending ? "pending" : "open";
+    await clearPending(session.id, pending); // only this attempt: a newer one may have arrived during the read
+    return (await getSession(session.id))?.pending ? "pending" : "open";
   }
   return "pending";
 }
 
 /** A dead link or page attempt (F1 iii): clear it and release its hold, under the in-flight lock. */
 async function reopen(id: string, pending: NonNullable<Session["pending"]>, locked: boolean): Promise<Settlement> {
-  const lockedHere = !locked && claimPayment(id);
+  const lockedHere = locked ? null : await claimPayment(id);
   if (!locked && !lockedHere) return "pending"; // a payment is in flight right now: it settles this attempt itself
   try {
-    const current = getSession(id);
-    if (current?.pending !== pending) return current?.payment ? "paid" : current?.pending ? "pending" : "open"; // settled meanwhile
-    clearPending(id, pending);
+    const current = await getSession(id);
+    if (current?.payment || !samePending(current?.pending, pending)) return current?.payment ? "paid" : current?.pending ? "pending" : "open"; // settled meanwhile
+    await clearPending(id, pending);
     await releaseClaim(id);
     return "open";
   } finally {
-    if (lockedHere) releasePayment(id);
+    if (lockedHere) await releasePayment(id, lockedHere);
   }
 }
 
 export type InvoiceState = Invoice["status"] | "pending";
 
 /** What an invoice shows, from its status just read on chain. An open invoice with an unknown attempt stays pending
- *  ("Don't pay again") until that attempt's approval is past its validBefore; any other status ends it. Synchronous,
- *  so nothing can replace the attempt between the check and the clear. */
-export function invoiceState(id: string, status: Invoice["status"], now = Date.now()): InvoiceState {
-  const attempt = invoiceAttempt(id);
+ *  ("Don't pay again") until that attempt's approval is past its validBefore; any other status ends it. The clear
+ *  compares, so an attempt stored since the read stays, and an open invoice then still reads as pending. */
+export async function invoiceState(id: string, status: Invoice["status"], now = Date.now()): Promise<InvoiceState> {
+  const attempt = await invoiceAttempt(id);
   if (!attempt.pending) return status;
   if (status === "open" && BigInt(Math.floor(now / 1000)) <= attempt.pending.validBefore + CLOCK_MARGIN_S) return "pending";
-  setInvoiceAttempt(id, { ...attempt, pending: undefined });
-  return status;
+  await clearInvoicePending(id, attempt.pending);
+  return status === "open" && (await invoiceAttempt(id)).pending ? "pending" : status;
 }
 
 /** /pay serves and relays only the shop's own invoices (human, 2026-11-06 02:3x): no pay pages for payees we never
@@ -97,6 +97,6 @@ export function isShopInvoice(invoice: Invoice, shop: Address | undefined): bool
 
 /** What a pay page shows: an open checkout or invoice whose payment is being relayed right now may land, so it reads as
  *  pending, never offering the button or "ask for a new one" (security review 004 R2 F1). `lock` is the in-flight key. */
-export function pageState<T extends string>(state: T, lock: string): T | "pending" {
-  return state === "open" && isInFlight(lock) ? "pending" : state;
+export async function pageState<T extends string>(state: T, lock: string): Promise<T | "pending"> {
+  return state === "open" && (await isInFlight(lock)) ? "pending" : state;
 }

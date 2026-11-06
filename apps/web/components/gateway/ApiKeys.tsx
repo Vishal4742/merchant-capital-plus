@@ -1,7 +1,7 @@
 "use client";
 
 // API keys on the Developers screen (FR-GW-6, test mode only per FR-GW-14): create a publishable or secret key, see it
-// once, list the live ones (label, kind, prefix, created, last used) and revoke one in two steps. The list is read on
+// once, list the active ones (label, kind, prefix, created, last used) and revoke one in two steps. The list is read on
 // our server; creating and revoking call the gateway from this browser, then the list reloads (the new key is never in it).
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
@@ -25,7 +25,7 @@ const KINDS: Record<KeyKind, { name: string; where: string; stops: string }> = {
 export function ApiKeys({ keys }: { keys: KeyRow[] }) {
   return (
     <section aria-labelledby="api-keys" className="grid gap-4">
-      <SectionLabel id="api-keys">API keys · {keys.length} live · test mode</SectionLabel>
+      <SectionLabel id="api-keys">API keys · {keys.length} active · test mode</SectionLabel>
       <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,380px)_minmax(0,1fr)]">
         <NewKeyCard />
         {keys.length === 0 ? (
@@ -102,7 +102,7 @@ function NewKeyCard() {
         </p>
       )}
       {created && (
-        <RevealOnce title={`New ${KINDS[created.kind].name.toLowerCase()} key · ${created.label}`} value={created.key} noun="key" onDone={() => setCreated(null)}>
+        <RevealOnce title={`New ${KINDS[created.kind].name.toLowerCase()} key · ${created.label}`} value={created.key} noun="key" envName={created.kind === "sk" ? "GATEWAY_SECRET_KEY" : undefined} onDone={() => setCreated(null)}>
           {created.kind === "sk" ? "Put it in GATEWAY_SECRET_KEY on your server. Never put it in a web page or an app." : "It's safe in a web page. It can't create checkouts or read payments."}
         </RevealOnce>
       )}

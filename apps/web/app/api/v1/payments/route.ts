@@ -38,7 +38,7 @@ export async function GET(request: Request) {
       .sort((a, b) => (a.paymentId < b.paymentId ? 1 : -1));
     const page = rest.slice(0, limit);
     const records = await Promise.all(page.map((log) => readPayment(pay.merchantPay, log.paymentId)));
-    const sessions = new Map(listPayments(shop.merchant).map(({ session, payment }) => [payment.paymentId, session]));
+    const sessions = new Map((await listPayments(shop.merchant)).map(({ session, payment }) => [payment.paymentId, session]));
     const data = page.flatMap((log, i) => {
       const record = records[i];
       if (record.gross === 0n || !same(record.merchant, shop.merchant)) return []; // the index named a payment that isn't this merchant's
@@ -59,7 +59,7 @@ export async function GET(request: Request) {
     const next = rest.length > limit ? page[page.length - 1].paymentId.toString() : null;
     return Response.json({ data, next }, { headers: { "cache-control": "no-store" } });
   } catch (error) {
-    console.error(`payments list: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`payments list: ${error instanceof Error ? error.name : "error"}`); // the name only (NFR-8; security 026 F5)
     return fail(503, "Payments can't be read right now. Please try again in a minute.");
   }
 }

@@ -1,7 +1,7 @@
 "use client";
 
 // A new API key or webhook signing secret, shown once (FR-GW-6, FR-GW-7): the value in the mono face with the shared
-// CopyButton, and a plain "you won't see it again". It lives only in the screen's memory: never a URL, storage or a
+// CopyButton (and, for a server secret, "Copy as .env line": NAME=value), and a plain "you won't see it again". It lives only in the screen's memory: never a URL, storage or a
 // log, and the server never renders it, so no later page's RSC payload has it. It goes when the merchant presses
 // "I've saved it", reloads or leaves (pagehide also clears it before a back/forward cache snapshot).
 import { useEffect, useId, useRef, type ReactNode } from "react";
@@ -12,7 +12,7 @@ import { CopyButton } from "@/components/CopyButton";
 // the gateway v2 spring (overshoot, then settle), written out as in globals.css .lift
 const SPRING = "linear(0, .009, .035 2.1%, .141, .281 6.7%, .723 12.9%, .938 16.7%, 1.017, 1.077, 1.121, 1.149 24.3%, 1.159, 1.163, 1.161, 1.154 29.9%, 1.129 32.8%, 1.051 39.6%, 1.017 43.1%, .991, .977 51%, .974 53.8%, .975 57.1%, .997 69.8%, 1.003 76.9%, 1.004 83.8%, 1)";
 
-export function RevealOnce({ title, value, noun, children, onDone }: { title: string; value: string; noun: "key" | "secret"; children?: ReactNode; onDone: () => void }) {
+export function RevealOnce({ title, value, noun, envName, children, onDone }: { title: string; value: string; noun: "key" | "secret"; envName?: string; children?: ReactNode; onDone: () => void }) {
   const id = useId(); // the key and the secret panels can be open at once
   const heading = useRef<HTMLHeadingElement>(null);
   const done = useRef(onDone);
@@ -34,9 +34,12 @@ export function RevealOnce({ title, value, noun, children, onDone }: { title: st
       <h3 id={id} ref={heading} tabIndex={-1} className="eyebrow text-accent outline-none">
         {title}
       </h3>
-      <div className="flex min-w-0 items-center gap-2 rounded-[12px] border border-hairline bg-surface py-1 pr-1 pl-3">
-        <code className="data min-w-0 flex-1 py-2 break-all select-all">{value}</code>
-        <CopyButton text={value} name={`the new ${noun}`} />
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 rounded-[12px] border border-hairline bg-surface py-1 pr-1 pl-3">
+        <code className="data min-w-0 flex-[1_1_16rem] py-2 break-all select-all">{value}</code>
+        <span className="ml-auto flex shrink-0 items-center">
+          <CopyButton text={value} name={`the new ${noun}`} />
+          {envName && <CopyButton text={`${envName}=${value}`} name={`as .env line, the new ${noun}`} label="Copy as .env line" />}
+        </span>
       </div>
       <p className="text-sm font-medium">You won&apos;t see this {noun} again. Copy it now.</p>
       {children && <p className="text-sm text-ink-muted">{children}</p>}
