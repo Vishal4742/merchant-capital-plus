@@ -31,7 +31,7 @@ const openInvoice = (merchant = MERCHANT, amount = 25_000_000n, status = 1, paid
 
 test("invoices(id) is read with its status in words (None/Open/Paid/Cancelled)", async () => {
   const { read, calls } = chain({ invoices: { 7n: openInvoice(), 8n: openInvoice(MERCHANT, 5_000_000n, 2), 9n: openInvoice(MERCHANT, 1_000_000n, 3) } });
-  assert.deepEqual(await readInvoice(MERCHANT_PAY, 7n, { read }), { id: 7n, merchant: MERCHANT, dueDate: 1_900_000_000n, status: "open", amount: 25_000_000n, paid: 0n });
+  assert.deepEqual(await readInvoice(MERCHANT_PAY, 7n, { read }), { id: 7n, merchant: MERCHANT, dueDate: 1_900_000_000n, status: "open", customer: "0x0000000000000000000000000000000000000000", amount: 25_000_000n, paid: 0n });
   assert.equal((await readInvoice(MERCHANT_PAY, 8n, { read })).status, "paid");
   assert.equal((await readInvoice(MERCHANT_PAY, 9n, { read })).status, "cancelled");
   assert.equal((await readInvoice(MERCHANT_PAY, 99n, { read })).status, "missing");

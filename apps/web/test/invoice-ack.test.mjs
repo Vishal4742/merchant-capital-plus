@@ -1,10 +1,12 @@
 // Batch 047 (FR-INV-8, FR-ARK-4): the debtor acknowledges an invoice with an EIP-712 message (no transaction, no money),
-// POST /api/v1/invoices/:id/acknowledge checks it against the invoice our server reads on chain and keeps the first
-// valid one, and the offer book shows it. A real Postgres in-process (PGlite); the chain read is faked.
-// Run from apps/web: npm test
+// POST /api/v1/invoices/:id/acknowledge checks it against the invoice our server reads on chain and keeps each key's
+// first ack, and the offer book shows it honestly: "Debtor acknowledged ✓" only when the invoice names that customer
+// wallet on chain (security review 047 H1), otherwise a pay-link holder's ack with the identity not checked.
+// A real Postgres in-process (PGlite); the chain read is faked. Run from apps/web: npm test
 import { test, before, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { zeroAddress } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { setupDb, resetDb, req, params } from "./gw-helpers.mjs";
 
@@ -31,57 +33,71 @@ mock.module("../lib/onchain.ts", {
 
 const { POST: acknowledge } = await import("../app/api/v1/invoices/[id]/acknowledge/route.ts");
 const { ackDomain, ackTypedData, ackTypes } = await import("../lib/invoice-ack.ts");
-const { acksFor } = await import("../lib/server/invoice-acks.ts");
+const { acksFor, ackView } = await import("../lib/server/invoice-acks.ts");
 const { offerBook, offerTerms } = await import("../lib/server/capital-arkiv.ts");
 const { query } = await import("../lib/server/db.ts");
 const shared = await import("../../../packages/shared/contracts.ts");
 
 const ID = "7";
+const DUE = 1_900_000_000n;
+const short = (a) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 before(setupDb);
 beforeEach(async () => {
   await resetDb();
-  invoice = { merchant: shop.address, dueDate: 1_900_000_000n, status: "open", amount: 25_000_000n, paid: 0n };
+  invoice = { merchant: shop.address, dueDate: DUE, status: "open", customer: zeroAddress, amount: 25_000_000n, paid: 0n };
   readFails = false;
 });
 
-const terms = (over = {}) => ({ invoiceId: BigInt(ID), merchant: invoice.merchant, amount: invoice.amount, dueDate: invoice.dueDate, ...over });
+const terms = (over = {}) => ({ merchantPay: MERCHANT_PAY, invoiceId: BigInt(ID), merchant: invoice.merchant, amount: invoice.amount, dueDate: invoice.dueDate, ...over });
 async function signed({ signer = debtor, claimed = signer.address, over = {}, domain = ackDomain } = {}) {
   const typed = ackTypedData(terms(over), claimed);
   return { debtor: claimed, signature: await signer.signTypedData({ ...typed, domain }) };
 }
 const call = (body, id = ID, ip = "203.0.113.7") =>
   acknowledge(req("POST", `/api/v1/invoices/${id}/acknowledge`, { body, headers: { "x-forwarded-for": ip } }), params({ id }));
-const rows = () => query("SELECT invoice_id, debtor, signature, signed_at::text AS signed_at FROM app_gw_invoice_acks");
+const rows = () => query("SELECT invoice_id, debtor, merchant, amount::text AS amount, due_date::text AS due_date, customer_bound, signature, signed_at::text AS signed_at FROM app_gw_invoice_acks ORDER BY signed_at");
 
-test("the typed data: Merchant Capital+ v1 on chain 1874, CapitalMarket from packages/shared, the invoice's terms", () => {
+test("the typed data: Merchant Capital+ v1 on chain 1874, CapitalMarket from packages/shared, MerchantPay and the invoice", () => {
   assert.deepEqual(ackDomain, { name: "Merchant Capital+", version: "1", chainId: 1874, verifyingContract: ackDomain.verifyingContract });
   assert.equal(ackDomain.verifyingContract.toLowerCase(), shared.addresses.capitalMarket.toLowerCase());
-  assert.deepEqual(ackTypes.InvoiceAck.map((f) => `${f.type} ${f.name}`), ["uint256 invoiceId", "address merchant", "uint256 amount", "uint64 dueDate", "address debtor"]);
+  assert.deepEqual(ackTypes.InvoiceAck.map((f) => `${f.type} ${f.name}`), ["address merchantPay", "uint256 invoiceId", "address merchant", "uint256 amount", "uint64 dueDate", "address debtor"]);
   const t = ackTypedData(terms(), debtor.address);
   assert.equal(t.primaryType, "InvoiceAck");
-  assert.deepEqual(t.message, { invoiceId: 7n, merchant: shop.address, amount: 25_000_000n, dueDate: 1_900_000_000n, debtor: debtor.address });
+  assert.deepEqual(t.message, { merchantPay: MERCHANT_PAY, invoiceId: 7n, merchant: shop.address, amount: 25_000_000n, dueDate: DUE, debtor: debtor.address });
 });
 
-test("a valid acknowledgement is stored once and answered with the debtor and the time", async () => {
+test("a valid acknowledgement is stored with the invoice's terms; with no customer named it is not verified", async () => {
   const body = await signed();
   const res = await call(body);
   assert.equal(res.status, 200);
   const data = await res.json();
-  assert.equal(data.acknowledged, true);
-  assert.equal(data.debtor, debtor.address);
+  assert.deepEqual([data.acknowledged, data.debtor, data.verified], [true, debtor.address, false]);
   assert.ok(Math.abs(Date.parse(data.signed_at) - Date.now()) < 5_000);
-  const stored = await rows();
-  assert.equal(stored.length, 1);
-  assert.deepEqual([stored[0].invoice_id, stored[0].debtor, stored[0].signature], [ID, debtor.address, body.signature]);
+  const [row, ...rest] = await rows();
+  assert.equal(rest.length, 0);
+  assert.deepEqual([row.invoice_id, row.debtor, row.merchant, row.amount, row.due_date, row.customer_bound, row.signature], [ID, debtor.address, shop.address, "25000000", String(DUE), false, body.signature]);
 });
 
-test("refused, nothing stored: wrong signer, tampered amount, merchant or due date, wrong chain or contract", async () => {
+test("H1: an invoice that names its customer wallet takes that wallet's ack only, and marks it verified", async () => {
+  invoice = { ...invoice, customer: debtor.address };
+  const other = await call(await signed({ signer: someoneElse }));
+  assert.equal(other.status, 403);
+  assert.match((await other.json()).error, /names its customer's wallet/);
+  assert.equal((await rows()).length, 0);
+  const res = await call(await signed());
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).verified, true);
+  assert.equal((await rows())[0].customer_bound, true);
+});
+
+test("refused, nothing stored: wrong signer, tampered terms, another MerchantPay, wrong chain or contract", async () => {
   const cases = {
     "wrong signer": await signed({ signer: someoneElse, claimed: debtor.address }),
     "tampered amount": await signed({ over: { amount: 1_000_000n } }),
     "tampered merchant": await signed({ over: { merchant: someoneElse.address } }),
     "tampered due date": await signed({ over: { dueDate: 2_000_000_000n } }),
     "another invoice": await signed({ over: { invoiceId: 8n } }),
+    "another MerchantPay": await signed({ over: { merchantPay: someoneElse.address } }),
     "wrong chain": await signed({ domain: { ...ackDomain, chainId: 1 } }),
     "wrong contract": await signed({ domain: { ...ackDomain, verifyingContract: MERCHANT_PAY } }),
   };
@@ -103,17 +119,15 @@ test("malformed bodies are 400s: no debtor, not an address, a short signature, n
   assert.equal((await rows()).length, 0);
 });
 
-test("idempotent: the same debtor again is a no-op with the first time; another debtor gets 409", async () => {
+test("M1: each key keeps its own first ack; the same key again is a no-op with its first time", async () => {
   const first = await (await call(await signed())).json();
+  const other = await call(await signed({ signer: someoneElse }));
+  assert.equal(other.status, 200, "a second pay-link holder adds its own ack: the first can't squat the invoice");
   const again = await call(await signed());
   assert.equal(again.status, 200);
   assert.equal((await again.json()).signed_at, first.signed_at, "the first ack's time, unchanged");
-  const other = await call(await signed({ signer: someoneElse }));
-  assert.equal(other.status, 409);
-  assert.match((await other.json()).error, /already acknowledged/);
   const stored = await rows();
-  assert.equal(stored.length, 1);
-  assert.equal(stored[0].debtor, debtor.address, "the first valid ack wins");
+  assert.deepEqual(stored.map((r) => r.debtor), [debtor.address, someoneElse.address]);
 });
 
 test("only our shop's open invoices, and never by the shop itself", async () => {
@@ -134,7 +148,7 @@ test("only our shop's open invoices, and never by the shop itself", async () => 
 });
 
 // The browser side (lib/sign-sale.ts signAck) against the route: this browser's guest key, and a wallet's provider.
-const textTerms = () => ({ invoiceId: ID, merchant: invoice.merchant, amount: invoice.amount.toString(), dueDate: invoice.dueDate.toString() });
+const textTerms = () => ({ merchantPay: MERCHANT_PAY, invoiceId: ID, merchant: invoice.merchant, amount: invoice.amount.toString(), dueDate: invoice.dueDate.toString() });
 
 test("the guest key's acknowledgement (the default way in) is accepted by the route", async () => {
   const store = new Map();
@@ -181,18 +195,26 @@ test("rate limited per IP: the 11th call in a minute is a 429, another IP still 
   assert.equal((await call(body, ID, "198.51.100.9")).status, 200);
 });
 
-test("acksFor reads only this MerchantPay's invoices (ids restart on a redeploy)", async () => {
+test("acksFor reads only this MerchantPay's invoices, oldest first; ackView matches the terms and counts (L1)", async () => {
   await call(await signed());
+  await call(await signed({ signer: someoneElse }));
   const mine = await acksFor(MERCHANT_PAY, [7n, 8n]);
   assert.deepEqual([...mine.keys()], ["7"]);
-  assert.equal(mine.get("7").debtor, debtor.address);
+  assert.deepEqual(mine.get("7").map((a) => a.debtor), [debtor.address, someoneElse.address]);
   assert.equal((await acksFor("0x3333333333333333333333333333333333333333", [7n])).size, 0);
   assert.equal((await acksFor(MERCHANT_PAY, [])).size, 0);
+  const same = { merchant: shop.address, amount: 25_000_000n, dueDate: DUE };
+  const view = ackView(mine.get("7"), same);
+  assert.deepEqual({ ...view, signed_at: typeof view.signed_at }, { verified: false, debtor: short(debtor.address), signed_at: "string", count: 2 });
+  assert.equal(ackView(mine.get("7"), { ...same, amount: 1n }), null, "another amount");
+  assert.equal(ackView(mine.get("7"), { ...same, dueDate: 1n }), null, "another due date");
+  assert.equal(ackView(mine.get("7"), { ...same, merchant: someoneElse.address }), null, "another merchant");
+  assert.equal(ackView([], same), null);
 });
 
 // The offer book (GET /api/v1/capital/offers): chain offers faked like test/capital-arkiv.test.mjs.
 const NOW = Math.floor(Date.now() / 1000);
-const offer = (o = {}) => ({ claimId: 1n, kind: "invoice", merchant: shop.address, offerDeadline: NOW + 3600, bps: 0, cancelled: false, settled: false, invoiceId: 7n, face: 25_000_000n, price: 24_000_000n, maturity: NOW + 30 * 86400, sold: 0n, ...o });
+const offer = (o = {}) => ({ claimId: 1n, kind: "invoice", merchant: shop.address, offerDeadline: NOW + 3600, bps: 0, cancelled: false, settled: false, invoiceId: 7n, face: 25_000_000n, price: 24_000_000n, maturity: Number(DUE), sold: 0n, ...o });
 const tuple = (o) => [o.kind === "advance" ? 2 : 1, o.merchant, BigInt(o.offerDeadline), o.bps, o.cancelled, o.settled, o.invoiceId, o.face, o.price, BigInt(o.maturity), o.sold];
 function book(offers) {
   const read = async (r) => {
@@ -203,18 +225,32 @@ function book(offers) {
   return offerBook({ read, arkiv: { rows: async () => [], create: async () => "0x", patch: async () => {} } });
 }
 
-test("offers: debtor_acknowledged and the short debtor for an acknowledged invoice; false/null otherwise (FR-INV-8)", async () => {
+test("offers: a pay-link holder's ack is shown unverified (debtor_acknowledged false); a named customer's is true (H1)", async () => {
   await call(await signed());
-  const offers = await book({ 1: offer(), 2: offer({ claimId: 2n, invoiceId: 8n }), 3: offer({ claimId: 3n, kind: "advance", invoiceId: 0n, bps: 2000 }) });
-  const [acked, notYet, advance] = offers;
-  assert.equal(acked.debtor_acknowledged, true);
-  assert.equal(acked.debtor_ack.debtor, `${debtor.address.slice(0, 6)}…${debtor.address.slice(-4)}`, "the short address only");
-  assert.ok(Date.parse(acked.debtor_ack.signed_at) > 0);
-  assert.deepEqual(Object.keys(acked.debtor_ack).sort(), ["debtor", "signed_at"], "never the signature");
-  assert.equal(notYet.debtor_acknowledged, false);
-  assert.equal(notYet.debtor_ack, null);
-  assert.equal(advance.debtor_acknowledged, false, "an advance has no debtor");
-  assert.doesNotMatch(JSON.stringify(offers), new RegExp(debtor.address.slice(2), "i"), "no full debtor address in the public book");
+  await call(await signed({ signer: someoneElse }));
+  const [linkHolders, notYet, advance] = await book({ 1: offer(), 2: offer({ claimId: 2n, invoiceId: 8n }), 3: offer({ claimId: 3n, kind: "advance", invoiceId: 0n, bps: 2000 }) });
+  assert.equal(linkHolders.debtor_acknowledged, false, "nobody's identity was checked");
+  assert.deepEqual({ ...linkHolders.debtor_ack, signed_at: typeof linkHolders.debtor_ack.signed_at }, { verified: false, debtor: short(debtor.address), signed_at: "string", count: 2 });
+  assert.deepEqual([notYet.debtor_acknowledged, notYet.debtor_ack], [false, null]);
+  assert.deepEqual([advance.debtor_acknowledged, advance.debtor_ack], [false, null], "an advance has no debtor");
+  assert.doesNotMatch(JSON.stringify([linkHolders, notYet, advance]), new RegExp(`${debtor.address.slice(2)}|signature`, "i"), "the short address only, never the signature");
+
+  await resetDb();
+  invoice = { ...invoice, customer: debtor.address };
+  await call(await signed());
+  const [bound] = await book({ 1: offer() });
+  assert.equal(bound.debtor_acknowledged, true);
+  assert.equal(bound.debtor_ack.verified, true);
+});
+
+test("offers L1: an ack joins only our shop's offer with the same face and maturity as the signed invoice", async () => {
+  await call(await signed());
+  const [other, face, maturity] = await book({
+    1: offer({ merchant: someoneElse.address }),
+    2: offer({ claimId: 2n, face: 30_000_000n, price: 29_000_000n }),
+    3: offer({ claimId: 3n, maturity: Number(DUE) + 60 }),
+  });
+  for (const [name, o] of Object.entries({ other, face, maturity })) assert.equal(o.debtor_ack, null, name);
 });
 
 test("offers: an unreadable ack store still shows the book, as not acknowledged, and logs it", async (t) => {
@@ -230,8 +266,7 @@ test("offers: an unreadable ack store still shows the book, as not acknowledged,
   }
 });
 
-test("FR-ARK-4: the Arkiv entity carries no debtor and no signature", async () => {
-  await call(await signed());
+test("FR-ARK-4: the Arkiv entity carries no debtor and no signature", () => {
   const keys = Object.keys(offerTerms(offer()));
   assert.ok(!keys.some((k) => /debtor|signature|acknowledg/i.test(k)), keys.join(","));
 });
@@ -239,12 +274,11 @@ test("FR-ARK-4: the Arkiv entity carries no debtor and no signature", async () =
 // UI states: a client component can't render in node:test, so the states are pinned in the source (the house pattern).
 const source = (file) => readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
 
-test("pay page: the action shows only for an open invoice with no ack; plain copy; guest, browser wallet and Privy", () => {
+test("pay page: the action only while the invoice can be paid; plain copy; guest, browser wallet and Privy", () => {
   const sheet = source("components/InvoicePay.tsx");
-  assert.match(sheet, /\{payable && terms && <InvoiceAck terms=\{ackTerms\} ack=\{ack\} \/>\}/, "only while the invoice can be paid");
+  assert.match(sheet, /\{payable && terms && <InvoiceAck terms=\{ackTerms\} acks=\{acks\} customer=\{ackCustomer\} guest=\{guest\.address\} \/>\}/);
   const ack = source("components/InvoiceAck.tsx");
   assert.match(ack, /You confirm you owe this invoice\. This doesn&apos;t pay it and moves no money\./);
-  assert.match(ack, /if \(acked\) \{\s*return \(\s*<p role="status"[^>]*>\s*Acknowledged ✓/, "acknowledged: no button, the time instead");
   assert.match(ack, />\s*\{busy === "guest" \? "Acknowledging…" : "Acknowledge this invoice"\}/, "the default way: this browser's key");
   assert.match(ack, /data-pay-option="wallet"/, "only the wallet block says wallet (FR-PAY-7)");
   assert.match(ack, /connectVia\(via\)/, "the same connect as paying (browser wallet or Privy)");
@@ -253,14 +287,36 @@ test("pay page: the action shows only for an open invoice with no ack; plain cop
   assert.match(ack, /\/api\/v1\/invoices\/\$\{terms\.invoiceId\}\/acknowledge/);
   assert.doesNotMatch(ack, /eth_sendTransaction|sendTransaction|writeContract/, "a message, never a transaction");
   const page = source("app/pay/[invoiceId]/page.tsx");
-  assert.match(page, /acksFor\(pay\.merchantPay, \[BigInt\(invoiceId\)\]\)/, "the server reads the ack");
+  assert.match(page, /acksFor\(pay\.merchantPay, \[BigInt\(invoiceId\)\]\)/, "the server reads the acks");
 });
 
-test("investor and merchant views: Debtor acknowledged ✓ or Not acknowledged yet", () => {
+test("pay page M1: this key's own ack vs another key's, the count, and the named customer wallet", () => {
+  const ack = source("components/InvoiceAck.tsx");
+  assert.match(ack, /const same = \(a: string, b: string\) => a\.toLowerCase\(\) === b\.toLowerCase\(\);/);
+  assert.match(ack, /guest && acks\.find\(\(a\) => same\(a\.debtor, short\(guest\)\)\)/, "the stored short debtor against this browser's key");
+  assert.match(ack, /You acknowledged this invoice/);
+  assert.match(ack, /Acknowledged by another key \(\{others\[0\]\.debtor\}\)/);
+  assert.match(ack, /\$\{count\} acknowledgements/);
+  assert.match(ack, /Only the customer wallet this invoice names \(\{customer\}\) can acknowledge it\./);
+});
+
+test("investor and merchant views: ✓ only for the named customer's ack; a pay-link holder's says identity not checked", () => {
   const view = source("components/DebtorAck.tsx");
-  assert.match(view, /Debtor acknowledged ✓/);
+  assert.match(view, /if \(ack\.verified\) \{\s*return \(\s*<span[^>]*>\s*Debtor acknowledged ✓/);
+  assert.equal(view.split("✓").length, 2, "one ✓, in the verified branch only");
+  assert.match(view, /Acknowledged by a pay-link holder · <span className="data">\{ack\.debtor\}<\/span> \(identity not checked\)/);
+  assert.match(view, /acknowledgements/);
   assert.match(view, /Not acknowledged yet/);
-  assert.match(source("components/capital/investor/OfferBook.tsx"), /\{o\.kind === "invoice" && <DebtorAck ack=\{o\.debtor_ack\} \/>\}/);
+  const offerBookUi = source("components/capital/investor/OfferBook.tsx");
+  assert.match(offerBookUi, /\{o\.kind === "invoice" && <DebtorAck ack=\{o\.debtor_ack\} \/>\}/);
+  assert.match(offerBookUi, /A pay-link holder&apos;s acknowledgement doesn&apos;t check who they are\./, "one line explains the two labels");
   assert.match(source("components/capital/merchant/MyOffers.tsx"), /\{!advance && <DebtorAck ack=\{o\.debtor_ack\} \/>\}/);
   assert.match(source("components/merchant/Invoices.tsx"), /\{invoice\.status === "open" && <DebtorAck ack=\{invoice\.ack\} \/>\}/);
+});
+
+test("the merchant's invoice form: an optional customer wallet, checked, sent to createInvoice", () => {
+  const form = source("components/merchant/Invoices.tsx");
+  assert.match(form, /Customer wallet \(optional\)/);
+  assert.match(form, /createInvoice\(w, amount, BigInt\(Math\.floor\(dueMs \/ 1000\)\), customer\)/);
+  assert.match(form, /!isAddress\(wallet\)/, "a typo is caught before the wallet opens");
 });
