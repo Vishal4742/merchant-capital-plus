@@ -3,6 +3,7 @@
 // NFR-13); every other link is a plain <a>, a full load under its own headers (security review 005 F-N4, lib/soft-nav.ts).
 // At phone width the list folds into a <details> menu (no JS); from md up it is the sidebar.
 import Link from "next/link";
+import { FoldedMenu } from "@/components/dashboard/FoldedMenu";
 import { softNav } from "@/lib/soft-nav";
 
 const SECTIONS = [
@@ -91,7 +92,7 @@ export function Nav({ active }: { active: NavKey }) {
   const current = SECTIONS.flatMap((section): readonly { key: NavKey; label: string }[] => section.items).find((item) => item.key === active)?.label;
   return (
     <nav aria-label="Dashboard" className="w-full">
-      <details className="group rounded-md border border-hairline bg-surface md:hidden">
+      <FoldedMenu className="group rounded-md border border-hairline bg-surface md:hidden">
         <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-4 text-sm font-medium [&::-webkit-details-marker]:hidden">
           <span>
             Menu <span className="font-normal text-ink-muted">· {current}</span>
@@ -103,7 +104,7 @@ export function Nav({ active }: { active: NavKey }) {
         <div className="border-t border-hairline p-2">
           <List active={active} />
         </div>
-      </details>
+      </FoldedMenu>
       <div className="hidden md:block">
         <List active={active} />
       </div>
