@@ -17,3 +17,8 @@
 ## Acceptance criteria
 - [ ] `npm test` (57 + 3) and `npx tsc --noEmit` pass.
 - [ ] Deployed; `/health` 200, `/relay` without the secret 401. No live sale is needed (the human approved one, now spent).
+
+## Addendum (11:06, claude-research 11:04 + G4 orders 11:05)
+- **Gas guard (FR-REL-1 drain guard, claude-contracts Q19):** add `eth_estimateGas` to the RPC pre-check round, in the same batched request, so no extra round trip. Above the 400k limit the payment is refused with 422 `too_much_gas` and no tx; a full repayment of a 3-holder invoice needs 421,338 gas. A failed estimate (it reverts whenever the call would) leaves the decision to the gas-capped simulation.
+- **2-holder cap on invoice funding (claude-research's 10:59 decision; apps/web lib/server/capital-fund.ts):** an invoice claim already held by 2 other investors refuses a 3rd distinct investor with a plain message, before any relay, so its repayment stays under the relayer's gas limit.
+- Tests first for both.
