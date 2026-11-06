@@ -1,13 +1,14 @@
-// The dashboard's money screens (SRS FR-GW-12 vouchers, FR-GW-9 reports, FR-GW-10 settlements): a typed client for
-// claude-contracts' routes (API.md, batch 007), parsed like lib/gateway-client.ts, plus the checks run before a call.
-// Pure and browser-safe; field names stay snake_case, as on the wire. Amounts stay the API's decimal strings: the
-// screens format them for display and never re-add them.
+// The dashboard's money screens (SRS FR-GW-12 vouchers, FR-GW-9 reports, FR-GW-10 settlements): the shapes they show,
+// the browser's voucher calls to claude-contracts' routes (API.md, batch 007, parsed like lib/gateway-client.ts) and the
+// checks run before a call. Our server reads the lists, reports and settlements from lib/server directly
+// (lib/gateway-server.ts). Pure and browser-safe; field names stay snake_case, as on the wire. Amounts stay the API's
+// decimal strings: the screens format them for display and never re-add them.
 import { GatewayError, wire, type Transport } from "./gateway-client.ts";
 import { amountText, type Checked } from "./gateway-forms.ts";
 import { istDay } from "./dashboard.ts";
 import { parseUsdt } from "./usdt.ts";
 
-const { bad, record, text, nullable, decimal, count, flag, listOf, plainError, OFFLINE, TIMEOUT_MS } = wire;
+const { bad, record, text, nullable, decimal, count, flag, plainError, OFFLINE, TIMEOUT_MS } = wire;
 
 export const REPORT_TZ = "Asia/Kolkata"; // the screens' days are India days (claude-contracts' batch 008 reads tz)
 export const MAX_REPORT_DAYS = 92;
@@ -78,9 +79,7 @@ export interface ReportRange {
 // ── parsing ──
 const kind = (v: unknown) => (v === "percent" || v === "fixed" ? v : bad());
 const time = (v: unknown) => (typeof v === "string" && Number.isFinite(Date.parse(v)) ? v : bad());
-const date = (v: unknown) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : bad());
 const hash = (v: unknown) => (typeof v === "string" && HASH.test(v) ? v : bad());
-const digits = (v: unknown) => (typeof v === "string" && /^\d{1,78}$/.test(v) ? v : bad());
 
 function voucherOf(v: unknown): Voucher {
   const r = record(v);
@@ -99,48 +98,19 @@ function voucherOf(v: unknown): Voucher {
   };
 }
 
-const figuresOf = (r: Record<string, unknown>): DayFigures => ({ gross: decimal(r.gross), fees: decimal(r.fees), net: decimal(r.net), refunds: decimal(r.refunds), count: count(r.count) });
-
-function reportOf(v: unknown): Report {
-  const r = record(v);
-  const kpis = record(r.kpis);
-  return {
-    from: date(r.from),
-    to: date(r.to),
-    days: listOf(r, "days", (d) => ({ date: date(record(d).date), ...figuresOf(record(d)) })),
-    totals: figuresOf(record(r.totals)),
-    kpis: { new_payers: count(kpis.new_payers), returning_payers: count(kpis.returning_payers) },
-  };
-}
-
-function settlementOf(v: unknown): Settlement {
-  const r = record(v);
-  return {
-    payment_id: digits(r.payment_id),
-    gross: decimal(r.gross),
-    fee: decimal(r.fee),
-    to_investors: decimal(r.to_investors),
-    net: decimal(r.net),
-    tx_hash: nullable(r.tx_hash, hash),
-    settled_at: time(r.settled_at),
-  };
-}
-
-const settlementsOf = (v: unknown): Settlements => ({ balance: decimal(record(v).balance), settlements: listOf(v, "settlements", settlementOf) });
-
-/** `from=…&to=…&tz=Asia/Kolkata`, for the JSON routes and the CSV link alike. */
-const rangeQuery = (range: ReportRange) => new URLSearchParams({ from: range.from, to: range.to, tz: REPORT_TZ }).toString();
+/** `from=…&to=…&tz=Asia/Kolkata`, for the CSV link and our server's report range alike. */
+export const rangeQuery = (range: ReportRange) => new URLSearchParams({ from: range.from, to: range.to, tz: REPORT_TZ }).toString();
 export const csvHref = (range: ReportRange) => `/api/v1/reports.csv?${rangeQuery(range)}`;
 
-export function moneyClient({ base = "", fetch: send = fetch, headers = {} }: Transport = {}) {
+export function moneyClient({ fetch: send = fetch }: Transport = {}) {
   // ponytail: repeats gatewayClient's call() so batch 010's client is untouched while the Developers screen is built
   // beside it; fold the two into one exported call at merge.
   async function call(path: string, what: string, body?: unknown): Promise<unknown> {
     let res: Response;
     try {
-      res = await send(`${base}${path}`, {
+      res = await send(path, {
         method: body === undefined ? "GET" : "POST",
-        headers: { accept: "application/json", ...(body === undefined ? {} : { "content-type": "application/json" }), ...headers },
+        headers: { accept: "application/json", ...(body === undefined ? {} : { "content-type": "application/json" }) },
         body: body === undefined ? undefined : JSON.stringify(body),
         cache: "no-store",
         signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -154,11 +124,8 @@ export function moneyClient({ base = "", fetch: send = fetch, headers = {} }: Tr
   }
 
   return {
-    listVouchers: async () => listOf(await call("/api/v1/vouchers", "Vouchers"), "vouchers", voucherOf),
     createVoucher: async (body: VoucherBody) => voucherOf(await call("/api/v1/vouchers", "Vouchers", body)),
     deactivateVoucher: async (id: string) => void (await call(`/api/v1/vouchers/${encodeURIComponent(id)}/deactivate`, "Vouchers", {})),
-    report: async (range: ReportRange) => reportOf(await call(`/api/v1/reports?${rangeQuery(range)}`, "Reports")),
-    settlements: async (range: ReportRange) => settlementsOf(await call(`/api/v1/settlements?${rangeQuery(range)}`, "Settlements")),
   };
 }
 

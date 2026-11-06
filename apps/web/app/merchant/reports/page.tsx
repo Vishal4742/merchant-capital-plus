@@ -1,15 +1,14 @@
-// Reports (FR-GW-9) in the dashboard Shell. Behind sign-in; read on our server from the gateway with the merchant's own
-// sign-in cookie. The range is checked here before any call: India days, from on or before to, at most 92 days.
+// Reports (FR-GW-9) in the dashboard Shell. Behind sign-in; our server reads the signed-in merchant's report from the
+// gateway's own module (lib/server/reports.ts). The range is checked here first: India days, from on or before to, at
+// most 92 days.
 import { connection } from "next/server";
-import { headers } from "next/headers";
 import { Suspense } from "react";
 import { Account, EditorialHeader, Problem, SignedOut } from "@/components/gateway/Frame";
 import { RangeForm, ReportView } from "@/components/gateway/Reports";
 import { Shell } from "@/components/dashboard/Shell";
 import { authSecret } from "@/lib/auth";
-import { errorText } from "@/lib/gateway-client";
-import { moneyClient, reportRange } from "@/lib/gateway-money";
-import { transportFor } from "@/lib/gateway-server";
+import { reportRange } from "@/lib/gateway-money";
+import { merchantReport, readFailure } from "@/lib/gateway-server";
 import { currentMerchant } from "@/lib/merchant-session";
 
 const header = (
@@ -43,12 +42,10 @@ async function Reports({ searchParams }: Pick<PageProps<"/merchant/reports">, "s
   const typed = { from: one(query.from), to: one(query.to) };
   const range = reportRange(typed.from, typed.to);
   const result = range.ok
-    ? await moneyClient(transportFor(await headers()))
-        .report(range.value)
-        .then(
-          (report) => ({ report }),
-          (error: unknown) => ({ error: errorText(error) }),
-        )
+    ? await merchantReport(merchant, range.value).then(
+        (report) => ({ report }),
+        (error: unknown) => ({ error: readFailure("Reports", error) }),
+      )
     : null;
   return (
     <Shell active="reports" account={<Account merchant={merchant} />}>

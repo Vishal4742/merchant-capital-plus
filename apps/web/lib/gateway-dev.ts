@@ -145,13 +145,13 @@ function plainError(status: number, data: unknown, what: string): GatewayError {
 /** True when the sign-in cookie has ended: the screen reloads into sign-in. */
 export const signedOut = (error: unknown) => error instanceof GatewayError && error.status === 401;
 
-export function devClient({ base = "", fetch: send = fetch, headers = {} }: Transport = {}) {
+export function devClient({ fetch: send = fetch }: Transport = {}) {
   async function call(method: "POST" | "DELETE", path: string, what: string, body?: unknown): Promise<unknown> {
     let res: Response;
     try {
-      res = await send(`${base}${path}`, {
+      res = await send(path, {
         method,
-        headers: { accept: "application/json", ...(body === undefined ? {} : { "content-type": "application/json" }), ...headers },
+        headers: { accept: "application/json", ...(body === undefined ? {} : { "content-type": "application/json" }) },
         body: body === undefined ? undefined : JSON.stringify(body),
         cache: "no-store",
         signal: AbortSignal.timeout(TIMEOUT_MS),

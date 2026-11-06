@@ -1,18 +1,16 @@
-// Settlements (FR-GW-10) in the dashboard Shell. Behind sign-in; read on our server from the gateway with the merchant's
-// own sign-in cookie, for the same India-day range as Reports (checked here before any call).
+// Settlements (FR-GW-10) in the dashboard Shell. Behind sign-in; our server reads the signed-in merchant's settlements
+// from the gateway's own module (lib/server/settlements.ts), for the same India-day range as Reports (checked here first).
 import { isHex } from "viem";
 import { readTxFee } from "@/lib/onchain";
 import { connection } from "next/server";
-import { headers } from "next/headers";
 import { Suspense } from "react";
 import { Account, EditorialHeader, Problem, SignedOut } from "@/components/gateway/Frame";
 import { RangeForm } from "@/components/gateway/Reports";
 import { SettlementsView } from "@/components/gateway/Settlements";
 import { Shell } from "@/components/dashboard/Shell";
 import { authSecret } from "@/lib/auth";
-import { errorText } from "@/lib/gateway-client";
-import { moneyClient, reportRange, type Settlements } from "@/lib/gateway-money";
-import { transportFor } from "@/lib/gateway-server";
+import { reportRange, type Settlements } from "@/lib/gateway-money";
+import { merchantSettlements, readFailure } from "@/lib/gateway-server";
 import { currentMerchant } from "@/lib/merchant-session";
 
 const header = (
@@ -54,12 +52,10 @@ async function SettlementsLoader({ searchParams }: Pick<PageProps<"/merchant/set
   const typed = { from: one(query.from), to: one(query.to) };
   const range = reportRange(typed.from, typed.to);
   const result = range.ok
-    ? await moneyClient(transportFor(await headers()))
-        .settlements(range.value)
-        .then(
-          (data) => ({ data }),
-          (error: unknown) => ({ error: errorText(error) }),
-        )
+    ? await merchantSettlements(merchant, range.value).then(
+        (data) => ({ data }),
+        (error: unknown) => ({ error: readFailure("Settlements", error) }),
+      )
     : null;
   return (
     <Shell active="settlements" account={<Account merchant={merchant} />}>
