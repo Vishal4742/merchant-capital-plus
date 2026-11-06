@@ -4,7 +4,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { getAddress, type Address } from "viem";
 import { query } from "./db.ts";
-import { HttpError, newId } from "./http.ts";
+import { HttpError, newId, signedInMerchant } from "./http.ts";
 
 export type KeyKind = "pk" | "sk";
 export const MAX_KEYS = 20; // live keys per merchant
@@ -65,6 +65,19 @@ export async function authenticateKey(request: Request, now = Date.now()): Promi
   if (!row || !timingSafeEqual(Buffer.from(row.key_hash, "hex"), Buffer.from(hash, "hex"))) return null;
   await query("UPDATE app_gw_keys SET last_used_at = $2 WHERE id = $1", [row.id, now]);
   return { merchant: getAddress(row.merchant), kind: row.kind, keyId: row.id };
+}
+
+/** The merchant behind the dashboard cookie, or behind a live secret (sk_test_) key: what a shop's own server or setup
+ *  script uses (AT-14). Publishable keys never manage the account. 401 otherwise. */
+export async function merchantByCookieOrSecretKey(request: Request): Promise<Address> {
+  try {
+    return signedInMerchant(request);
+  } catch (err) {
+    if (!(err instanceof HttpError) || err.status !== 401) throw err;
+  }
+  const key = await authenticateKey(request);
+  if (key?.kind === "sk") return key.merchant;
+  throw new HttpError(401, "Sign in to your merchant dashboard, or send your secret API key.");
 }
 
 export const keyJson = (k: ApiKey) => ({
