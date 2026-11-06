@@ -8,3 +8,7 @@ payer) accepts the debt. Add an "Acknowledge this invoice" signed message on the
 store it, and show it in the offer book and the merchant's invoice views. No debtor data on Arkiv (FR-ARK-4).
 Agent ids (builders, for SendMessage resumes): none (built inline by the claude-research agent)
 Log:
+- Requirement ID: the brief said FR-INV-6, which the SRS already uses (cut, human 00:34); the spec uses FR-INV-8.
+- Red at 5d84af6 (test/invoice-ack.test.mjs), server green at d9ac96c, pay page e14102d, views f2d6295.
+- ci PASS: typecheck 0, lint 0, tests 719 (717 pass, 0 fail, 2 skipped), build 0. New table app_gw_invoice_acks
+  (db/051_invoice_acks.sql): run `node --env-file=../../.env db/migrate.mjs` from apps/web before the merge deploys.
