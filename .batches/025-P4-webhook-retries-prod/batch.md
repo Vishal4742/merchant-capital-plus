@@ -6,3 +6,4 @@ Request (verbatim): claude-frontend 10:26 "webhook retries never run in producti
 Agent ids (builders, for SendMessage resumes): lane-built
 Log:
 - 10:3x spec + failing tests (test/gw-dispatch.test.mjs, 6 red: dispatchSoon not exported). Numbered after the 023s of claude-relayer and claude-frontend.
+- 10:4x built (6a7e5a2 tests, 9245a90 code); ci PASS (192 gw / 519 total, 0 fail). Money: no, so no security pass (batch-close §3b).
