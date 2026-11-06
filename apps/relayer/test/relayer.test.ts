@@ -9,7 +9,7 @@ import {
   serializeSignature, formatEther, toHex, zeroHash, type Address, type Hex,
 } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
-import { addresses, merchantPayAbi } from '../../../packages/shared/contracts.ts';
+import { addresses, merchantPayAbi } from '../src/contracts.ts';
 import { health, makeClient, relay, relayerClient, startBalanceRefresh, TIMING, USDT_ABI, USDT_DOMAIN } from '../src/relayer.ts';
 
 const MP = addresses.merchantPay; // lowercase in the generated file
