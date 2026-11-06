@@ -163,15 +163,16 @@ async function mirrorToArkiv(v: Voucher): Promise<Mirror> {
     const reason = err instanceof Error ? err.message : "Arkiv isn't configured on this server.";
     return { error: redactArkivError(reason, process.env.ARKIV_ACCESS_KEY).slice(0, MAX_REASON) };
   }
-  const hash = codeHash(v.merchant, v.code, secret);
+  const values = { type: VOUCHER_TYPE, merchant: v.merchant, code_hash: codeHash(v.merchant, v.code, secret), kind: v.kind, value: formatValue(v.kind, v.value), expires_at: u64(BigInt(Math.floor(v.expiresAt / 1000))) }; // unix s, like the chain
   try {
     // 021 review M1: an earlier write that timed out may still have landed: adopt it rather than write a second entity.
-    // ownedBy: code_hash is public on Arkiv, so only our writer's entities count. A failed query writes nothing.
-    // ponytail: a timed-out tx landing after this query still duplicates; hold the lease on a timeout if that's seen.
-    const found = await clients.reader.select({ $key: true }).from(VoucherEntity).where(eq("code_hash", hash)).ownedBy(clients.address).limit(1).fetch();
-    const existing = found.entities[0]?.$key;
-    if (existing) return { entityKey: existing, txHash: null };
-    const values = { type: VOUCHER_TYPE, merchant: v.merchant, code_hash: hash, kind: v.kind, value: formatValue(v.kind, v.value), expires_at: u64(BigInt(Math.floor(v.expiresAt / 1000))) }; // unix s, like the chain
+    // createdBy, not ownedBy: code_hash is public and any owner can hand an entity to our writer, but the creator never
+    // changes (022 review M1). Adopted only with this voucher's terms (022 review L1: another server on the same keys).
+    // A failed query writes nothing.
+    // ponytail: a timed-out tx landing after this query still duplicates (same content); hold the lease on a timeout if seen.
+    const found = await clients.reader.select({ $key: true, kind: true, value: true, expires_at: true }).from(VoucherEntity).where(eq("code_hash", values.code_hash)).createdBy(clients.address).limit(10).fetch();
+    const same = found.entities.find((e) => e.kind?.value === values.kind && e.value?.value === values.value && e.expires_at?.value === values.expires_at.value);
+    if (same) return { entityKey: same.$key, txHash: null };
     const created = await clients.writer.createEntity(VoucherEntity, values, { expiration: ExpirationTime.atDate(new Date(v.expiresAt)) });
     return { entityKey: created.entityKey, txHash: typeof created.txHash === "string" ? created.txHash : null };
   } catch (err) {
@@ -193,8 +194,14 @@ async function recordMirror(v: Voucher, mirror: Mirror, lease: number | null): P
     await query(`UPDATE app_gw_vouchers SET arkiv_error = $2, ${releaseLease("$3")} WHERE id = $1 AND arkiv_entity_key IS NULL`, [v.id, mirror.error, lease]);
     return { ...v, arkivError: mirror.error };
   }
-  await query(`UPDATE app_gw_vouchers SET arkiv_entity_key = $2, arkiv_tx_hash = $3, arkiv_error = NULL, ${releaseLease("$4")} WHERE id = $1`, [v.id, mirror.entityKey, mirror.txHash, lease]);
-  return { ...v, arkivEntityKey: mirror.entityKey, arkivTxHash: mirror.txHash, arkivError: null };
+  const stored = await query<VoucherRow>(
+    `UPDATE app_gw_vouchers SET arkiv_entity_key = $2, arkiv_tx_hash = $3, arkiv_error = NULL, ${releaseLease("$4")} WHERE id = $1 AND arkiv_entity_key IS NULL RETURNING ${COLUMNS}`,
+    [v.id, mirror.entityKey, mirror.txHash, lease],
+  );
+  if (stored[0]) return fromRow(stored[0]);
+  // another attempt stored a key first: that one stands (022 review L3)
+  const [row] = await query<VoucherRow>(`SELECT ${COLUMNS} FROM app_gw_vouchers WHERE id = $1`, [v.id]);
+  return row ? fromRow(row) : v;
 }
 
 /** The merchant's "Publish to Arkiv": retries the mirror of a voucher that isn't on Arkiv yet. Idempotent: a voucher
@@ -214,7 +221,7 @@ export async function publishVoucher(merchant: Address, id: string, now = Date.n
     "UPDATE app_gw_vouchers SET arkiv_attempted_at = $2 WHERE id = $1 AND arkiv_entity_key IS NULL AND (arkiv_attempted_at IS NULL OR arkiv_attempted_at <= $3) RETURNING id",
     [id, now, now - PUBLISH_LEASE_MS],
   );
-  if (leased.length === 0) throw new HttpError(409, "Publishing to Arkiv already, try again in a minute.");
+  if (leased.length === 0) throw new HttpError(409, "Publishing to Arkiv already, try again in a few minutes.");
   return recordMirror(voucher, await mirrorToArkiv(voucher), now);
 }
 

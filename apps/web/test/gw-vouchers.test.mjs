@@ -12,11 +12,14 @@ const ENTITY_KEY = `0x${"ab".repeat(32)}`;
 
 // the Arkiv writer: records every createEntity call; arkiv.fail makes the write throw. The reader answers the
 // mirror's "already on Arkiv?" query with arkiv.existing (batch 022); arkiv.queryFail makes it throw; arkiv.clientFail
-// makes arkivClients itself throw; arkiv.during runs inside the write (another attempt acting meanwhile).
-const arkiv = { calls: [], fail: null, existing: [], queries: 0, queryFail: null, clientFail: null, during: null };
+// makes arkivClients itself throw; arkiv.during runs inside the write (another attempt acting meanwhile). arkiv.query is
+// the last query's filters (022 review L4). No ownedBy: an owner can change, so the mirror must filter on the creator.
+const arkiv = { calls: [], fail: null, existing: [], queries: 0, queryFail: null, clientFail: null, during: null, query: null };
 const queryChain = () => {
-  const chain = { from: () => chain, where: () => chain, ownedBy: () => chain, limit: () => chain };
+  const q = {};
+  const chain = { from: () => chain, where: (e) => ((q.where = e), chain), createdBy: (a) => ((q.creator = a), chain), limit: () => chain };
   chain.fetch = async () => {
+    arkiv.query = q;
     arkiv.queries += 1;
     if (arkiv.queryFail) throw arkiv.queryFail;
     return { entities: arkiv.existing };
@@ -69,7 +72,7 @@ beforeEach(async () => {
   await resetDb();
   arkiv.calls.length = 0;
   arkiv.fail = null;
-  Object.assign(arkiv, { existing: [], queries: 0, queryFail: null, clientFail: null, during: null });
+  Object.assign(arkiv, { existing: [], queries: 0, queryFail: null, clientFail: null, during: null, query: null });
   process.env.VOUCHER_HASH_SECRET = HASH_SECRET;
   process.env.ARKIV_ACCESS_KEY = ACCESS_KEY;
   process.env.ARKIV_PRIVATE_KEY = "not-a-key-arkivClients-is-mocked"; // arkivConfigProblem checks presence only
@@ -709,18 +712,45 @@ async function failedVoucher() {
   }
 }
 
-test("batch 022 M1: an entity of ours with this code_hash on Arkiv is adopted, with no second write", async () => {
+const LANDED = `0x${"ef".repeat(32)}`;
+/** The row select() returns for an entity with the terms of `write` (a recorded createEntity call): flat, keyed by the
+ *  selection, each attribute a {type, value}. */
+const rowFor = (write, key = LANDED) => ({ $key: key, kind: { type: "str", value: write[1].kind }, value: { type: "str", value: write[1].value }, expires_at: write[1].expires_at });
+
+test("batch 022 M1: an entity our writer created with this code_hash and these terms is adopted, with no second write", async () => {
   const id = await failedVoucher(); // e.g. a write that timed out but whose tx landed later
   const writes = arkiv.calls.length;
-  const LANDED = `0x${"ef".repeat(32)}`;
-  arkiv.existing = [{ $key: LANDED }]; // select() rows are flat, keyed by the selection
+  arkiv.existing = [rowFor(arkiv.calls[0])];
   const res = await publishAs(id);
   assert.equal(res.status, 200);
   const data = await res.json();
   assert.deepEqual([data.arkiv_status, data.arkiv_entity_key, data.arkiv_tx_hash, data.arkiv_error], ["on_arkiv", LANDED, null, null]);
   assert.equal(arkiv.calls.length, writes, "no createEntity call");
+  // 022 review L4: the query is for this voucher's hash, among entities our writer created (never merely owns)
+  const hash = createHmac("sha256", HASH_SECRET).update(`${MERCHANT.toLowerCase()}:SAVE10`).digest("hex");
+  assert.ok(JSON.stringify(arkiv.query.where).includes(hash), "filtered on the code_hash");
+  assert.equal(arkiv.query.creator, "0x3333333333333333333333333333333333333333");
   const { query } = await import("../lib/server/db.ts");
   assert.equal((await query("SELECT arkiv_attempted_at FROM app_gw_vouchers WHERE id = $1", [id]))[0].arkiv_attempted_at, null, "lease released");
+});
+
+test("batch 022 review L1: an entity with other terms (another server on the same keys) isn't adopted", async () => {
+  const id = await failedVoucher();
+  const write = arkiv.calls[0];
+  const other = (over) => ({ ...rowFor(write, `0x${"99".repeat(32)}`), ...over });
+  arkiv.existing = [other({ value: { type: "str", value: "50" } }), other({ kind: { type: "str", value: "fixed" } }), other({ expires_at: { type: "u64", value: 1n } })];
+  const data = await (await publishAs(id)).json();
+  assert.deepEqual([data.arkiv_entity_key, data.arkiv_tx_hash], [ENTITY_KEY, TX], "a fresh entity is written");
+});
+
+test("batch 022 review L3: a key another attempt stored first is never overwritten", async () => {
+  const id = await failedVoucher();
+  const { query } = await import("../lib/server/db.ts");
+  const FIRST = `0x${"aa".repeat(32)}`;
+  arkiv.during = () => query("UPDATE app_gw_vouchers SET arkiv_entity_key = $2, arkiv_tx_hash = NULL WHERE id = $1", [id, FIRST]);
+  const data = await (await publishAs(id)).json();
+  assert.equal(data.arkiv_entity_key, FIRST, "the stored key stands, and the reply says so");
+  assert.equal((await query("SELECT arkiv_entity_key FROM app_gw_vouchers WHERE id = $1", [id]))[0].arkiv_entity_key, FIRST);
 });
 
 test("batch 022 M1: the Arkiv query failing stores a reason and writes nothing", async () => {
