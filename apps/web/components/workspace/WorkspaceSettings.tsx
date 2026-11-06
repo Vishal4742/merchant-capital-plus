@@ -410,8 +410,11 @@ function ReceivingWallet({ role, principalWallets }: { role: Role; principalWall
 function ApprovalWalletsPanel({ pinned, principalWallets, onEnrolled }: { pinned: ApprovalWallets; principalWallets: string[]; onEnrolled: () => void }) {
   const enrolled = new Set(pinned.wallets.map((w) => w.wallet.toLowerCase()));
   const candidates = principalWallets.filter((w) => !enrolled.has(w.toLowerCase()));
-  const [wallet, setWallet] = useState(candidates[0] ?? "");
-  const [endorser, setEndorser] = useState(pinned.wallets[0]?.wallet ?? "");
+  const [walletPick, setWallet] = useState("");
+  const [endorserPick, setEndorser] = useState("");
+  // derived from the current lists (round 3, review C-L2): after an enrollment the old pick isn't a candidate any more
+  const wallet = candidates.includes(walletPick) ? walletPick : (candidates[0] ?? "");
+  const endorser = pinned.wallets.some((w) => w.wallet === endorserPick) ? endorserPick : (pinned.wallets[0]?.wallet ?? "");
   const [request, setRequest] = useState<{ nonce: string; message: string; endorser: string } | null>(null);
   const [pasted, setPasted] = useState("");
   const [busy, setBusy] = useState(false);

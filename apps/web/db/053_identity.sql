@@ -112,6 +112,9 @@ CREATE TABLE IF NOT EXISTS wf_approval_wallets (
   principal_id TEXT NOT NULL REFERENCES wf_principals (id),
   enrolled_at BIGINT NOT NULL,
   endorsed_by TEXT CHECK (endorsed_by IS NULL OR endorsed_by ~ '^0x[0-9a-f]{40}$'),
+  -- round 3 (review S-H1): set when the wallet's Owner is removed or demoted, in the same statement. A revoked wallet
+  -- never approves; coming back needs a fresh endorsement (which clears it). Rows are never deleted.
+  revoked_at BIGINT,
   PRIMARY KEY (business_id, wallet)
 );
 CREATE INDEX IF NOT EXISTS wf_approval_wallets_principal ON wf_approval_wallets (business_id, principal_id);

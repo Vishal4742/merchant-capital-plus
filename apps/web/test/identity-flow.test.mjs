@@ -30,6 +30,8 @@ const proofRoute = await import("../app/api/v2/business/policy/proof/route.ts");
 const approvalRoute = await import("../app/api/v2/business/policy/approval/route.ts");
 const walletsRoute = await import("../app/api/v2/business/approval-wallets/route.ts");
 const walletsConfirmRoute = await import("../app/api/v2/business/approval-wallets/confirm/route.ts");
+const noticesRoute = await import("../app/api/v2/me/notifications/route.ts");
+const { isDbDown } = await import("../lib/server/v2.ts");
 
 const b64 = (v) => Buffer.from(JSON.stringify(v)).toString("base64url");
 const jwt = (claims) => {
@@ -496,4 +498,129 @@ test("NFR-17 (round 2, L5): no token, signature, signed message or session cooki
     assert.ok(!logs.includes(secret), `not in logs: ${secret.slice(0, 12)}…`);
     assert.ok(!rows.includes(secret), `not in audit or notices: ${secret.slice(0, 12)}…`);
   }
+});
+
+// ---- round 3 (independent review of round 2)
+/** Two Owners: alice (pinned a1) and bobby (b1, endorsed by a1); returns cookies, ids and wallets. */
+async function twoOwners() {
+  const [ua, ub] = [user("alice"), user("bobby")];
+  const [a1, b1] = [ua.accounts[0], ub.accounts[0]];
+  const a = await signIn(ua), b = await signIn(ub);
+  const biz = (await create(a.cookie)).body.id;
+  assert.equal((await activate(a.cookie, freshWallet(), a1)).status, 201);
+  assert.equal((await addMember(a.cookie, { wallet: b1.address, role: "owner", idempotencyKey: "own-b" })).status, 201);
+  await call(activeRoute.POST, "POST", "/api/v2/me/active-business", { cookie: b.cookie, body: { businessId: biz } });
+  const c = await enroll(b.cookie, b1.address, a1.address);
+  assert.equal((await confirmEnroll(b.cookie, c.body.nonce, await a1.signMessage({ message: c.body.message }))).status, 200);
+  const [alice, bob] = [(await me(a.cookie)).body.principal.id, (await me(b.cookie)).body.principal.id];
+  return { ua, ub, a1, b1, a, b, biz, alice, bob };
+}
+
+test("round 3 (S-H1): demoting or removing an Owner revokes their approval wallets; coming back needs a fresh endorsement", async () => {
+  const t = await twoOwners();
+  // an approval issued while bob's wallet is enrolled …
+  const recipient = freshWallet();
+  const proof = await call(proofRoute.POST, "POST", "/api/v2/business/policy/proof", { cookie: t.b.cookie, body: { address: recipient.address } });
+  const approval = await call(approvalRoute.POST, "POST", "/api/v2/business/policy/approval", { cookie: t.b.cookie, body: { proofNonce: proof.body.nonce, wallet: t.b1.address } });
+  assert.equal(approval.status, 200);
+  // … then bob is demoted and promoted again (e.g. from a taken-over Owner login)
+  assert.equal((await setRole(t.a.cookie, t.bob, "viewer", "d1")).status, 200);
+  assert.equal((await setRole(t.a.cookie, t.bob, "owner", "p1")).status, 200);
+  const late = await call(policyRoute.POST, "POST", "/api/v2/business/policy", {
+    cookie: t.b.cookie,
+    body: {
+      proofNonce: proof.body.nonce, proofSignature: await recipient.signMessage({ message: proof.body.message }),
+      approvalNonce: approval.body.nonce, approvalSignature: await t.b1.signMessage({ message: approval.body.message }),
+      expectedCurrentVersion: 1, idempotencyKey: "late-1",
+    },
+  });
+  assert.equal(late.status, 409, "the activation statement itself refuses a revoked approval wallet");
+  const again = await activate(t.b.cookie, freshWallet(), t.b1, 1);
+  assert.deepEqual([again.stage, again.status], ["approval", 403], "and a new approval with it is refused up front");
+  assert.deepEqual((await enrolled(t.a.cookie)).body.wallets.map((w) => w.wallet), [t.a1.address], "the list shows active wallets of current Owners only");
+  const revoked = await notices("approval_wallet.revoked");
+  assert.deepEqual(revoked.map((n) => n.principal_id).sort(), [t.alice, t.bob].sort(), "every Owner is told");
+  // a fresh endorsement brings it back
+  const c = await enroll(t.b.cookie, t.b1.address, t.a1.address);
+  assert.equal(c.status, 200, JSON.stringify(c.body));
+  assert.equal((await confirmEnroll(t.b.cookie, c.body.nonce, await t.a1.signMessage({ message: c.body.message }))).status, 200);
+  assert.equal((await activate(t.b.cookie, freshWallet(), t.b1, 1)).status, 201);
+  // removal revokes too
+  assert.equal((await remove(t.a.cookie, t.bob, "rm-b")).status, 200);
+  assert.equal((await addMember(t.a.cookie, { wallet: t.b1.address, role: "owner", idempotencyKey: "own-b-again" })).status, 201);
+  await call(activeRoute.POST, "POST", "/api/v2/me/active-business", { cookie: t.b.cookie, body: { businessId: t.biz } });
+  const back = await activate(t.b.cookie, freshWallet(), t.b1, 2);
+  assert.deepEqual([back.stage, back.status], ["approval", 403], "re-added: no approval without a new endorsement");
+});
+
+test("round 3 (C-M2): the endorser is re-checked at confirm, with the requester still an Owner", async () => {
+  const t = await twoOwners();
+  const second = freshWallet();
+  const b2 = await signIn(relink(t.ub, [t.b1, second]));
+  const c = await enroll(b2.cookie, second.address, t.a1.address); // bob asks alice's a1 to endorse
+  assert.equal(c.status, 200);
+  assert.equal((await setRole(b2.cookie, t.alice, "viewer", "demote-a")).status, 200); // bob demotes alice before a1 signs
+  const r = await confirmEnroll(b2.cookie, c.body.nonce, await t.a1.signMessage({ message: c.body.message }));
+  assert.equal(r.status, 403, JSON.stringify(r.body));
+  assert.match(r.body.error, /endorsing wallet/);
+});
+
+test("round 3 (C-M1): two identical member writes at once both get the stored answer", async () => {
+  const [ua, ub] = [user("alice"), user("bobby")];
+  const a = await signIn(ua);
+  await signIn(ub);
+  await create(a.cookie);
+  const add = () => addMember(a.cookie, { wallet: ub.accounts[0].address, role: "viewer", idempotencyKey: "same-add" });
+  const adds = await Promise.all([add(), add()]);
+  assert.deepEqual(adds.map((r) => r.status), [201, 201], JSON.stringify(adds.map((r) => r.body)));
+  assert.deepEqual(adds[0].body, adds[1].body);
+  const bob = adds[0].body.principalId;
+  const rms = await Promise.all([remove(a.cookie, bob, "same-rm"), remove(a.cookie, bob, "same-rm")]);
+  assert.deepEqual(rms.map((r) => r.status), [200, 200], JSON.stringify(rms.map((r) => r.body)));
+});
+
+test("round 3 (S-M1): an Owner reads their notices, including the pin by the first activation", async () => {
+  const ua = user("alice");
+  const a = await signIn(ua);
+  await create(a.cookie);
+  assert.equal((await activate(a.cookie, freshWallet(), ua.accounts[0])).status, 201);
+  const r = await call(noticesRoute.GET, "GET", "/api/v2/me/notifications", { cookie: a.cookie, origin: null });
+  assert.equal(r.status, 200);
+  assert.ok(r.body.notifications.some((n) => n.kind === "approval_wallet.pinned" && n.text.includes("approval wallet")), JSON.stringify(r.body));
+  assert.equal((await call(noticesRoute.GET, "GET", "/api/v2/me/notifications", { origin: null })).status, 401);
+});
+
+test("round 3 (lows): masked approver for non-Owners, the endorsement names who asks, replays don't re-look-up, 08P01 isn't an outage", async () => {
+  const t = await twoOwners();
+  // S-L2: a Viewer sees the approving wallet shortened, an Owner in full
+  const uc = user("carol");
+  const c = await signIn(uc);
+  assert.equal((await addMember(t.a.cookie, { wallet: uc.accounts[0].address, role: "viewer", idempotencyKey: "view-c" })).status, 201);
+  await call(activeRoute.POST, "POST", "/api/v2/me/active-business", { cookie: c.cookie, body: { businessId: t.biz } });
+  const asViewer = (await call(policyRoute.GET, "GET", "/api/v2/business/policy", { cookie: c.cookie, origin: null })).body.current;
+  const asOwner = (await call(policyRoute.GET, "GET", "/api/v2/business/policy", { cookie: t.a.cookie, origin: null })).body.current;
+  assert.equal(asOwner.approvalWallet, t.a1.address.toLowerCase());
+  assert.notEqual(asViewer.approvalWallet, asOwner.approvalWallet);
+  assert.match(asViewer.approvalWallet, /^0x[0-9a-f]{4}\.\.\.[0-9a-f]{4}$/);
+  // S-L3: the endorsement message says who asks (masked)
+  const second = freshWallet();
+  const b2 = await signIn(relink(t.ub, [t.b1, second]));
+  const req2 = await enroll(b2.cookie, second.address, t.a1.address);
+  assert.ok(req2.body.message.includes("bo...@example.com"), req2.body.message);
+  // C-L6: a wallet unlinked before confirm gets a clear answer, and the challenge stays usable
+  const b3 = await signIn(relink(t.ub, [t.b1]));
+  const r = await confirmEnroll(b3.cookie, req2.body.nonce, await t.a1.signMessage({ message: req2.body.message }));
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, /no longer linked/);
+  // C-L1: an add replay returns the stored answer even after the person's wallet is unlinked
+  const ud = user("dave");
+  await signIn(ud);
+  const first = await addMember(t.a.cookie, { wallet: ud.accounts[0].address, role: "viewer", idempotencyKey: "add-d" });
+  assert.equal(first.status, 201);
+  await signIn(relink(ud, [freshWallet()]));
+  const replay = await addMember(t.a.cookie, { wallet: ud.accounts[0].address, role: "viewer", idempotencyKey: "add-d" });
+  assert.deepEqual([replay.status, replay.body], [201, first.body]);
+  // C-L4: a protocol error (e.g. a parameter-count bug) is not reported as "database down"
+  assert.equal(isDbDown({ code: "08P01" }), false);
+  assert.equal(isDbDown({ code: "08006" }), true);
 });

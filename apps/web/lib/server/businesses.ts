@@ -26,7 +26,7 @@ export interface Member {
 }
 
 /** A member as other members see them: the email's first two characters and its domain, or a short wallet. */
-function memberLabel(email: string | null, wallets: string[]): string {
+export function memberLabel(email: string | null, wallets: string[]): string {
   if (email) {
     const at = email.lastIndexOf("@");
     return at > 0 ? `${email.slice(0, Math.min(2, at))}...${email.slice(at)}` : "Privy account";
@@ -197,6 +197,19 @@ const AUDIT = (action: string) =>
   `INSERT INTO wf_audit_events (id, business_id, actor_principal_id, role, source, credential_id, request_id, action, target, outcome, at)
    SELECT $7, $1, $2, 'owner', 'session', $8, $9, '${action}', $10, 'ok', $6 FROM done`;
 
+// Round 3 (review S-H1): removing or demoting an Owner revokes their approval wallets in the same statement (soft:
+// never deleted), and every Owner as of the change, the person included, is told. Coming back as an Owner needs a fresh
+// endorsement. Lock order: the target's membership (done), then their wallet rows, then the business row (c).
+// Uses $1 business, $6 now, $7 the statement's audit id (as the notice id prefix), $10 target.
+const REVOKE = `rv AS (
+    UPDATE wf_approval_wallets SET revoked_at = $6 WHERE business_id = $1 AND principal_id = $10 AND revoked_at IS NULL AND EXISTS (SELECT 1 FROM done)
+    RETURNING wallet
+  ), rvn AS (
+    INSERT INTO wf_notifications (id, business_id, principal_id, kind, detail, created_at)
+    SELECT $7 || '_rv_' || m.principal_id, $1, m.principal_id, 'approval_wallet.revoked', jsonb_build_object('member', $10::text, 'wallets', (SELECT count(*) FROM rv)), $6
+    FROM wf_memberships m WHERE m.business_id = $1 AND (m.role = 'owner' OR m.principal_id = $10) AND EXISTS (SELECT 1 FROM rv)
+  )`;
+
 function ownerCtx(ctx: AuthContext): asserts ctx is AuthContext & { businessId: string; principalId: string } {
   requireScope(ctx, "members:manage");
   if (!ctx.principalId) throw new Forbidden();
@@ -211,30 +224,41 @@ export async function addMember(ctx: AuthContext, input: { wallet?: unknown; ema
   const wallet = typeof input.wallet === "string" && /^0x[0-9a-fA-F]{40}$/.test(input.wallet) ? input.wallet.toLowerCase() : null;
   const email = !wallet && typeof input.email === "string" && input.email.length <= 254 && /^[^\s@]+@[^\s@]+$/.test(input.email) ? input.email.toLowerCase() : null;
   if (!wallet && !email) throw new HttpError(400, "Give the wallet or the email the person signs in with.");
+  // the request as sent is hashed, so a replay returns its stored answer before any lookup or rate-limit spend, even if
+  // the person has since unlinked that wallet (round 3, review C-L1)
+  const hash = requestHash({ op: "add", wallet, email, role });
+  const slot = { businessId: ctx.businessId, principalId: ctx.principalId, operation: "members.add", key, hash };
+  const replayed = await storedAnswer<{ principalId: string; role: Role }>(slot);
+  if (replayed !== undefined) return replayed;
   // each lookup tells an Owner whether that wallet/email has signed up, so lookups are limited (review M2)
   await sharedRateLimit(`members-add:${ctx.principalId}`, ADDS_PER_MINUTE, 60_000, "closed");
   const [target] = wallet
     ? await query<{ id: string }>("SELECT principal_id AS id FROM wf_principal_wallets WHERE address = $1 ORDER BY updated_at DESC LIMIT 1", [wallet])
     : await query<{ id: string }>("SELECT id FROM wf_principals WHERE lower(email) = $1 ORDER BY last_sign_in_at DESC LIMIT 1", [email]);
   if (!target) throw new HttpError(404, "Nobody has signed in to WhiteFlow with that yet. Ask them to sign in once, then add them.");
-  const hash = requestHash({ op: "add", target: target.id, role });
   const response = { principalId: target.id, role };
   return withIdempotency(async () => {
-    const [r] = await query<{ is_owner: number; done: number }>(
-      `WITH ${ACTOR},
-       done AS (INSERT INTO wf_memberships (business_id, principal_id, role, created_at) SELECT $1, $10, $11, $6 WHERE EXISTS (SELECT 1 FROM actor) RETURNING 1),
-       c AS (UPDATE wf_businesses SET owner_count = owner_count + 1 WHERE id = $1 AND $11 = 'owner' AND EXISTS (SELECT 1 FROM done)),
-       i AS (${IDEM("members.add")}),
-       a AS (${AUDIT("members.add")})
-       SELECT (SELECT count(*) FROM actor)::int AS is_owner, (SELECT count(*) FROM done)::int AS done`,
-      [ctx.businessId, ctx.principalId, key, hash, JSON.stringify(response), now, newId("aud"), ctx.credentialId, ctx.requestId, target.id, role],
-    ).catch((err) => {
-      if (pgCode(err) === "23505" && pgConstraint(err) === "wf_memberships_pkey") throw new HttpError(409, "That person is already in this workspace.");
-      throw err;
-    });
+    let r: { is_owner: number; done: number };
+    try {
+      [r] = await query<{ is_owner: number; done: number }>(
+        `WITH ${ACTOR},
+         done AS (INSERT INTO wf_memberships (business_id, principal_id, role, created_at) SELECT $1, $10, $11, $6 WHERE EXISTS (SELECT 1 FROM actor) RETURNING 1),
+         c AS (UPDATE wf_businesses SET owner_count = owner_count + 1 WHERE id = $1 AND $11 = 'owner' AND EXISTS (SELECT 1 FROM done)),
+         i AS (${IDEM("members.add")}),
+         a AS (${AUDIT("members.add")})
+         SELECT (SELECT count(*) FROM actor)::int AS is_owner, (SELECT count(*) FROM done)::int AS done`,
+        [ctx.businessId, ctx.principalId, key, hash, JSON.stringify(response), now, newId("aud"), ctx.credentialId, ctx.requestId, target.id, role],
+      );
+    } catch (err) {
+      if (pgCode(err) !== "23505" || pgConstraint(err) !== "wf_memberships_pkey") throw err;
+      // a concurrent identical request may have added them first (review C-M1) → its answer, not "already a member"
+      const raced = await storedAnswer<typeof response>(slot);
+      if (raced !== undefined) return raced;
+      throw new HttpError(409, "That person is already in this workspace.");
+    }
     if (r.is_owner === 0) throw new Forbidden();
     return response;
-  }, { businessId: ctx.businessId, principalId: ctx.principalId, operation: "members.add", key, hash });
+  }, slot);
 }
 
 /** Changes a member's role (Owner only). Demote form first, then the non-owner form, or the promote form (R2-3); never a
@@ -254,6 +278,7 @@ export async function setMemberRole(ctx: AuthContext, input: { principalId: unkn
           c AS (UPDATE wf_businesses SET owner_count = owner_count + 1 WHERE id = $1 AND EXISTS (SELECT 1 FROM done))`]
       : [
           `done AS (UPDATE wf_memberships SET role = $11 WHERE business_id = $1 AND principal_id = $10 AND role = 'owner' AND EXISTS (SELECT 1 FROM actor) RETURNING 1),
+           ${REVOKE},
            c AS (UPDATE wf_businesses SET owner_count = owner_count - 1 WHERE id = $1 AND EXISTS (SELECT 1 FROM done))`,
           `done AS (UPDATE wf_memberships SET role = $11 WHERE business_id = $1 AND principal_id = $10 AND role <> 'owner' AND EXISTS (SELECT 1 FROM actor) RETURNING 1),
            c AS (SELECT 1)`,
@@ -283,10 +308,12 @@ export async function removeMember(ctx: AuthContext, input: { principalId: unkno
   const target = input.principalId;
   const hash = requestHash({ op: "remove", target });
   const response = { principalId: target, removed: true as const };
+  const slot = { businessId: ctx.businessId, principalId: ctx.principalId, operation: "members.remove", key, hash };
   return withIdempotency(async () => {
     const [r] = await query<{ is_owner: number; done: number }>(
       `WITH ${ACTOR},
        done AS (DELETE FROM wf_memberships WHERE business_id = $1 AND principal_id = $10 AND EXISTS (SELECT 1 FROM actor) RETURNING role),
+       ${REVOKE},
        c AS (UPDATE wf_businesses SET owner_count = owner_count - 1 WHERE id = $1 AND EXISTS (SELECT 1 FROM done WHERE role = 'owner')),
        s AS (UPDATE wf_sessions SET active_business_id = NULL WHERE principal_id = $10 AND active_business_id = $1 AND EXISTS (SELECT 1 FROM done)),
        i AS (${IDEM("members.remove")}),
@@ -295,7 +322,12 @@ export async function removeMember(ctx: AuthContext, input: { principalId: unkno
       [ctx.businessId, ctx.principalId, key, hash, JSON.stringify(response), now, newId("aud"), ctx.credentialId, ctx.requestId, target],
     );
     if (r.is_owner === 0) throw new Forbidden();
-    if (r.done === 0) throw notFound();
+    if (r.done === 0) {
+      // nothing removed: a concurrent identical request may have removed them first (review C-M1) → its answer
+      const raced = await storedAnswer<typeof response>(slot);
+      if (raced !== undefined) return raced;
+      throw notFound();
+    }
     return response;
-  }, { businessId: ctx.businessId, principalId: ctx.principalId, operation: "members.remove", key, hash });
+  }, slot);
 }

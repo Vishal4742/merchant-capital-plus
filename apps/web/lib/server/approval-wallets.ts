@@ -11,6 +11,7 @@ import { createSiweMessage, generateSiweNonce } from "viem/siwe";
 import { newId, publicOrigin } from "./auth-sessions.ts";
 import { query } from "./db.ts";
 import { HttpError, sharedRateLimit } from "./http.ts";
+import { memberLabel } from "./businesses.ts";
 import { Forbidden, concurrencyConflict, requireScope, type AuthContext } from "./identity.ts";
 import { promptSafe } from "./policies.ts";
 
@@ -38,14 +39,21 @@ export interface ApprovalWallet {
 /** The workspace's enrolled approval wallets (Owners only) and whether the first one is still open to pin. */
 export async function listApprovalWallets(ctx: AuthContext): Promise<{ wallets: ApprovalWallet[]; firstPinOpen: boolean }> {
   const owner = ownerCtx(ctx);
+  // active wallets of current Owners only (round 3, review C-L3: revoked or ex-Owners' wallets can't approve or endorse)
   const rows = await query<{ wallet: string; principal_id: string; enrolled_at: string; endorsed_by: string | null }>(
-    "SELECT wallet, principal_id, enrolled_at::text, endorsed_by FROM wf_approval_wallets WHERE business_id = $1 ORDER BY enrolled_at, wallet",
+    `SELECT w.wallet, w.principal_id, w.enrolled_at::text, w.endorsed_by FROM wf_approval_wallets w
+     JOIN wf_memberships m ON m.business_id = w.business_id AND m.principal_id = w.principal_id AND m.role = 'owner'
+     WHERE w.business_id = $1 AND w.revoked_at IS NULL ORDER BY w.enrolled_at, w.wallet`,
     [owner.businessId],
   );
-  const [{ policies }] = await query<{ policies: number }>("SELECT count(*)::int AS policies FROM wf_settlement_policies WHERE business_id = $1", [owner.businessId]);
+  // the first pin is open only while nothing was ever enrolled (revoked rows count) and no policy exists
+  const [{ ever, policies }] = await query<{ ever: number; policies: number }>(
+    "SELECT (SELECT count(*)::int FROM wf_approval_wallets WHERE business_id = $1) AS ever, (SELECT count(*)::int FROM wf_settlement_policies WHERE business_id = $1) AS policies",
+    [owner.businessId],
+  );
   return {
     wallets: rows.map((r) => ({ wallet: getAddress(r.wallet), you: r.principal_id === owner.principalId, enrolledAt: Number(r.enrolled_at), endorsedBy: r.endorsed_by ? getAddress(r.endorsed_by) : null })),
-    firstPinOpen: rows.length === 0 && policies === 0,
+    firstPinOpen: ever === 0 && policies === 0,
   };
 }
 
@@ -58,23 +66,30 @@ export async function requestEnrollment(ctx: AuthContext, input: { wallet: unkno
   const wallet = input.wallet.toLowerCase(), endorser = input.endorser.toLowerCase();
   const [mine] = await query("SELECT 1 FROM wf_principal_wallets WHERE principal_id = $1 AND address = $2", [owner.principalId, wallet]);
   if (!mine) throw new HttpError(400, "Enroll a wallet linked to your WhiteFlow sign-in. Link it in the sign-in dialog, then sign in again.");
-  const [taken] = await query("SELECT 1 FROM wf_approval_wallets WHERE business_id = $1 AND wallet = $2", [owner.businessId, wallet]);
+  // an active enrollment can't be repeated; a revoked one (its Owner was removed or demoted) needs this fresh endorsement
+  const [taken] = await query("SELECT 1 FROM wf_approval_wallets WHERE business_id = $1 AND wallet = $2 AND revoked_at IS NULL", [owner.businessId, wallet]);
   if (taken) throw new HttpError(409, "That wallet is already an approval wallet of this workspace.");
   const [ok] = await query(
     `SELECT 1 FROM wf_approval_wallets w JOIN wf_memberships m ON m.business_id = w.business_id AND m.principal_id = w.principal_id AND m.role = 'owner'
-     WHERE w.business_id = $1 AND w.wallet = $2`,
+     WHERE w.business_id = $1 AND w.wallet = $2 AND w.revoked_at IS NULL`,
     [owner.businessId, endorser],
   );
   if (!ok) throw new Forbidden(NOT_ENDORSER);
   await sharedRateLimit(`wf-enroll:${owner.principalId}`, REQUESTS_PER_MINUTE, 60_000, "closed");
   const origin = publicOrigin();
   const [biz] = await query<{ display_name: string }>("SELECT display_name FROM wf_businesses WHERE id = $1", [owner.businessId]);
+  // who asks, as other members see them (round 3, review S-L3: the endorser must know whose wallet they vouch for)
+  const [me] = await query<{ email: string | null; wallets: string[] | null }>(
+    "SELECT email, (SELECT array_agg(address ORDER BY address) FROM wf_principal_wallets WHERE principal_id = $1) AS wallets FROM wf_principals WHERE id = $1",
+    [owner.principalId],
+  );
+  const asker = promptSafe(memberLabel(me?.email ?? null, me?.wallets ?? []));
   const nonce = generateSiweNonce();
   const expiresAt = now + ENROLL_TTL_MS;
   const message = createSiweMessage({
     domain: origin.host,
     address: getAddress(endorser),
-    statement: `WhiteFlow: endorse ${getAddress(wallet)} as an approval wallet of "${promptSafe(biz.display_name)}". Approval wallets can approve where this workspace is paid. Sign only if you know this wallet belongs to an Owner of the workspace. It moves no funds.`,
+    statement: `WhiteFlow: endorse ${getAddress(wallet)} as an approval wallet of "${promptSafe(biz.display_name)}" for its Owner ${asker}. Approval wallets can approve where this workspace is paid. Sign only if you know this wallet belongs to that Owner. It moves no funds.`,
     uri: origin.origin,
     version: "1",
     chainId: whitechainSepolia.id,
@@ -100,18 +115,22 @@ const SQL_ENROLL = `WITH actor AS (
     SELECT 1 FROM wf_memberships WHERE business_id = $1 AND principal_id = $2 AND role = 'owner' FOR SHARE
   ), endorser AS (
     SELECT 1 FROM wf_memberships m WHERE m.business_id = $1 AND m.role = 'owner'
-      AND m.principal_id = (SELECT principal_id FROM wf_approval_wallets WHERE business_id = $1 AND wallet = $5) FOR SHARE
-  ), c AS (
-    UPDATE wf_challenges SET consumed_at = $4::bigint
-    WHERE nonce = $3 AND purpose = 'enroll' AND business_id = $1 AND principal_id = $2 AND address = $5 AND payload->>'wallet' = $6
-      AND consumed_at IS NULL AND expires_at > $4::bigint
-      AND EXISTS (SELECT 1 FROM actor) AND EXISTS (SELECT 1 FROM endorser)
-      AND EXISTS (SELECT 1 FROM wf_principal_wallets WHERE principal_id = $2 AND address = $6)
-    RETURNING nonce
+      AND m.principal_id = (SELECT principal_id FROM wf_approval_wallets WHERE business_id = $1 AND wallet = $5 AND revoked_at IS NULL) FOR SHARE
   ), w AS (
+    -- a new enrollment, or (round 3, S-H1) the fresh endorsement of a revoked one; never over an active one
     INSERT INTO wf_approval_wallets (business_id, wallet, principal_id, enrolled_at, endorsed_by)
-    SELECT $1, $6, $2, $4::bigint, $5 FROM c
+    SELECT $1, $6, $2, $4::bigint, $5
+    WHERE EXISTS (SELECT 1 FROM actor) AND EXISTS (SELECT 1 FROM endorser)
+      AND EXISTS (SELECT 1 FROM wf_principal_wallets WHERE principal_id = $2 AND address = $6)
+      AND EXISTS (SELECT 1 FROM wf_challenges WHERE nonce = $3 AND purpose = 'enroll' AND business_id = $1 AND principal_id = $2 AND address = $5
+                  AND payload->>'wallet' = $6 AND consumed_at IS NULL AND expires_at > $4::bigint)
+    ON CONFLICT (business_id, wallet) DO UPDATE
+      SET principal_id = EXCLUDED.principal_id, enrolled_at = EXCLUDED.enrolled_at, endorsed_by = EXCLUDED.endorsed_by, revoked_at = NULL
+      WHERE wf_approval_wallets.revoked_at IS NOT NULL
     RETURNING wallet, enrolled_at
+  ), c AS (
+    UPDATE wf_challenges SET consumed_at = $4::bigint WHERE nonce = $3 AND consumed_at IS NULL AND EXISTS (SELECT 1 FROM w)
+    RETURNING nonce
   ), n AS (
     INSERT INTO wf_notifications (id, business_id, principal_id, kind, detail, created_at)
     SELECT $7 || '_' || m.principal_id, $1, m.principal_id, 'approval_wallet.enrolled',
@@ -126,7 +145,7 @@ const SQL_ENROLL = `WITH actor AS (
 /** The answer for an enrollment of `wallet` that exists (a replay, or a concurrent duplicate that won), else null. */
 async function enrolledAnswer(businessId: string, principalId: string, wallet: string) {
   const [r] = await query<{ enrolled_at: string; endorsed_by: string | null }>(
-    "SELECT enrolled_at::text, endorsed_by FROM wf_approval_wallets WHERE business_id = $1 AND principal_id = $2 AND wallet = $3",
+    "SELECT enrolled_at::text, endorsed_by FROM wf_approval_wallets WHERE business_id = $1 AND principal_id = $2 AND wallet = $3 AND revoked_at IS NULL",
     [businessId, principalId, wallet],
   );
   return r ? { wallet: getAddress(wallet), endorsedBy: r.endorsed_by ? getAddress(r.endorsed_by) : null, enrolledAt: Number(r.enrolled_at) } : null;
@@ -158,6 +177,9 @@ export async function confirmEnrollment(ctx: AuthContext, input: { nonce: unknow
     throw new HttpError(400, "That signature isn't valid.");
   }
   if (signer !== c.address) throw new Forbidden("That endorsement wasn't signed by the endorsing wallet."); // NOT consumed
+  // round 3 (review C-L6): say so plainly if the wallet was unlinked from the sign-in since the request (NOT consumed)
+  const [linked] = await query("SELECT 1 FROM wf_principal_wallets WHERE principal_id = $1 AND address = $2", [owner.principalId, wallet]);
+  if (!linked) throw new HttpError(400, "That wallet is no longer linked to your sign-in. Link it again, then ask for a new endorsement.");
   let rows: Array<{ is_owner: number; endorser_ok: number; enrolled: number }>;
   try {
     rows = await query(SQL_ENROLL, [owner.businessId, owner.principalId, nonce, now, c.address, wallet, newId("ntf"), newId("aud"), owner.credentialId, owner.requestId]);
