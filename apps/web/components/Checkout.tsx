@@ -6,12 +6,15 @@
 // Batch 015: a discount code on link and page checkouts (FR-GW-12). Batch 021 (NFR-4): the payer approves exactly the
 // units the sheet shows (the server-rendered amount due, then each code reply's), sent with the payment; if the server's
 // claimed price differs it answers 409 with the amount due, and the sheet shows that and stops (security 015 INFO 8).
+// Batch 032 (FR-PAY-16): a guest short of USDT hears it before the hold, and "Pay with your wallet" (components/WalletPay)
+// approves the same payment from the customer's own wallet; only that option says "wallet".
 import Link from "next/link";
 import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { Address, Hex } from "viem";
 import { Confirming } from "@/components/Confirming";
 import { HoldButton } from "@/components/HoldButton";
-import { FAILED, NOT_FUNDED, outcome, type PayAnswer } from "@/lib/outcome";
+import { GuestShort, WalletOption, loadSigner, useGuestFunds, walletPayer } from "@/components/WalletPay";
+import { FAILED, errorTone, outcome, type PayAnswer } from "@/lib/outcome";
 import { EXPLORER } from "@/lib/usdt";
 
 // The relayer wants an approval to stay valid at least 30 s (lib/pay.ts), and an approval ends with the checkout: in
@@ -26,10 +29,6 @@ const subscribeSeconds = (tick: () => void) => {
 const thisSecond = () => Math.floor(Date.now() / 1000) * 1000;
 const useNow = () => useSyncExternalStore(subscribeSeconds, thisSecond, () => null);
 const mmss = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}`;
-
-// The signer (viem + the guest key) loads after first paint, so it never slows the sheet (NFR-12).
-type Signer = typeof import("@/lib/sign-sale");
-const loadSigner = () => import("@/lib/sign-sale");
 
 interface CheckoutProps {
   sessionId: string;
@@ -58,6 +57,8 @@ type Receipt = { receiptId: string; txHash: Hex | null };
 // already have paid, so they must never be sent to a new checkout (security R1 S1), and it never offers the
 // button again (002 security D4).
 type Phase = "ready" | "confirming" | "expired";
+/** Who approves: the guest (hold to pay) or the customer's own wallet. */
+type Via = "hold" | "wallet";
 
 const pill = "rounded-pill border border-current px-3 py-0.5 text-xs font-medium tracking-wide whitespace-nowrap";
 
@@ -90,29 +91,22 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
     focusAfterCode.current = false; // the control the payer used is gone: move focus to the one that replaced it
     (hasDiscount ? removeButton : codeInput).current?.focus();
   }, [hasDiscount]);
-  const [paying, setPaying] = useState(false);
+  const [paying, setPaying] = useState<Via | null>(null);
   const now = useNow();
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>(() => (pending ? "confirming" : Date.now() > expiresAt ? "expired" : "ready"));
   // the page, not the button, owns the payment in flight: a remounted button can't start a second one (R3 D3)
   const inFlight = useRef<Promise<void> | null>(null);
-  const signer = useRef<Promise<Signer> | null>(null);
-  useEffect(() => {
-    if (!sale) return;
-    const warm = () => {
-      signer.current ??= loadSigner();
-    };
-    const hasIdle = typeof window.requestIdleCallback === "function"; // Safari lacks it: fall back to a short timeout
-    const id = hasIdle ? window.requestIdleCallback(warm) : window.setTimeout(warm, 300);
-    return () => (hasIdle ? window.cancelIdleCallback(id) : window.clearTimeout(id));
-  }, [sale]);
+  const fundsUrl = `/api/v1/sessions/${sessionId}/funds`;
+  // loads the signer after first paint, then asks our server whether this browser can pay the amount due (FR-PAY-16)
+  const guest = useGuestFunds(sale && !paid && phase === "ready" ? fundsUrl : null, due.amountUnits);
 
-  function pay() {
+  function pay(via: Via) {
     if (!inFlight.current) {
-      setPaying(true);
-      inFlight.current = submit().finally(() => {
+      setPaying(via);
+      inFlight.current = submit(via).finally(() => {
         inFlight.current = null;
-        setPaying(false);
+        setPaying(null);
       });
     }
     return inFlight.current;
@@ -135,13 +129,15 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
     }
   }
 
-  async function submit() {
+  async function submit(via: Via) {
     setError(null);
     try {
       if (!sale) throw new Error("Payments aren't live yet.");
-      const { signSale } = await (signer.current ??= loadSigner());
+      const { signSale } = await loadSigner();
+      // the customer's own wallet: connected, on chain 1874, enough USDT per our server, before it asks to approve
+      const payer = via === "wallet" ? await walletPayer(fundsUrl) : undefined;
       // the units on the button; the server charges what it claims and refuses any other (security 009 F1)
-      const approval = await signSale({ ...sale, amount: due.amountUnits }, expiresAt);
+      const approval = await signSale({ ...sale, amount: due.amountUnits }, expiresAt, payer);
       let res: Response;
       try {
         res = await fetch(`/api/v1/sessions/${sessionId}/pay`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...approval, amount: due.amountUnits }) });
@@ -294,7 +290,7 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
             <div className="grid gap-3">
               {code && (
                 // inert while paying: the server refuses a code change then anyway (F5)
-                <details open={codeOpenAtStart} inert={paying} className={`group min-w-0 ${paying ? "opacity-45" : ""}`}>
+                <details open={codeOpenAtStart} inert={paying !== null} className={`group min-w-0 ${paying ? "opacity-45" : ""}`}>
                   <summary className="inline-flex min-h-11 cursor-pointer list-none items-center gap-1 text-sm font-medium text-accent [&::-webkit-details-marker]:hidden">
                     Have a discount code?
                     <span aria-hidden="true" className="transition-transform group-open:rotate-180">▾</span>
@@ -346,11 +342,22 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
                   )}
                 </details>
               )}
-              <HoldButton label={`Hold to pay ${due.amountText} USDT`} busyLabel="Paying" doneLabel="Paid" onConfirm={pay} aria-describedby="pay-hint" className="w-full" />
-              <p id="pay-hint" className="text-center text-sm text-ink-muted">
-                Pay exactly {due.amountText} USDT, no more and no less. No fees for you.
-                <span className="block">Press and hold the button, or press Enter, to pay.</span>
-              </p>
+              {/* short: said before the hold, never after it (a hold already under way stays), and the wallet leads */}
+              {/* submit() already shows its error; the rejection only matters to the hold button */}
+              {guest.funds === "short" && guest.address && paying !== "hold" ? (
+                <GuestShort amountText={due.amountText} address={guest.address} onRecheck={guest.recheck}>
+                  <WalletOption primary busy={paying === "wallet"} disabled={paying !== null} onPay={() => void pay("wallet").catch(() => undefined)} />
+                </GuestShort>
+              ) : (
+                <>
+                  <HoldButton label={`Hold to pay ${due.amountText} USDT`} busyLabel="Paying" doneLabel="Paid" onConfirm={() => pay("hold")} aria-describedby="pay-hint" className="w-full" />
+                  <p id="pay-hint" className="text-center text-sm text-ink-muted">
+                    Pay exactly {due.amountText} USDT, no more and no less. No fees for you.
+                    <span className="block">Press and hold the button, or press Enter, to pay.</span>
+                  </p>
+                  <WalletOption busy={paying === "wallet"} disabled={paying !== null} onPay={() => void pay("wallet").catch(() => undefined)} />
+                </>
+              )}
             </div>
           ) : (
             <p role="status" className="text-sm text-ink-muted">
@@ -358,8 +365,8 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
             </p>
           )}
           {error && (
-            // the demo message explains a limit, it isn't a failure: the warning tone, not red (UX review 005 N3)
-            <p role="alert" className={`text-sm ${error === NOT_FUNDED ? "text-warning" : "text-critical"}`}>
+            // a demo limit is amber and a cancel plain ink, not red (UX review 005 N3, 032 L3); centred under the hint (032 L4)
+            <p role="alert" className={`text-center text-sm ${errorTone(error)}`}>
               {error}
             </p>
           )}
