@@ -109,7 +109,7 @@ test("the transfer check follows ClaimToken's own order and names the first rule
   ];
   for (const [opts, reason] of reasons) {
     const out = await check(opts);
-    assert.equal(out.allowed, false, JSON.stringify(opts));
+    assert.equal(out.allowed, false, JSON.stringify(opts, (_, v) => (typeof v === "bigint" ? String(v) : v)));
     assert.match(out.reason, reason);
   }
   // the holder cap doesn't apply when the receiver already holds, or the sender moves everything
