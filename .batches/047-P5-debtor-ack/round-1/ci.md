@@ -33,3 +33,7 @@ and chain reads (the env file is off limits to agents); the check moves to the P
 Security review fixes (H1, M1, L1), red at 55fd9f6 → f150be1, a273e0f, c4d6682: `npm run typecheck` exit 0 ·
 `npm run lint` exit 0 · `npm test` tests 724, pass 722, fail 0, skipped 2 · `npm run build` exit 0 (`✓ Compiled
 successfully`; the same two pre-existing `shop key check: Error` prerender lines).
+
+Re-review items (copy, 5-ack cap + acksFor LIMIT + "5+", checksummed customer), red at 3803a41 → df77be7:
+`npm run typecheck` exit 0 · `npm run lint` exit 0 · `npm test` tests 727, pass 725, fail 0, skipped 2 ·
+`npm run build` exit 0 (`✓ Compiled successfully`; the same two `shop key check: Error` lines).
