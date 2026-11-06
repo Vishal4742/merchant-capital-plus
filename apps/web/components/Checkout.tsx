@@ -295,7 +295,7 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
             <div className="grid gap-3">
               {code && (
                 // inert while paying: the server refuses a code change then anyway (F5)
-                <details open={codeOpenAtStart} inert={paying} className={`group ${paying ? "opacity-45" : ""}`}>
+                <details open={codeOpenAtStart} inert={paying} className={`group min-w-0 ${paying ? "opacity-45" : ""}`}>
                   <summary className="inline-flex min-h-11 cursor-pointer list-none items-center gap-1 text-sm font-medium text-accent [&::-webkit-details-marker]:hidden">
                     Have a discount code?
                     <span aria-hidden="true" className="transition-transform group-open:rotate-180">▾</span>
@@ -308,8 +308,10 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
                       </button>
                     </p>
                   ) : (
+                    // w-0 on the input below: an input's built-in ~20-character width would otherwise set the sheet's minimum
+                    // width and push it past a 375 screen (G4 UX review H2)
                     <form
-                      className="flex gap-2"
+                      className="flex w-full min-w-0 gap-2"
                       onSubmit={(event) => {
                         event.preventDefault();
                         const typed = String(new FormData(event.currentTarget).get("code") ?? "");
@@ -331,7 +333,7 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
                         placeholder="Code"
                         aria-invalid={codeError ? true : undefined}
                         aria-describedby={codeError ? "code-error" : undefined}
-                        className="h-11 min-w-0 flex-1 rounded-sm border border-hairline bg-surface px-3 font-mono uppercase text-ink placeholder:font-sans placeholder:normal-case"
+                        className="h-11 w-0 min-w-0 flex-1 rounded-sm border border-hairline bg-surface px-3 font-mono uppercase text-ink placeholder:font-sans placeholder:normal-case"
                       />
                       <button type="submit" aria-disabled={codeBusy} className="h-11 shrink-0 rounded-pill border border-current px-5 text-sm font-medium text-accent aria-disabled:opacity-45">
                         {codeBusy ? "Checking" : "Apply"}
