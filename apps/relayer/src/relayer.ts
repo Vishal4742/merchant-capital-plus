@@ -19,7 +19,7 @@ const DEFAULT_RPC = 'https://rpc.ankr.com/whitechain_testnet';
 const RPC_TIMEOUT_MS = 8_000;
 // NFR-4 (payment ≤ 5 s): Ankr's eth_sendRawTransactionSync waited ~7 s for a 1 s-block chain (G2, 06:16), so send plainly
 // and poll our own receipt. Tests shrink these.
-export const TIMING = { receiptPollMs: 300, receiptTimeoutMs: 8_000 };
+export const TIMING = { receiptPollMs: 250, receiptTimeoutMs: 8_000 }; // 1 s blocks: ~4 polls per block
 const BALANCE_TTL_MS = 5_000; // /health WBT balance may be 5 s old (human 23:27, NFR-14 ≤ 300 ms p95); a send clears it
 // Refresh it every 3 s (human 01:14): stays inside the 5 s rule and keeps the RPC socket warm (Node drops idle ones at ~4 s).
 const BALANCE_REFRESH_MS = 3_000;
@@ -48,7 +48,8 @@ const UINT_DECIMAL = /^\d{1,78}$/;
 const BYTES32_HEX = /^0x[0-9a-fA-F]{64}$/;
 const SIG65_HEX = /^0x[0-9a-fA-F]{130}$/;
 
-// The allowlist (FR-REL-2): exactly these two functions on this one contract. refund is the merchant's own tx.
+// The allowlist (FR-REL-2): exactly three calls: MerchantPay.paySale and .payInvoice here, and
+// CapitalMarket.fundWithAuthorization below. refund is the merchant's own tx.
 const MERCHANT_PAY = getAddress(addresses.merchantPay);
 // Investor funding (human 08:20): CapitalMarket.fundWithAuthorization. No relay fee, so funding below 1 USDT is refused.
 const CAPITAL_MARKET = getAddress(addresses.capitalMarket);
@@ -109,15 +110,23 @@ const EXPIRED = reject(422, 'expired', 'validBefore must leave at least 30 s');
 const tooLate = (p: Payment) => p.validBefore < nowSeconds() + MIN_REMAINING_S;
 
 const balances = new Map<Address, { wei: bigint; at: number }>();
+const balanceReads = new Map<Address, Promise<bigint>>(); // single-flight: a /health burst shares one RPC read
 let sendCount = 0; // a balance read that overlaps a send is returned but not cached
 async function wbtBalance(client: RelayerClient, fresh = false): Promise<bigint> {
   const address = client.account.address;
   const hit = balances.get(address);
   if (!fresh && hit && Date.now() - hit.at < BALANCE_TTL_MS) return hit.wei;
+  const pending = balanceReads.get(address);
+  if (!fresh && pending) return pending;
   const sendsBefore = sendCount;
-  const wei = await client.getBalance({ address });
-  if (sendCount === sendsBefore) balances.set(address, { wei, at: Date.now() });
-  return wei;
+  const read = client.getBalance({ address }).then((wei) => {
+    if (sendCount === sendsBefore) balances.set(address, { wei, at: Date.now() });
+    return wei;
+  });
+  balanceReads.set(address, read);
+  const clear = () => { if (balanceReads.get(address) === read) balanceReads.delete(address); };
+  read.then(clear, clear);
+  return read;
 }
 
 /** Re-reads the WBT balance every `everyMs` until stopped; never keeps the process alive on its own. */
@@ -374,8 +383,28 @@ async function ownReceipt(client: RelayerClient, hash: Hash) {
   }
 }
 
+type Step = 'checks' | 'queue' | 'presend' | 'send' | 'receipt';
+
+/** Wall time per step in whole ms (NFR-4 on the deployed relayer): each lap is the time since the previous one. */
+function stopwatch() {
+  const start = performance.now();
+  let last = start;
+  let laps: Partial<Record<Step, number>> = {};
+  return {
+    lap(step: Step) {
+      const now = performance.now();
+      laps = { ...laps, [step]: Math.round(now - last) };
+      last = now;
+    },
+    read: () => ({ ...laps, total: Math.round(performance.now() - start) }),
+  };
+}
+type Stopwatch = ReturnType<typeof stopwatch>;
+let relays = 0; // the first /relay of this process is the cold one
+
 /** Runs inside the send lock: re-simulate on fresh state, sign with capped fees, send once, poll our receipt. */
-async function send(client: RelayerClient, p: Payment): Promise<Reject | Sent> {
+async function send(client: RelayerClient, p: Payment, clock: Stopwatch): Promise<Reject | Sent> {
+  clock.lap('queue');
   if (tooLate(p)) return EXPIRED; // queue time counts
   if (sentAuthorizations.has(sentKey(p))) return REPLAY;
   let nonce: number;
@@ -397,9 +426,12 @@ async function send(client: RelayerClient, p: Payment): Promise<Reject | Sent> {
   });
   const txHash = keccak256(signed);
   sentAuthorizations.add(sentKey(p)); // kept even if the send fails: the tx may still be pending, so a re-POST must not pay twice
+  clock.lap('presend');
   try {
     await client.sendRawTransaction({ serializedTransaction: signed });
+    clock.lap('send');
     const receipt = await ownReceipt(client, txHash);
+    clock.lap('receipt');
     if (!receipt) {
       recordSend(client, p, CAP_FEE_WEI, false, txHash); // may still be mined: count the worst case
       return reject(502, 'rpc_error', 'not mined within 8 s; poll the txHash', txHash);
@@ -423,14 +455,18 @@ async function send(client: RelayerClient, p: Payment): Promise<Reject | Sent> {
   } finally {
     sendCount += 1; // gas was (probably) spent: drop the cached balance and any read in flight
     balances.delete(client.account.address);
+    balanceReads.delete(client.account.address); // so the next /health starts a post-send read instead of joining one
   }
 }
 
 /**
  * POST /relay: parse → free checks → one RPC pre-check round → send lock (re-simulate, sign, sync send).
- * Every rejection happens before a transaction exists (AT-10), and only MerchantPay paySale/payInvoice are called (FR-REL-2).
+ * Every rejection happens before a transaction exists (AT-10), and only MerchantPay.paySale / .payInvoice and
+ * CapitalMarket.fundWithAuthorization are called (FR-REL-2).
  */
 export async function relay(body: string, client: RelayerClient): Promise<Response> {
+  const clock = stopwatch();
+  const cold = relays++ === 0;
   const parsed = parsePayment(body);
   if ('error' in parsed) return respond(reject(400, 'bad_request', parsed.error));
   let p = parsed.payment;
@@ -441,11 +477,14 @@ export async function relay(body: string, client: RelayerClient): Promise<Respon
   } catch (e) {
     return respond(reject(502, 'rpc_error', reason(e)));
   }
-  const result = await serialized(() => send(client, p));
+  clock.lap('checks');
+  const result = await serialized(() => send(client, p, clock));
   if ('code' in result) return respond(result);
+  const timings = { cold, ...clock.read() };
+  console.info(`relayed ${result.txHash} timings ${JSON.stringify(timings)}`); // the web app gets the body; this is ours
   return Response.json({
     txHash: result.txHash, blockNumber: result.blockNumber.toString(), paymentId: result.paymentId?.toString(),
-    gasUsed: result.gasUsed.toString(), gasCostWei: result.gasCostWei.toString(),
+    gasUsed: result.gasUsed.toString(), gasCostWei: result.gasCostWei.toString(), timings,
   });
 }
 

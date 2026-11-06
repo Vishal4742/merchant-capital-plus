@@ -641,3 +641,41 @@ test("publish: dashboard only, owner only (404), and an expired voucher is refus
   await query("UPDATE app_gw_vouchers SET expires_at = 1, arkiv_entity_key = NULL WHERE id = $1", [data.id]);
   assert.equal((await publishAs(data.id)).status, 409);
 });
+
+test("batch 021 (018 review M1): two publishes at once write one entity; the second gets a 409 while the first holds the lease", async () => {
+  arkiv.fail = new Error("rabdi down");
+  const spy = mock.method(console, "error", () => {});
+  let id;
+  try {
+    id = (await newVoucher()).data.id;
+  } finally {
+    spy.mock.restore();
+  }
+  arkiv.fail = null;
+  const { publishVoucher } = await import("../lib/server/vouchers.ts");
+  const { query } = await import("../lib/server/db.ts");
+  const now = Date.now() + 5 * 60_000; // past create's own lease
+  await query("UPDATE app_gw_vouchers SET arkiv_attempted_at = $2 WHERE id = $1", [id, now]); // another publish just took it
+  const blocked = await publishVoucher(MERCHANT, id, now + 1000).catch((e) => e);
+  assert.equal(blocked.status, 409);
+  assert.match(blocked.message, /already/);
+  const before = arkiv.calls.length;
+  const ok = await publishVoucher(MERCHANT, id, now + 3 * 60_000 + 1); // the lease lapsed
+  assert.equal(ok.arkivEntityKey, ENTITY_KEY);
+  assert.equal(arkiv.calls.length, before + 1, "exactly one more write");
+});
+
+test("batch 021 (018 review L1): a deactivated voucher isn't published", async () => {
+  arkiv.fail = new Error("rabdi down");
+  const spy = mock.method(console, "error", () => {});
+  let id;
+  try {
+    id = (await newVoucher()).data.id;
+  } finally {
+    spy.mock.restore();
+  }
+  arkiv.fail = null;
+  await deactivate(req("POST", `/api/v1/vouchers/${id}/deactivate`, { headers: signedIn() }), params({ id }));
+  const res = await publishAs(id);
+  assert.equal(res.status, 409);
+});

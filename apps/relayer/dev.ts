@@ -1,8 +1,7 @@
 // Local dev server, bound to 127.0.0.1 only: serves the Vercel handlers at POST /relay and GET /health.
 // ponytail: dev-only adapter; on Vercel the api/ files are the functions (rewrites added with the deploy batch).
 import { createServer } from 'node:http';
-import { GET as health } from './api/health.ts';
-import { POST as relay } from './api/relay.ts';
+import { GET as health, POST as relay } from './api/relay.ts';
 import { MAX_BODY_BYTES } from './src/relayer.ts';
 
 const PORT = Number(process.env.PORT ?? 8787);

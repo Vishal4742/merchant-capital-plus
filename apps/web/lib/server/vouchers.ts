@@ -137,6 +137,7 @@ export function voucherInput(body: Record<string, unknown>, now = Date.now()) {
 
 type Mirror = { entityKey: string; txHash: string | null } | { error: string; config?: boolean };
 const MAX_REASON = 200;
+const PUBLISH_LEASE_MS = 3 * 60_000; // longer than one Arkiv write including its receipt wait
 
 /** Why this server can't mirror vouchers to Arkiv at all, or null: checks only that the settings exist (names, never
  *  values). Shown on every read of a voucher that isn't on Arkiv, so a misconfigured server is visible at once. */
@@ -170,15 +171,16 @@ async function mirrorToArkiv(v: Voucher): Promise<Mirror> {
 }
 
 /** Stores a mirror attempt's outcome on the voucher (batch 018: never silent) and returns the updated voucher. */
-async function recordMirror(v: Voucher, mirror: Mirror, now: number): Promise<Voucher> {
+async function recordMirror(v: Voucher, mirror: Mirror): Promise<Voucher> {
   if ("error" in mirror) {
     console.error(`voucher ${v.id} not mirrored to Arkiv: ${mirror.error}`);
     // a missing setting is the server's state, not this voucher's: shown on every read (arkivConfigProblem), not stored
     if (mirror.config) return { ...v, arkivError: mirror.error };
-    await query("UPDATE app_gw_vouchers SET arkiv_error = $2, arkiv_attempted_at = $3 WHERE id = $1", [v.id, mirror.error, now]);
+    // the attempt is over: record its reason and release the lease (arkiv_attempted_at = an attempt in progress)
+    await query("UPDATE app_gw_vouchers SET arkiv_error = $2, arkiv_attempted_at = NULL WHERE id = $1", [v.id, mirror.error]);
     return { ...v, arkivError: mirror.error };
   }
-  await query("UPDATE app_gw_vouchers SET arkiv_entity_key = $2, arkiv_tx_hash = $3, arkiv_error = NULL, arkiv_attempted_at = $4 WHERE id = $1", [v.id, mirror.entityKey, mirror.txHash, now]);
+  await query("UPDATE app_gw_vouchers SET arkiv_entity_key = $2, arkiv_tx_hash = $3, arkiv_error = NULL, arkiv_attempted_at = NULL WHERE id = $1", [v.id, mirror.entityKey, mirror.txHash]);
   return { ...v, arkivEntityKey: mirror.entityKey, arkivTxHash: mirror.txHash, arkivError: null };
 }
 
@@ -190,19 +192,30 @@ export async function publishVoucher(merchant: Address, id: string, now = Date.n
   const voucher = fromRow(rows[0]);
   if (voucher.arkivEntityKey) return voucher;
   if (voucher.expiresAt <= now) throw new HttpError(409, "This voucher has expired, so it isn't published.");
-  return recordMirror(voucher, await mirrorToArkiv(voucher), now);
+  if (!voucher.active) throw new HttpError(409, "This voucher is deactivated, so it isn't published."); // 018 review L1
+  const problem = arkivConfigProblem();
+  if (problem) return { ...voucher, arkivError: problem }; // nothing to attempt: no lease, no write
+  // 018 review M1: one attempt at a time. The lease outlasts one Arkiv write (receipt wait included); the attempt
+  // releases it when it ends, so only a crashed attempt makes the next publish wait PUBLISH_LEASE_MS.
+  const leased = await query(
+    "UPDATE app_gw_vouchers SET arkiv_attempted_at = $2 WHERE id = $1 AND arkiv_entity_key IS NULL AND (arkiv_attempted_at IS NULL OR arkiv_attempted_at <= $3) RETURNING id",
+    [id, now, now - PUBLISH_LEASE_MS],
+  );
+  if (leased.length === 0) throw new HttpError(409, "Publishing to Arkiv already, try again in a minute.");
+  return recordMirror(voucher, await mirrorToArkiv(voucher));
 }
 
 /** Creates the voucher (409 if the merchant already has the code), then mirrors it to Arkiv. */
 export async function createVoucher(merchant: Address, input: ReturnType<typeof voucherInput>, now = Date.now()): Promise<Voucher> {
   const rows = await query<VoucherRow>(
-    `INSERT INTO app_gw_vouchers (id, merchant, code, kind, value, expires_at, max_redemptions, min_amount, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (merchant, code) DO NOTHING RETURNING ${COLUMNS}`,
-    [newId("vch"), merchant.toLowerCase(), input.code, input.kind, input.value.toString(), input.expiresAt, input.maxRedemptions, input.minAmount?.toString() ?? null, now],
+    `INSERT INTO app_gw_vouchers (id, merchant, code, kind, value, expires_at, max_redemptions, min_amount, created_at, arkiv_attempted_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (merchant, code) DO NOTHING RETURNING ${COLUMNS}`,
+    // create's own mirror attempt holds the publish lease from the start (018 review M1); none when nothing will be tried
+    [newId("vch"), merchant.toLowerCase(), input.code, input.kind, input.value.toString(), input.expiresAt, input.maxRedemptions, input.minAmount?.toString() ?? null, now, arkivConfigProblem() ? null : now],
   );
   if (!rows[0]) throw new HttpError(409, `You already have a voucher with the code ${input.code}.`);
   const voucher = fromRow(rows[0]);
-  return recordMirror(voucher, await mirrorToArkiv(voucher), now);
+  return recordMirror(voucher, await mirrorToArkiv(voucher));
 }
 
 export async function listVouchers(merchant: Address): Promise<Voucher[]> {
@@ -314,6 +327,9 @@ export async function claimAmountDue(sessionId: string, now = Date.now()): Promi
   // the lock serializes claims of one link or page: under READ COMMITTED the claim's snapshot is taken after it, so it
   // sees every other checkout's committed claim (two checkouts claiming at once: one wins). One statement claims and
   // freezes, so a refused claim freezes nothing.
+  // ponytail: the sibling check sees a paid checkout only once onSessionPaid has run markCheckoutPaid for it; if that
+  // call failed or ran late, the sibling relies on its claimed_at until FREEZE_MS ends. A retry of onSessionPaid (the
+  // pay route re-announces) closes the gap; a DB-level paid flag fed by the chain would close it for good.
   const [, rows] = await transaction([
     { text: "SELECT pg_advisory_xact_lock(hashtext($1))", params: [`link:${checkout.refId}`] },
     {
