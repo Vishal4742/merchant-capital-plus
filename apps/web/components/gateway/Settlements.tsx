@@ -1,7 +1,7 @@
-// Settlements (FR-GW-10): the wallet's balance, the plain T+0 line, and each payment's split (gross, the relay fee, the
-// investors' share, what reached the wallet) with its transaction. Server-rendered; the figures are the API's own.
-import { Reveal } from "@/components/dashboard/Reveal";
-import { card, nightGrain } from "@/components/gateway/Frame";
+// Settlements (FR-GW-10): the plain T+0 line and each payment's split (gross, the relay fee, the
+// investors' share, what reached the wallet) with its transaction. Server-rendered; the figures are the API's own. The
+// wallet's balance is shown once, in the Withdraw card above (FR-GW-15, batch 040).
+import { nightGrain } from "@/components/gateway/Frame";
 import { panel } from "@/components/gateway/Reports";
 import { amountText } from "@/lib/gateway-forms";
 import { formatWbt, WBT_HINT } from "@/lib/dashboard";
@@ -18,33 +18,20 @@ const cellLink = "inline-flex min-h-11 items-center text-accent underline underl
 const tableCell = "md:table-cell md:px-6 md:py-3 md:align-middle";
 
 /** `fees`: the network fee the relayer covered per transaction hash (FR-GW-10, claude-research 06:43); null = unread. */
-export function SettlementsView({ data, merchant, fees = new Map() }: { data: Settlements; merchant: string; fees?: ReadonlyMap<string, bigint | null> }) {
+export function SettlementsView({ data, fees = new Map() }: { data: Settlements; fees?: ReadonlyMap<string, bigint | null> }) {
   const rows = data.settlements;
   return (
     <>
-      <div className="grid gap-4 md:grid-cols-2">
-        <section aria-labelledby="balance" className={`${card} lift`}>
-          <h2 id="balance" className="eyebrow text-ink-muted">
-            Wallet balance
-          </h2>
-          <p className="flex flex-wrap items-baseline gap-x-2">
-            <b className="text-[36px] leading-none font-medium tracking-[-0.03em] break-all tabular-nums md:text-[44px]">
-              <Reveal text={amountText(data.balance)} />
-            </b>
-            <span className="eyebrow text-ink-muted">USDT</span>
-          </p>
-          <p className="text-sm text-ink-muted">
-            In <span className="data">{`${merchant.slice(0, 6)}…${merchant.slice(-4)}`}</span>, read when this page loaded.
-          </p>
-        </section>
-        <section aria-labelledby="t0" className={`grid content-start gap-4 rounded-[20px] border border-hairline p-5 text-[#ededf3] md:p-6 ${nightGrain}`}>
-          <h2 id="t0" className="eyebrow text-[#a7abc2]">
-            Settlement
-          </h2>
-          <b className="text-[36px] leading-none font-medium tracking-[-0.03em] md:text-[44px]">T+0</b>
-          <p className="text-sm text-[#c9cbe0]">Each payment settles to your wallet in the same transaction, the moment it&apos;s paid.</p>
-        </section>
-      </div>
+      <section
+        aria-labelledby="t0"
+        className={`grid content-start gap-4 rounded-[20px] border border-hairline p-5 text-[#ededf3] md:grid-cols-[auto_minmax(0,1fr)] md:items-center md:gap-x-8 md:p-6 ${nightGrain}`}
+      >
+        <h2 id="t0" className="eyebrow text-[#a7abc2] md:col-span-2">
+          Settlement
+        </h2>
+        <b className="text-[36px] leading-none font-medium tracking-[-0.03em] md:text-[44px]">T+0</b>
+        <p className="text-sm text-[#c9cbe0]">Each payment settles to your wallet in the same transaction, the moment it&apos;s paid.</p>
+      </section>
 
       <section aria-labelledby="settled" className={panel}>
         <h2 id="settled" className="px-5 pt-5 text-[15px] font-medium md:px-6">
