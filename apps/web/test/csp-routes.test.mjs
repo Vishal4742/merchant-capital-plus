@@ -24,8 +24,9 @@ test("csp: no later rule overrides /capital (for one header the last matching ru
 // Batch 046 (FR-PAY-16, FR-PRIV-1): "Pay with your wallet" through Privy. Only the pages that show the pay sheet may
 // reach Privy's API and wallet iframe and the WalletConnect relay (Privy's CSP guide); every other strict page stays
 // 'self' only. The pay pages still can't reach a chain RPC (no browser chain reads).
-const PAY_SHEET = ["/checkout/:path*", "/pay/:path*", "/l/:path*", "/p/:path*"];
-const STRICT = ["/r/:path*", "/counter/:path*", "/docs", "/merchant/developers"];
+// security 046 L1: /l/[slug] and /p/[slug] never render the pay sheet (they post to /checkout), so they stay strict
+const PAY_SHEET = ["/checkout/:path*", "/pay/:path*"];
+const STRICT = ["/l/:path*", "/p/:path*", "/r/:path*", "/counter/:path*", "/docs", "/merchant/developers"];
 const directive = (csp, name) => csp.split("; ").find((d) => d.startsWith(`${name} `)) ?? "";
 
 test("csp: the pay sheet's pages allow Privy's API, its wallet iframe and the WalletConnect relay, nothing else new", () => {
@@ -42,7 +43,6 @@ test("csp: the pay sheet's pages allow Privy's API, its wallet iframe and the Wa
     assert.match(csp, /frame-ancestors 'none'/, source);
     assert.doesNotMatch(csp, /whitechain|ankr|rpc\.privy\.systems|walletlink|wss:(?!\/\/relay\.walletconnect)/, `${source}: no chain RPC host`);
   }
-  assert.match(cspOf(rules[at("/p/:path*")]), /img-src 'self' data: https:/, "/p keeps the merchant's logo");
 });
 
 test("csp: the other strict pages stay 'self' only (no Privy, no WalletConnect)", () => {
@@ -50,7 +50,8 @@ test("csp: the other strict pages stay 'self' only (no Privy, no WalletConnect)"
     const csp = cspOf(rules[at(source)]);
     assert.ok(csp, `no CSP for ${source}`);
     assert.equal(directive(csp, "connect-src"), "connect-src 'self'", source);
-    assert.doesNotMatch(csp, /privy|walletconnect/, source);
+    assert.doesNotMatch(csp, /privy|walletconnect|frame-src/, source);
   }
+  assert.match(cspOf(rules[at("/p/:path*")]), /img-src 'self' data: https:/, "/p keeps the merchant's logo");
   for (const source of ["/merchant/:path*", "/capital/:path*"]) assert.doesNotMatch(cspOf(rules[at(source)]), /privy|walletconnect/, source);
 });
