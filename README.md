@@ -11,6 +11,18 @@
 - **Every receipt is an on-chain transaction** anyone can check.
 - **Easiest to integrate:** a one-line payment button or a small SDK, with signed webhooks.
 
+### Compared with existing gateways
+| | Whitepay (W Group) | Coinbase Commerce | Merchant Capital+ |
+|---|---|---|---|
+| Where the money lands | A WhiteBIT-side account: deposit addresses and off-chain settlement from WhiteBIT balances ([docs](https://docs.whitebit.com/guides/payments-overview)) | Escrow, then settled in USDC | The merchant's own wallet, in the same transaction |
+| Customer pays gas | Not stated; "Pay with WhiteBIT" moves funds off-chain between WhiteBIT accounts | No (EIP-3009 USDC on Base) | No (EIP-3009 USDT on Whitechain) |
+| Runs on Whitechain | Not mentioned on [whitepay.com](https://whitepay.com) | No | Yes |
+| Fee | 0.4–1.5% of pay-ins ([whitepay.com](https://whitepay.com)) | About 1% (Shopify app listing) | A flat 0.10 USDT inside each payment, which covers the gas |
+| Merchant financing | None listed | None | Revenue advances and invoice claims, repaid from the payment split |
+| Where they're ahead | 200+ coins, POS terminals, fiat payouts | Shopify, scale | — |
+
+We'd sit next to Whitepay, not replace it: Whitepay covers custodial, many-coin, fiat-settled processing; we're the non-custodial rail on Whitechain itself, with financing that only works when the payment is split on chain.
+
 ## Why this needs on-chain stablecoin settlement
 Repayment is enforced where the money arrives. One customer payment is split, in the same transaction, between the merchant, the investors who financed it and the gas fee, under rules neither the merchant nor we can change. A card rail or bank transfer can't route one payment to three parties by code, and an investor would have to trust the merchant to forward the money. With USDT on Whitechain, any verified investor can fund a café at 3 a.m. and gets repaid in one second.
 
