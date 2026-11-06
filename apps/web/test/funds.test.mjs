@@ -8,6 +8,7 @@ import { setupDb, resetDb, req, params, MERCHANT, OTHER_MERCHANT } from "./gw-he
 
 process.env.MERCHANT_ADDRESS = MERCHANT;
 process.env.MERCHANT_NAME = "Bandra Beans";
+process.env.SHOP_API_KEY = "test-shop-key-0123456789abcdef"; // merchantConfig(): /pay serves only the shop's invoices
 const MERCHANT_PAY = "0x3333333333333333333333333333333333333333";
 const PAYER = "0x5555555555555555555555555555555555555555";
 const FEE = 100_000n;
@@ -56,7 +57,7 @@ beforeEach(async () => {
 });
 
 async function ask(route, id, payer = PAYER, headers = IP) {
-  const query = payer === undefined ? "" : `?payer=${encodeURIComponent(payer)}`;
+  const query = payer === null ? "" : `?payer=${encodeURIComponent(payer)}`;
   const res = await route.GET(req("GET", `/funds${query}`, { headers }), params({ id }));
   return { status: res.status, data: await res.json(), cache: res.headers.get("cache-control") };
 }
@@ -100,7 +101,7 @@ test("a link checkout with a code held: enough means enough for the amount due n
 test("a checkout: a bad payer is 400, an unknown checkout 404, a chain that can't be read 503 (never a guess)", async () => {
   const id = await shopCheckout();
   assert.equal((await ask(sessionFunds, id, "0x123")).status, 400);
-  assert.equal((await ask(sessionFunds, id, undefined)).status, 400);
+  assert.equal((await ask(sessionFunds, id, null)).status, 400);
   assert.equal((await ask(sessionFunds, "00000000-0000-4000-8000-000000000000")).status, 404);
   balanceFails = true;
   const down = await ask(sessionFunds, id);
