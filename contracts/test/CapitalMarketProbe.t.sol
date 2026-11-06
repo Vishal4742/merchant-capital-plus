@@ -497,7 +497,7 @@ contract CapitalMarketProbeForkTest is Test {
     uint256 constant SAFE_INVOICE_HOLDERS = 2;
     uint256 constant SAFE_ADVANCE_HOLDERS = 1;
     uint256 constant SOLD = FACE / 2; // M3: the invoice is half sold
-    uint256 constant MIXED_REPAYMENT_GAS_LIMIT = 600_000; // M3: what a payInvoice that repays two claims needs (batch 031)
+    uint256 constant MIXED_REPAYMENT_GAS_LIMIT = 600_000; // M3: what a payInvoice that repays two claims needs (batch 039)
 
     /// @dev Lists an invoice or an advance, funds it across `n` investors, optionally empties their USDT (paying a
     ///      wallet at 0 USDT is a 0 -> nonzero write, +17.1k), then repays it in full (`settle`, the last repayment of
@@ -542,7 +542,7 @@ contract CapitalMarketProbeForkTest is Test {
         assertGt(_repaymentGas(true, SAFE_ADVANCE_HOLDERS + 1, true, true), RELAYER_GAS_LIMIT);
     }
 
-    // ---------- M3 (batch 031, claude-relayer's PR #27 review): one payInvoice repays two claims ----------
+    // ---------- M3 (batch 039, claude-relayer's PR #27 review): one payInvoice repays two claims ----------
     // A partly-sold invoice from a merchant with a running advance: onPayment pays the invoice holders first (settling
     // the invoice claim), then the advance lien from the remainder, in the same relayed tx.
 
