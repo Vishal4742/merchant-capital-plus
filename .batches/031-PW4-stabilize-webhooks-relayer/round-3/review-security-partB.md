@@ -1,0 +1,20 @@
+VERDICT: PASS
+# Batch 031 · round 3 · Part B (relayer) security review — by whiteflow-ef (independent of the implementer, whiteflow-b7)
+
+Why a session review: the subagent review of round 3 failed to run ("Credit balance is too low", all three agents), so per the owner's supervision prompt reviewers are the other session. Read in full: `apps/relayer/src/db.ts`, `src/state.ts`, `db/002_rel_round3.sql`, `db/unblock-payer.ts`, and `src/relayer.ts` lines 150–200 (ledger checks, `recordSend`, `payerFault`) plus the take-lease/write-ahead call sites. Fresh run (whiteflow-ef): `npm run typecheck` exit 0; `npm test` 98/98.
+
+## Checked against the owner's round-3 decisions
+- **B8 brief retry, then 503:** `query()` retries only transient errors (timeouts/aborts, connection SQLSTATE 08xxx/53xxx/57P01-03, serialization/deadlock, Node socket codes, Neon `sourceError`, HTTP 5xx/429), backoff 100/300/600 ms, no new try past 1.5 s; a 5 s hung statement is not retried; constraint/SQL/4xx errors fail once → `DbUnavailable` → 503 before any signature. No in-memory fallback.
+- **Idempotent retries:** `takeLease` records a per-request `holder` UUID; a retry after a committed-but-lost reply returns its own live lease (`UNION ALL … holder = $2 AND until > now() AND NOT EXISTS (taken)`), never `busy`. `writeAhead`'s `ON CONFLICT (auth_key) DO UPDATE … WHERE tx_hash = ours AND fence = ours AND status = 'signed'` recognises only our own row; a stale holder re-signing the same nonce (identical tx hash, different fence) is still `replay`; a lapsed lease is still `lost_lease`. `settle` (single timestamp captured before tries), `releaseLease` and the unblock insert (id generated before the query) are idempotent.
+- **No automatic ban; cooldown only for independently validated payer-attributable failures:** the ban query is gone; `payerFault()` runs only after a mined revert and counts it only if, at the revert block, `authorizationState(payer, nonce)` is still false AND `balanceOf(payer) < signed value`; any error → not counted. An attacker can't move a victim's USDT, the pre-send simulation already refuses low balances, and forged signatures are refused before relaying, so infra failures, pauses, duplicates (one row per authorization; replays never reach settle) and forged signatures never count. Front-runs that consume the authorization are deliberately not counted (one boolean can't tell the payer's cancel from a third party's front-run).
+- **Policy:** 3 distinct failures / 10 min → 15 min cooldown via `RELAYER_COOLDOWN_FAILURES`, `RELAYER_COOLDOWN_WINDOW_S`, `RELAYER_COOLDOWN_S`; invalid values (0, negative, NaN, out of range) fall back to defaults with one warning. Window computed in SQL per payer across relayers; failures at or before the last audited unblock are ignored.
+- **Audited unblock:** operator CLI only (no endpoint); arguments validated before any DB access (exit 2), one `rel_payer_unblocks` row per unblock with actor, reason and the cooldown lifted; per payer only.
+- **429 before any RPC:** the cooldown is in `ledgerChecks` (one DB read), ahead of budget/rate checks; response `payer_cooldown` + `retry_after_s`. Global breaker, budget and rate limits unchanged.
+- **Migration 002:** additive (`ADD COLUMN IF NOT EXISTS`, `CREATE … IF NOT EXISTS`), compatible with 001 rows (`holder`/`payer_fault_at` NULL).
+
+## Observations for the owner (not defects)
+1. **Breaker vs cooldown thresholds:** with one hot key the global breaker (3 mined reverts/hour from any cause → 503 for everyone) trips no later than a payer's cooldown (3 attributable failures/10 min), so the cooldown adds little until the breaker threshold is raised. Limits decision (PIPELINE §11) — unchanged.
+2. **Attribution reads end-of-block state:** a payer who refills within the same 1 s block escapes counting (benign false negative); a coincidental same-block move after a revert for another reason could count (requires the payer to have moved funds after signing).
+
+## Not covered here
+Real-Postgres concurrency with independent connections (owner requirement) — requested from whiteflow-b7 as round 4 (`npm run test:pg`), pending.
