@@ -10,8 +10,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = new URL("..", import.meta.url).pathname;
+// a file path on every OS (URL.pathname is "/P:/…" on Windows, which join() turned into "P:\P:\…"; batch 049)
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const { ENDPOINTS, RESOURCES, GROUPS, RATE_LIMITS, FX_CURRENCIES, LIMITS, ERRORS, EVENTS, CHECKOUT_STATUSES, TEST_SCENARIOS } = await import("../lib/docs-reference.ts");
 const { CURRENCIES, MAX_PAYMENT, MIN_PAYMENT, HttpError } = await import("../lib/server/http.ts");
 const { BANDS, QUOTE_TTL_MS, RATE_CACHE_MS, toUsdtUnits } = await import("../lib/server/quotes.ts");

@@ -4,8 +4,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = new URL("..", import.meta.url).pathname;
+// a file path on every OS (URL.pathname is "/P:/…" on Windows, which join() turned into "P:\P:\…"; as batch 049 did for docs-reference)
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const sources = ["app", "components", "lib"].flatMap((dir) =>
   readdirSync(join(ROOT, dir), { recursive: true })
     .filter((file) => /\.(ts|tsx)$/.test(file))

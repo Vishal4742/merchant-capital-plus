@@ -78,6 +78,11 @@ Delivered or kept, from main's SRS 2.3 and the WhiteFlow SRS v3.1 (on the stage 
 - apps/web/app/api/v1/reports/route.ts (an sk_test_ key also works)
 - apps/web/lib/server/links.ts (linkById + its paid checkouts)
 - apps/web/test/gw-mcp-api.test.mjs (new)
+- apps/web/test/docs-reference.test.mjs and test-mode.test.mjs: test-only Windows path fix (`fileURLToPath`; batch 049's
+  identical change to docs-reference). On main they fail on a Windows host, so the pre-push hook refused this branch.
+  Assertions unchanged; Linux unaffected.
+- apps/web/lib/server/http.ts (jsonObject), apps/web/lib/server/keys.ts (callerMerchant)
+- notes/phase-5-mcp.md
 - packages/mcp/** (the server, sandbox, client, tools, prompts, manifest, icon, build and pack scripts, tests, README,
   THIRD_PARTY_LICENSES)
 
