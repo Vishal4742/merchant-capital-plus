@@ -44,7 +44,7 @@ jobs:
           hit "^apps/web/|^packages/|$wf" && echo web=true >> "$GITHUB_OUTPUT" || echo web=false >> "$GITHUB_OUTPUT"
           hit "^apps/relayer/|^packages/shared/|$wf" && echo relayer=true >> "$GITHUB_OUTPUT" || echo relayer=false >> "$GITHUB_OUTPUT"
           hit "^packages/sdk/|$wf" && echo sdk=true >> "$GITHUB_OUTPUT" || echo sdk=false >> "$GITHUB_OUTPUT"
-          hit "^packages/(mcp|sdk|shared)/|$wf" && echo mcp=true >> "$GITHUB_OUTPUT" || echo mcp=false >> "$GITHUB_OUTPUT"
+          [ -f packages/mcp/package.json ] && hit "^packages/(mcp|sdk|shared)/|$wf" && echo mcp=true >> "$GITHUB_OUTPUT" || echo mcp=false >> "$GITHUB_OUTPUT"
 
   contracts:
     needs: changes
