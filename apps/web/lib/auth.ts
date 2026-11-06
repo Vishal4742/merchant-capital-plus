@@ -73,14 +73,27 @@ export function consumeNonce(nonce: string, now = Date.now()): boolean {
 }
 
 /** Checks a SIWE message (our domain, the nonce we issued, chain 1874, expiring within 10 min) and its signature. */
-export async function verifySignIn(input: { message: string; signature: Hex; nonce: string; domain: string; now?: Date }): Promise<Address | null> {
+/** The hosts a sign-in message may name: the request's own; under `next start`, which reports every request as
+ *  localhost, the loopback spellings of the same port too (the browser may be on 127.0.0.1: G2 run, 06:30); and
+ *  PUBLIC_ORIGIN's host behind a proxy. A phishing site's domain is never one of them. */
+export function signInDomains(requestUrl: string, publicOrigin: string | undefined = process.env.PUBLIC_ORIGIN): string[] {
+  const url = new URL(requestUrl);
+  const hosts = new Set([url.host]);
+  if (url.hostname === "localhost") for (const loopback of ["127.0.0.1", "[::1]"]) hosts.add(url.port ? `${loopback}:${url.port}` : loopback);
+  if (publicOrigin && URL.canParse(publicOrigin) && /^https?:$/.test(new URL(publicOrigin).protocol)) hosts.add(new URL(publicOrigin).host);
+  return [...hosts];
+}
+
+export async function verifySignIn(input: { message: string; signature: Hex; nonce: string; domains: readonly string[]; now?: Date }): Promise<Address | null> {
   if (input.message.length > 2_000) return null;
   const parsed = parseSiweMessage(input.message);
   const now = input.now ?? new Date();
   if (!parsed.address || parsed.chainId !== SIGN_IN_CHAIN_ID) return null;
   // viem only checks expiry when the message has one: require it, and keep it short
   if (!parsed.expirationTime || parsed.expirationTime.getTime() > now.getTime() + MAX_MESSAGE_TTL_S * 1000) return null;
-  if (!validateSiweMessage({ message: parsed, nonce: input.nonce, domain: input.domain, time: now })) return null;
+  // the message must name one of our hosts (no phishing site's); viem then checks nonce, time and that same domain
+  if (!parsed.domain || !input.domains.includes(parsed.domain)) return null;
+  if (!validateSiweMessage({ message: parsed, nonce: input.nonce, domain: parsed.domain, time: now })) return null;
   const valid = await verifyMessage({ address: parsed.address, message: input.message, signature: input.signature }).catch(() => false);
   return valid ? getAddress(parsed.address) : null;
 }

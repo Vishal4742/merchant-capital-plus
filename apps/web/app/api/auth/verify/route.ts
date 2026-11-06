@@ -1,7 +1,7 @@
 // POST /api/auth/verify {message, signature}: checks the signed SIWE message against the nonce cookie and our
 // domain, then sets the session cookie. The nonce is single use: it is cleared whether or not sign-in succeeds.
 import { isHex } from "viem";
-import { NONCE_COOKIE, SESSION_COOKIE, SESSION_TTL_S, authSecret, consumeNonce, cookieFrom, readNonce, setCookie, signSession, verifySignIn } from "../../../../lib/auth.ts";
+import { NONCE_COOKIE, SESSION_COOKIE, SESSION_TTL_S, authSecret, consumeNonce, cookieFrom, readNonce, setCookie, signInDomains, signSession, verifySignIn } from "../../../../lib/auth.ts";
 
 export async function POST(request: Request) {
   const secret = authSecret();
@@ -13,7 +13,7 @@ export async function POST(request: Request) {
   if (!nonce || typeof body?.message !== "string" || typeof body.signature !== "string" || !isHex(body.signature)) {
     return Response.json({ error: "Sign-in expired. Try again." }, { status: 401, headers: { "set-cookie": clearNonce } });
   }
-  const address = await verifySignIn({ message: body.message, signature: body.signature, nonce, domain: url.host });
+  const address = await verifySignIn({ message: body.message, signature: body.signature, nonce, domains: signInDomains(request.url) });
   // single use on the server too: the browser drops the cookie, but a captured request could be sent again
   if (address && !consumeNonce(nonce)) return Response.json({ error: "Sign-in expired. Try again." }, { status: 401, headers: { "set-cookie": clearNonce } });
   if (!address) return Response.json({ error: "That signature didn't check out. Try again." }, { status: 401, headers: { "set-cookie": clearNonce } });

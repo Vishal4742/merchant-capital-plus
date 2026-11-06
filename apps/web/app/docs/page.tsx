@@ -2,7 +2,6 @@
 // test keys, and "Simulate a payment" (test mode). Public and prerendered, except the keys box, which streams in.
 // The keys box never shows a key, not even its start (security review 006 F5): until the API keys screen (FR-GW-6)
 // lands, it says whether this server has one, with a fingerprint the shop can compare.
-import Link from "next/link";
 import { headers } from "next/headers";
 import { Suspense } from "react";
 import { buttonClasses } from "@/components/Button";
@@ -71,9 +70,11 @@ export default function DocsPage() {
   return (
     <main className="mx-auto max-w-3xl px-4 pt-6 pb-16">
       <header className="flex flex-wrap items-center justify-between gap-4">
-        <Link href="/" className="title inline-flex min-h-11 items-center whitespace-nowrap">
+        {/* plain <a>: a full load, so leaving the strict CSP of /docs never carries it to / or /proofs (security R2-F3) */}
+        {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- the full load is the point (see above) */}
+        <a href="/" className="title inline-flex min-h-11 items-center whitespace-nowrap">
           Merchant Capital+
-        </Link>
+        </a>
         {/* plain <a>: a full load, so /merchant runs under its own CSP (security review 005 F-N4) */}
         <a href="/merchant" className="inline-flex min-h-11 items-center text-sm text-accent underline underline-offset-4">
           Dashboard
@@ -152,7 +153,8 @@ export default function DocsPage() {
 
 /** The gateway URL for the env file, and for the shop's own wallet whether this server has its key (never any of it). */
 async function TestKeys() {
-  const [merchant, h] = await Promise.all([currentMerchant(), headers()]);
+  const h = await headers(); // a request-time read first, so the sign-in check's clock never runs while prerendering
+  const merchant = await currentMerchant();
   const origin = publicOrigin(`${h.get("x-forwarded-proto") ?? "http"}://${h.get("host") ?? "localhost"}`);
   const config = merchantConfig();
   const env = `GATEWAY_URL=${origin}`;
