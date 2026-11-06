@@ -84,9 +84,13 @@ export function walletProblem(error: unknown, what: "network" | "sign"): string 
     : "Your wallet couldn't add the network. Add it by hand instead: chain ID 1874, RPC https://rpc.testnet.whitechain.io.";
 }
 
+// app/api/auth/verify/route.ts's 401 sentences: only these are shown, so a 401 built from an exception never reaches the
+// screen (security review 029 F1)
+const VERIFY_401 = new Set(["Sign-in expired. Try again.", "That signature didn't check out. Try again."]);
+
 /** A non-OK answer from /api/auth/nonce or /api/auth/verify, `elapsedMs` after the nonce was asked for. */
 export function signInProblem(status: number, serverError: string | undefined, elapsedMs: number): string {
   if (status === 401 && elapsedMs >= SIGN_IN_WINDOW_MS) return "That took too long. Try again.";
   if (status === 503) return "Sign-in is down on our side for a moment. Nothing was charged. Try again in a minute.";
-  return status === 401 && serverError ? serverError : "Sign-in didn't work. Try again.";
+  return status === 401 && serverError && VERIFY_401.has(serverError) ? serverError : "Sign-in didn't work. Try again.";
 }

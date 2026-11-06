@@ -61,6 +61,7 @@ test("wallet errors become plain sentences: cancelled, a request already open, a
 test("a failed sign-in answer: too long, the server down (503), or the server's own words", () => {
   assert.equal(signInProblem(401, "Sign-in expired. Try again.", SIGN_IN_WINDOW_MS + 1), "That took too long. Try again.");
   assert.equal(signInProblem(401, "That signature didn't check out. Try again.", 2_000), "That signature didn't check out. Try again.");
+  assert.equal(signInProblem(401, "Error: connect ECONNREFUSED 10.0.0.5:5432", 2_000), "Sign-in didn't work. Try again.", "only the verify route's own sentences are shown (security 029 F1)");
   assert.match(signInProblem(503, "Sign-in isn't available right now. Try again in a minute.", 2_000), /down on our side/);
   assert.match(signInProblem(503, undefined, 2_000), /down on our side/, "a 503 with no JSON body (a proxy) reads the same");
   assert.match(signInProblem(500, undefined, 2_000), /Sign-in didn't work/);
