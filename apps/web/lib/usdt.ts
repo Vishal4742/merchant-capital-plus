@@ -31,3 +31,6 @@ export function formatUsdt(units: bigint): string {
   const [whole, frac = ""] = formatUnits(units, USDT_DECIMALS).split(".");
   return `${BigInt(whole).toLocaleString("en-US")}.${frac.padEnd(2, "0")}`;
 }
+
+/** The API form of an amount: "1234.50", two decimals at least, no separators, never rounded (formatUsdt is for display). */
+export const plainUsdt = (units: bigint): string => formatUsdt(units).replaceAll(",", "");

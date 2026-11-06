@@ -1,9 +1,11 @@
 // GET /api/v1/sessions/:id: the shop polls its checkout with its secret key. Polling stands in for the FR-PAY-10
 // webhooks on the AT-1 path (PHASES.md cut list). A pending checkout is settled from the chain first.
+// v2: `currency`, `priced` (FR-GW-11) and `refunded`, read from payments(id) on chain once paid.
 import { merchantConfig, payConfig, shopAuthorized } from "../../../../../lib/config.ts";
-import { getSession, isInFlight } from "../../../../../lib/sessions.ts";
+import { readPayment } from "../../../../../lib/onchain.ts";
+import { currencyFields, getSession, isInFlight } from "../../../../../lib/sessions.ts";
 import { settlePending } from "../../../../../lib/settle.ts";
-import { formatUsdt } from "../../../../../lib/usdt.ts";
+import { plainUsdt } from "../../../../../lib/usdt.ts";
 
 const fail = (status: number, error: string) => Response.json({ error }, { status });
 
@@ -19,6 +21,16 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const session = getSession(id) ?? found;
   const open = state === "open" && isInFlight(id) ? "pending" : state; // a payment is being relayed right now
   const status = open === "open" && Date.now() > session.expiresAt ? "expired" : open;
-  const body = { id, status, amount: formatUsdt(session.amount), reference: session.reference, paymentId: session.payment?.paymentId ?? null, txHash: session.payment?.txHash ?? null };
+  const paymentId = session.payment?.paymentId ?? null;
+  // left out when the chain can't be read right now, never guessed
+  const refunded = !session.payment
+    ? "0.00"
+    : pay && paymentId
+      ? await readPayment(pay.merchantPay, BigInt(paymentId)).then(
+          (record) => plainUsdt(record.refunded),
+          () => undefined,
+        )
+      : undefined;
+  const body = { id, status, amount: plainUsdt(session.amount), ...currencyFields(session), reference: session.reference, paymentId, txHash: session.payment?.txHash ?? null, refunded };
   return Response.json(body, { headers: { "cache-control": "no-store" } });
 }
