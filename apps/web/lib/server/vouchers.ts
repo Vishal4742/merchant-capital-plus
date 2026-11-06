@@ -1,0 +1,234 @@
+// Server-only vouchers (SRS FR-GW-12): percent or fixed USDT off, expiry, usage limit, minimum amount. Redemptions are
+// counted on our server: reserved when a payer applies a code, counted once when the session is paid. Each code is
+// mirrored to Arkiv as mcplus.voucher.v1 with only an HMAC of the code (FR-ARK-4: no plain code, no personal data).
+import { createHmac } from "node:crypto";
+import { ExpirationTime } from "@arkiv-network/sdk";
+import { defineSchema, str, u64 } from "@arkiv-network/sdk/schema";
+import { formatUnits, type Address } from "viem";
+import { arkivClients, redactArkivError } from "../arkiv.ts";
+import { SESSION_TTL_MS } from "../sessions.ts";
+import { parseUsdt } from "../usdt.ts";
+import { checkoutOf } from "./checkouts.ts";
+import { query, transaction } from "./db.ts";
+import { HttpError, MAX_PAYMENT, MIN_PAYMENT, futureTime, newId, usdtField } from "./http.ts";
+
+export type VoucherKind = "percent" | "fixed";
+export interface Voucher {
+  id: string;
+  merchant: string; // lowercase address
+  code: string; // uppercase
+  kind: VoucherKind;
+  value: bigint; // whole percent, or USDT units
+  expiresAt: number;
+  maxRedemptions: number;
+  timesRedeemed: number;
+  minAmount: bigint | null;
+  active: boolean;
+  arkivEntityKey: string | null;
+  createdAt: number;
+}
+export type ApplyResult = { ok: true; discount: bigint; usdtAmount: bigint } | { ok: false; reason: string };
+
+const VOUCHER_TYPE = "mcplus.voucher.v1";
+const VoucherEntity = defineSchema(VOUCHER_TYPE, {
+  type: str().indexed(),
+  merchant: str().indexed(),
+  code_hash: str().indexed(),
+  kind: str().indexed(),
+  value: str(),
+  expires_at: u64().indexed(),
+});
+const CODE_RE = /^[A-Z0-9_-]{3,32}$/;
+const MAX_REDEMPTIONS = 100_000;
+const LINKS_AND_PAGES_ONLY = "Vouchers work on payment links and pages only.";
+
+type VoucherRow = { id: string; merchant: string; code: string; kind: VoucherKind; value: string; expires_at: string; max_redemptions: number; times_redeemed: number; min_amount: string | null; active: boolean; arkiv_entity_key: string | null; created_at: string };
+const COLUMNS = "id, merchant, code, kind, value::text, expires_at::text, max_redemptions, times_redeemed, min_amount::text, active, arkiv_entity_key, created_at::text";
+const fromRow = (r: VoucherRow): Voucher => ({
+  id: r.id,
+  merchant: r.merchant,
+  code: r.code,
+  kind: r.kind,
+  value: BigInt(r.value),
+  expiresAt: Number(r.expires_at),
+  maxRedemptions: Number(r.max_redemptions),
+  timesRedeemed: Number(r.times_redeemed),
+  minAmount: r.min_amount === null ? null : BigInt(r.min_amount),
+  active: r.active,
+  arkivEntityKey: r.arkiv_entity_key,
+  createdAt: Number(r.created_at),
+});
+
+const usdt = (units: bigint) => formatUnits(units, 6);
+const formatValue = (kind: VoucherKind, value: bigint) => (kind === "percent" ? value.toString() : usdt(value));
+
+export const voucherJson = (v: Voucher) => ({
+  id: v.id,
+  code: v.code,
+  kind: v.kind,
+  value: formatValue(v.kind, v.value),
+  expires_at: new Date(v.expiresAt).toISOString(),
+  max_redemptions: v.maxRedemptions,
+  times_redeemed: v.timesRedeemed,
+  min_amount: v.minAmount === null ? null : usdt(v.minAmount),
+  active: v.active,
+  arkiv_entity_key: v.arkivEntityKey,
+  created_at: new Date(v.createdAt).toISOString(),
+});
+
+/** hex HMAC-SHA256(secret, merchant + ":" + CODE): what Arkiv holds instead of the code. */
+export const codeHash = (merchant: string, code: string, secret: string) => createHmac("sha256", secret).update(`${merchant.toLowerCase()}:${code}`).digest("hex");
+
+function percentValue(value: unknown): bigint {
+  if (typeof value !== "string" || !/^\d{1,3}$/.test(value.trim())) throw new HttpError(400, 'value must be a whole percent like "10".');
+  const pct = BigInt(value.trim());
+  if (pct < 1n || pct > 100n) throw new HttpError(400, "value must be between 1 and 100 percent.");
+  return pct;
+}
+
+function fixedValue(value: unknown): bigint {
+  let units: bigint;
+  try {
+    units = parseUsdt(typeof value === "string" ? value : "");
+  } catch {
+    throw new HttpError(400, 'value must be a USDT amount like "5.00" (at most 6 decimals).');
+  }
+  if (units <= 0n || units > MAX_PAYMENT) throw new HttpError(400, "value must be more than 0 and at most 1,000 USDT.");
+  return units;
+}
+
+function maxRedemptionsField(value: unknown): number {
+  const n = typeof value === "number" ? value : typeof value === "string" && /^\d+$/.test(value) ? Number(value) : NaN;
+  if (!Number.isInteger(n) || n < 1 || n > MAX_REDEMPTIONS) throw new HttpError(400, "max_redemptions must be a whole number from 1 to 100,000.");
+  return n;
+}
+
+/** The POST body checked: code, kind, value, expires_at, max_redemptions, min_amount?. */
+export function voucherInput(body: Record<string, unknown>, now = Date.now()) {
+  const code = typeof body.code === "string" ? body.code.trim().toUpperCase() : "";
+  if (!CODE_RE.test(code)) throw new HttpError(400, "code must be 3 to 32 letters, digits, - or _.");
+  const kind = body.kind;
+  if (kind !== "percent" && kind !== "fixed") throw new HttpError(400, 'kind must be "percent" or "fixed".');
+  const value = kind === "percent" ? percentValue(body.value) : fixedValue(body.value);
+  const expiresAt = futureTime(body.expires_at, "expires_at", now);
+  const maxRedemptions = maxRedemptionsField(body.max_redemptions);
+  const hasMin = body.min_amount !== undefined && body.min_amount !== null && body.min_amount !== "";
+  const minAmount = hasMin ? usdtField(body.min_amount, "min_amount") : null;
+  return { code, kind: kind as VoucherKind, value, expiresAt, maxRedemptions, minAmount };
+}
+
+/** Writes the Arkiv mirror; null (and a redacted log line) when it isn't configured or the write fails. */
+async function mirrorToArkiv(v: Voucher): Promise<string | null> {
+  const secret = process.env.VOUCHER_HASH_SECRET;
+  if (!secret) {
+    console.error("voucher not mirrored to Arkiv: VOUCHER_HASH_SECRET is missing");
+    return null;
+  }
+  try {
+    const { writer } = arkivClients();
+    const values = { type: VOUCHER_TYPE, merchant: v.merchant, code_hash: codeHash(v.merchant, v.code, secret), kind: v.kind, value: formatValue(v.kind, v.value), expires_at: u64(BigInt(Math.floor(v.expiresAt / 1000))) }; // unix s, like the chain
+    const { entityKey } = await writer.createEntity(VoucherEntity, values, { expiration: ExpirationTime.atDate(new Date(v.expiresAt)) });
+    return entityKey;
+  } catch (err) {
+    console.error(`voucher not mirrored to Arkiv: ${redactArkivError(err, process.env.ARKIV_ACCESS_KEY)}`);
+    return null;
+  }
+}
+
+/** Creates the voucher (409 if the merchant already has the code), then mirrors it to Arkiv. */
+export async function createVoucher(merchant: Address, input: ReturnType<typeof voucherInput>, now = Date.now()): Promise<Voucher> {
+  const rows = await query<VoucherRow>(
+    `INSERT INTO app_gw_vouchers (id, merchant, code, kind, value, expires_at, max_redemptions, min_amount, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (merchant, code) DO NOTHING RETURNING ${COLUMNS}`,
+    [newId("vch"), merchant.toLowerCase(), input.code, input.kind, input.value.toString(), input.expiresAt, input.maxRedemptions, input.minAmount?.toString() ?? null, now],
+  );
+  if (!rows[0]) throw new HttpError(409, `You already have a voucher with the code ${input.code}.`);
+  const voucher = fromRow(rows[0]);
+  const entityKey = await mirrorToArkiv(voucher);
+  if (!entityKey) return voucher;
+  await query("UPDATE app_gw_vouchers SET arkiv_entity_key = $2 WHERE id = $1", [voucher.id, entityKey]);
+  return { ...voucher, arkivEntityKey: entityKey };
+}
+
+export async function listVouchers(merchant: Address): Promise<Voucher[]> {
+  const rows = await query<VoucherRow>(`SELECT ${COLUMNS} FROM app_gw_vouchers WHERE merchant = $1 ORDER BY created_at DESC, id`, [merchant.toLowerCase()]);
+  return rows.map(fromRow);
+}
+
+/** True if the merchant had this voucher (it is now inactive). */
+export async function deactivateVoucher(merchant: Address, id: string): Promise<boolean> {
+  const rows = await query("UPDATE app_gw_vouchers SET active = FALSE WHERE id = $1 AND merchant = $2 RETURNING id", [id, merchant.toLowerCase()]);
+  return rows.length === 1;
+}
+
+function refusal(v: Voucher, base: bigint, now: number): string | null {
+  if (!v.active) return "That code isn't valid.";
+  if (v.expiresAt <= now) return "That code has expired.";
+  if (v.timesRedeemed >= v.maxRedemptions) return "That code has been used up.";
+  if (v.minAmount !== null && base < v.minAmount) return `That code needs an order of at least ${usdt(v.minAmount)} USDT.`;
+  return null;
+}
+
+/**
+ * Reserves `code` for a link or page session (re-applying replaces the session's previous code). The discount is taken
+ * off the checkout's recorded amount, which `usdtAmount` must equal (so a discount is never stacked on a discount).
+ */
+export async function applyVoucher(merchant: string, code: string, sessionId: string, usdtAmount: bigint, now = Date.now()): Promise<ApplyResult> {
+  const checkout = await checkoutOf(sessionId);
+  if (!checkout || checkout.merchant !== merchant.toLowerCase()) return { ok: false, reason: LINKS_AND_PAGES_ONLY };
+  if (checkout.paidAt !== null) return { ok: false, reason: "This checkout is already paid." };
+  if (usdtAmount !== checkout.usdtAmount) return { ok: false, reason: "The amount doesn't match this checkout." };
+  const normalized = code.trim().toUpperCase();
+  if (!CODE_RE.test(normalized)) return { ok: false, reason: "That code isn't valid." };
+  const rows = await query<VoucherRow>(`SELECT ${COLUMNS} FROM app_gw_vouchers WHERE merchant = $1 AND code = $2`, [checkout.merchant, normalized]);
+  if (!rows[0]) return { ok: false, reason: "That code isn't valid." };
+  const voucher = fromRow(rows[0]);
+  const base = checkout.usdtAmount;
+  const refused = refusal(voucher, base, now);
+  if (refused) return { ok: false, reason: refused };
+  const discount = voucher.kind === "percent" ? (base * voucher.value) / 100n : voucher.value; // floor: the merchant's favour
+  const total = base - discount;
+  if (total < MIN_PAYMENT) return { ok: false, reason: "The total after this code would be under 1 USDT." };
+  // A hold counts against the usage limit for as long as its checkout session lives (security review H1: without this,
+  // one code with 1 use could be applied to many open checkouts and all of them paid at the discount). The advisory
+  // lock runs first in the same transaction, so the insert's snapshot sees every other session's committed hold.
+  const [, reserved] = await transaction([
+    { text: "SELECT pg_advisory_xact_lock(hashtext($1))", params: [voucher.id] },
+    {
+      text: `INSERT INTO app_gw_redemptions (session_id, voucher_id, discount, usdt_amount, created_at)
+             SELECT $1, v.id, $3, $4, $5 FROM app_gw_vouchers v
+             WHERE v.id = $2 AND v.times_redeemed + (
+               SELECT count(*) FROM app_gw_redemptions r
+               WHERE r.voucher_id = v.id AND r.confirmed_at IS NULL AND r.session_id <> $1 AND r.created_at > $6
+             ) < v.max_redemptions
+             ON CONFLICT (session_id) DO UPDATE SET voucher_id = EXCLUDED.voucher_id, discount = EXCLUDED.discount,
+               usdt_amount = EXCLUDED.usdt_amount, created_at = EXCLUDED.created_at
+             WHERE app_gw_redemptions.confirmed_at IS NULL
+             RETURNING session_id`,
+      params: [sessionId, voucher.id, discount.toString(), total.toString(), now, now - SESSION_TTL_MS],
+    },
+  ]);
+  if (reserved.length !== 1) return { ok: false, reason: "That code has been used up." }; // (a paid checkout returned above)
+  return { ok: true, discount, usdtAmount: total };
+}
+
+/**
+ * Called once the session is paid: confirms its reservation and counts one use, in one statement. The redemption row is
+ * claimed first (so the same session never counts twice), then the use is counted only while uses remain (so two
+ * sessions racing for the last use: one wins). Returns the counted voucher, or null (no reservation, already
+ * confirmed, or no uses left).
+ */
+export async function confirmRedemption(sessionId: string, paidAmount: bigint, now = Date.now()): Promise<{ voucherId: string; code: string } | null> {
+  // Holds are counted at apply time, so the last-use guard here only matters for a hold that outlived its session.
+  // A hold whose discounted total isn't what was paid (the code was dropped before paying) is never counted.
+  // A hold confirms even if the voucher was deactivated or expired after the payer applied it: they signed that price.
+  const rows = await query<{ id: string; code: string }>(
+    `WITH claimed AS (
+       UPDATE app_gw_redemptions SET confirmed_at = $2 WHERE session_id = $1 AND confirmed_at IS NULL AND usdt_amount = $3 RETURNING voucher_id
+     )
+     UPDATE app_gw_vouchers v SET times_redeemed = v.times_redeemed + 1 FROM claimed
+     WHERE v.id = claimed.voucher_id AND v.times_redeemed < v.max_redemptions RETURNING v.id, v.code`,
+    [sessionId, now, paidAmount.toString()],
+  );
+  return rows[0] ? { voucherId: rows[0].id, code: rows[0].code } : null;
+}
