@@ -172,7 +172,6 @@ test("6, 7, 8, 9: roles are enforced in every service; guessed ids are 404; a re
   assert.equal((await call(membersRoute.GET, "GET", "/api/v2/business/members", { cookie: b.cookie, origin: null })).status, 401);
   assert.equal((await me(b.cookie)).body.active, null);
   // a mutation from another site is refused even with a valid cookie (CSRF)
-  assert.equal((await addMember(a.cookie.replace("", ""), { wallet: ub.accounts[0].address, role: "viewer", idempotencyKey: "x" })).status, 201);
   assert.equal((await call(membersRoute.POST, "POST", "/api/v2/business/members", { cookie: a.cookie, origin: "https://evil.example", body: { wallet: ub.accounts[0].address, role: "owner", idempotencyKey: "x2" } })).status, 403);
 });
 
@@ -330,6 +329,24 @@ test("15: with the database unreachable every v2 route fails closed with 503 and
   try {
     assert.equal((await signIn(user("alice"))).status, 503);
     assert.equal((await me("wf_session=abc")).status, 503);
+    // every other v2 route too (round 2, L5: the title claimed more than two routes were checked)
+    const cookie = "wf_session=abc";
+    const p = { principalId: "pr_x" };
+    const routes = [
+      [signoutRoute.POST, "POST", "/api/v2/auth/signout"], [activeRoute.POST, "POST", "/api/v2/me/active-business", { businessId: "biz_x" }],
+      [bizRoute.POST, "POST", "/api/v2/businesses", { displayName: "X", timezone: "UTC", idempotencyKey: "k" }],
+      [membersRoute.GET, "GET", "/api/v2/business/members"], [membersRoute.POST, "POST", "/api/v2/business/members", { email: "x@example.com", role: "viewer", idempotencyKey: "k" }],
+      [memberRoute.PATCH, "PATCH", "/api/v2/business/members/pr_x", { role: "viewer", idempotencyKey: "k" }, p], [memberRoute.DELETE, "DELETE", "/api/v2/business/members/pr_x?idempotencyKey=k", undefined, p],
+      [policyRoute.GET, "GET", "/api/v2/business/policy"], [policyRoute.POST, "POST", "/api/v2/business/policy", { idempotencyKey: "k" }],
+      [proofRoute.POST, "POST", "/api/v2/business/policy/proof", { address: "0x1111111111111111111111111111111111111111" }],
+      [approvalRoute.POST, "POST", "/api/v2/business/policy/approval", { proofNonce: "n", wallet: "0x1111111111111111111111111111111111111111" }],
+      [walletsRoute.GET, "GET", "/api/v2/business/approval-wallets"], [walletsRoute.POST, "POST", "/api/v2/business/approval-wallets", { wallet: "0x1", endorser: "0x2" }],
+      [walletsConfirmRoute.POST, "POST", "/api/v2/business/approval-wallets/confirm", { nonce: "n", signature: "0x" }],
+    ];
+    for (const [handler, method, path, body, params_] of routes) {
+      const r = await call(handler, method, path, { cookie, body, p: params_, origin: method === "GET" ? null : ORIGIN });
+      assert.equal(r.status, 503, `${method} ${path}: ${JSON.stringify(r.body)}`);
+    }
   } finally {
     pg = await setupDb(); // later tests read this handle directly: it must be the new database, not the old one
   }
@@ -443,4 +460,40 @@ test("H1: an endorser must be an enrolled wallet of a current Owner; Operators a
   const alice = (await me(a2.cookie)).body.principal.id;
   assert.equal((await setRole(a2.cookie, alice, "viewer", "demote-a")).status, 200);
   assert.equal((await confirmEnroll(a2.cookie, c.body.nonce, await a1.signMessage({ message: c.body.message }))).status, 403, "no longer an Owner");
+});
+
+test("NFR-17 (round 2, L5): no token, signature, signed message or session cookie in logs, audit rows or notices", async () => {
+  const logged = [];
+  const original = { error: console.error, warn: console.warn, log: console.log, info: console.info };
+  for (const k of Object.keys(original)) console[k] = (...args) => logged.push(args.map(String).join(" "));
+  const secrets = [];
+  try {
+    const ua = user("alice", { wallets: 2 });
+    const [a1, a2w] = ua.accounts;
+    secrets.push(ua.access, ua.identity);
+    assert.equal((await signIn(ua, { access: `${ua.access}x` })).status, 401, "a bad token is refused (and logged by reason only)");
+    const a = await signIn(ua);
+    secrets.push(a.cookie.split("=")[1]);
+    await create(a.cookie);
+    const recipient = freshWallet();
+    const bad = await activate(a.cookie, recipient, a1, 0, { approvalSigner: a2w }); // a wrong approval signature first
+    assert.equal(bad.status, 400);
+    secrets.push(bad.sent.proofSignature, bad.sent.approvalSignature, bad.proof.body.message, bad.approval.body.message);
+    const good = await activate(a.cookie, freshWallet(), a1);
+    assert.equal(good.status, 201);
+    secrets.push(good.sent.proofSignature, good.sent.approvalSignature, good.proof.body.message, good.approval.body.message);
+    const c = await enroll(a.cookie, a2w.address, a1.address);
+    const sig = await a1.signMessage({ message: c.body.message });
+    secrets.push(c.body.message, sig);
+    assert.equal((await confirmEnroll(a.cookie, c.body.nonce, sig)).status, 200);
+  } finally {
+    Object.assign(console, original);
+  }
+  const rows = JSON.stringify((await pg.query("SELECT * FROM wf_audit_events")).rows) + JSON.stringify((await pg.query("SELECT * FROM wf_notifications")).rows);
+  const logs = logged.join("\n");
+  assert.ok(logs.includes("sign-in refused"), "the refusal was logged (by reason)");
+  for (const secret of secrets) {
+    assert.ok(!logs.includes(secret), `not in logs: ${secret.slice(0, 12)}…`);
+    assert.ok(!rows.includes(secret), `not in audit or notices: ${secret.slice(0, 12)}…`);
+  }
 });

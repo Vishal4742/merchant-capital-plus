@@ -36,6 +36,8 @@ function keyOf(pem: string): KeyObject {
   if (!key) {
     key = createPublicKey(pem);
     if (key.asymmetricKeyType !== "ec") throw new PrivyTokenError("the verification key is not an EC public key");
+    // ES256 is ECDSA on P-256 only (RFC 7518 §3.4): refuse any other curve (round 2, L5)
+    if (key.asymmetricKeyDetails?.namedCurve !== "prime256v1") throw new PrivyTokenError("the verification key is not a P-256 key");
     keys.set(pem, key);
   }
   return key;

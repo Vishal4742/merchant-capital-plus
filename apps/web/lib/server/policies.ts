@@ -106,6 +106,8 @@ export async function issueReceivingProof(ctx: AuthContext, input: { address: un
     expirationTime: new Date(expiresAt),
     resources: [`urn:whiteflow:business:${ctx.businessId}`, `urn:whiteflow:token:${POLICY_TOKEN}`, `urn:whiteflow:policy:${hash}`],
   });
+  // prune unused challenges a day past expiry (round 2, L5); used ones stay: policy versions reference them
+  await query("DELETE FROM wf_challenges WHERE consumed_at IS NULL AND expires_at < $1", [now - 24 * 60 * 60 * 1000]);
   await query(
     `INSERT INTO wf_challenges (nonce, purpose, principal_id, business_id, address, chain_id, payload, message, created_at, expires_at)
      VALUES ($1, 'receiving', $2, $3, $4, $5, $6::jsonb, $7, $8, $9)`,
