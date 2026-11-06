@@ -131,7 +131,8 @@ export const statements = {
   settle(auth: Authorization, feeWei: bigint, outcome: Outcome, payerFault: boolean, at: number): Statement {
     const reverted = outcome === 'reverted';
     return {
-      text: 'UPDATE rel_sent SET fee_wei = $2::numeric, status = $3, reverted_at = $4::bigint, payer_fault_at = $5::bigint WHERE auth_key = $1',
+      // reverted mirrors status for the batch-037 columns, so a rollback to that relayer keeps its breaker (review 049 M1)
+      text: "UPDATE rel_sent SET fee_wei = $2::numeric, status = $3, reverted = ($3 = 'reverted'), reverted_at = $4::bigint, payer_fault_at = $5::bigint WHERE auth_key = $1",
       params: [auth.key, feeWei.toString(), outcome, reverted ? at : null, reverted && payerFault ? at : null],
     };
   },

@@ -7,7 +7,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { neon } from '@neondatabase/serverless';
 import { errorLabel } from '../src/db.ts';
-import { isSchemaFile, sqlStatements } from './statements.ts';
+import { isRoleFile, isSchemaFile, sqlStatements } from './statements.ts';
 
 const url = process.env.DATABASE_URL;
 if (!url) {
@@ -26,7 +26,8 @@ try {
     }
     console.log(`applied ${file} (${statements.length} statements)`);
   }
-  console.log('owner-run role files (not applied here): 002_relayer_role.sql, then 005_relayer_role_state.sql');
+  const roles = readdirSync(dir).filter(isRoleFile).sort();
+  console.log(`owner-run role files (not applied here, run by the owner in this order): ${roles.join(', ') || 'none'}`);
   step = 'listing tables';
   const tables = await sql.query("SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'rel\\_%' ORDER BY 1");
   console.log('rel tables:', tables.map((t) => t.table_name).join(', '));

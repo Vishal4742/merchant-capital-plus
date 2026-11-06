@@ -41,3 +41,27 @@ test('003 upgrades batch-037 rows in place: replay key, fee and revert kept; sta
     await pg.close();
   }
 });
+
+test('every db/*.sql is either a schema file (db:migrate) or an owner-run role file, and the role files are exactly 002 and 005 (review 049 L2)', async () => {
+  const { readdirSync } = await import('node:fs');
+  const { isRoleFile, isSchemaFile } = await import('../db/statements.ts');
+  const sql = readdirSync(new URL('../db/', import.meta.url)).filter((f) => f.endsWith('.sql')).sort();
+  assert.deepEqual(sql.filter((f) => isSchemaFile(f) === isRoleFile(f)), [], 'a file is both or neither');
+  assert.deepEqual(sql.filter(isRoleFile), ['002_relayer_role.sql', '005_relayer_role_state.sql']);
+  assert.ok(isSchemaFile('006_payer_role_audit.sql'), 'a schema file with "_role" in its name is still applied');
+});
+
+test('the owner-only rollback lets a batch-037 insert through again and marks every recorded revert (review 049 M1)', async () => {
+  const pg = new PGlite();
+  try {
+    await applySchema(pg);
+    await pg.query(`INSERT INTO rel_sent (auth_key, relayer, payer, tx_hash, tx_nonce, fence, fee_wei, status, sent_at, reverted_at)
+      VALUES ('0xp:0x09', '0xr', '0xp', '0xcc', 7, 3, 5, 'reverted', 10, 10)`);
+    await assert.rejects(pg.query("INSERT INTO rel_sent (auth_key, relayer, payer, tx_hash, fee_wei, sent_at) VALUES ('0xp:0x0a', '0xr', '0xp', '0xdd', 1, 11)"), /tx_nonce/);
+    await pg.exec(file('rollback/003_rollback.sql'));
+    await pg.query("INSERT INTO rel_sent (auth_key, relayer, payer, tx_hash, fee_wei, sent_at) VALUES ('0xp:0x0a', '0xr', '0xp', '0xdd', 1, 11)");
+    assert.equal((await pg.query<{ reverted: boolean }>("SELECT reverted FROM rel_sent WHERE auth_key = '0xp:0x09'")).rows[0].reverted, true);
+  } finally {
+    await pg.close();
+  }
+});
