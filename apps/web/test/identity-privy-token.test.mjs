@@ -84,7 +84,7 @@ test("privyConfig: the app id and verification key come from the environment; mi
   assert.equal(privyConfig({ NEXT_PUBLIC_PRIVY_APP_ID: APP_ID }), null);
   assert.equal(privyConfig({ NEXT_PUBLIC_PRIVY_APP_ID: "bad id!", PRIVY_VERIFICATION_KEY: PEM }), null);
   assert.equal(privyConfig({ NEXT_PUBLIC_PRIVY_APP_ID: APP_ID, PRIVY_VERIFICATION_KEY: "not a key" }), null);
-  assert.deepEqual(privyConfig({ NEXT_PUBLIC_PRIVY_APP_ID: APP_ID, PRIVY_VERIFICATION_KEY: PEM }), config);
+  assert.deepEqual(privyConfig({ NEXT_PUBLIC_PRIVY_APP_ID: APP_ID, PRIVY_VERIFICATION_KEY: PEM }), { appId: APP_ID, verificationKey: PEM.trim() });
   // dashboards and env editors often store the PEM with literal \n
   assert.deepEqual(privyConfig({ NEXT_PUBLIC_PRIVY_APP_ID: APP_ID, PRIVY_VERIFICATION_KEY: PEM.replaceAll("\n", "\\n") }).appId, APP_ID);
 });
