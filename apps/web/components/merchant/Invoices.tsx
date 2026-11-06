@@ -288,6 +288,12 @@ function InvoiceActions({ invoice, merchant, merchantPay }: { invoice: InvoiceRo
     <div className="grid justify-items-end gap-1">
       <div className="flex flex-wrap items-center justify-end gap-x-6">
         <CopyLink id={invoice.id} />
+        {cancellable && (
+          // CapitalMarket lists only an open invoice nothing is paid on; the Capital tab preselects it (FR-INV-1)
+          <a href={`/merchant/capital?invoice=${invoice.id}`} className={link}>
+            Sell this invoice
+          </a>
+        )}
         {cancellable &&
           (confirming ? (
             // wraps as whole phrases with room at the card edge; "Keep it" says what the other choice does (UX review 005 N2)
