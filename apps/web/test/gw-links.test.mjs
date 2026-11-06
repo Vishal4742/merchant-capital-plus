@@ -135,7 +135,7 @@ test("checkout on a fixed link: 303 to the session, the stored price wins over t
   const res = await pay(data.slug, { amount: "1.00" });
   assert.equal(res.status, 303);
   assert.match(new URL(res.headers.get("location")).pathname, /^\/checkout\/[0-9a-f-]{36}$/);
-  const session = sessionOf(res);
+  const session = await sessionOf(res);
   assert.equal(session.merchant, "0x1111111111111111111111111111111111111111");
   assert.equal(session.merchantName, "Bandra Beans");
   assert.equal(session.amount, 25_000_000n);
@@ -152,7 +152,7 @@ test("JSON callers get the checkout URL instead of a redirect; the reference fal
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(new URL(body.checkout_url).pathname, `/checkout/${body.session_id}`);
-  assert.equal(getSession(body.session_id).reference, data.slug);
+  assert.equal((await getSession(body.session_id)).reference, data.slug);
 });
 
 test("open-amount link: the payer's amount (JSON or form), validated", async () => {
@@ -160,18 +160,18 @@ test("open-amount link: the payer's amount (JSON or form), validated", async () 
   assert.equal((await pay(data.slug)).status, 400);
   assert.equal((await pay(data.slug, { amount: "0.99" })).status, 400);
   assert.equal((await pay(data.slug, { amount: "1000.01" })).status, 400);
-  assert.equal(sessionOf(await pay(data.slug, { amount: "12.50" })).amount, 12_500_000n);
+  assert.equal((await sessionOf(await pay(data.slug, { amount: "12.50" }))).amount, 12_500_000n);
   const form = await checkout(
     new Request(`http://localhost/api/v1/public/links/${data.slug}/checkout`, { method: "POST", headers: { ...fromIp(), "content-type": "application/x-www-form-urlencoded" }, body: "amount=7.25" }),
     params({ slug: data.slug }),
   );
   assert.equal(form.status, 303);
-  assert.equal(sessionOf(form).amount, 7_250_000n);
+  assert.equal((await sessionOf(form)).amount, 7_250_000n);
 });
 
 test("single-use link: open checkouts may coexist until one is paid, then it is paid and 410", async () => {
   const { data } = await newLink({ amount: "5.00", single_use: true });
-  const first = sessionOf(await pay(data.slug));
+  const first = await sessionOf(await pay(data.slug));
   const second = await pay(data.slug);
   assert.equal(second.status, 303);
   assert.equal(await markCheckoutPaid(first.id), true);
@@ -193,8 +193,8 @@ test("public link: paid_at is the paid checkout's time once a single-use link is
   const view = async (slug) => (await publicLink(req("GET", `/api/v1/public/links/${slug}`), params({ slug }))).json();
   assert.equal((await view(once.slug)).paid_at, null);
   const at = Date.parse("2026-11-06T08:30:00.000Z");
-  await markCheckoutPaid(sessionOf(await pay(once.slug)).id, at);
-  await markCheckoutPaid(sessionOf(await pay(reusable.slug)).id, at);
+  await markCheckoutPaid((await sessionOf(await pay(once.slug))).id, at);
+  await markCheckoutPaid((await sessionOf(await pay(reusable.slug))).id, at);
   const paid = await view(once.slug);
   assert.deepEqual([paid.status, paid.paid_at], ["paid", "2026-11-06T08:30:00.000Z"]);
   const active = await view(reusable.slug);
@@ -203,8 +203,8 @@ test("public link: paid_at is the paid checkout's time once a single-use link is
 
 test("a reusable link stays active after payments and counts them", async () => {
   const { data } = await newLink({ amount: "5.00" });
-  await markCheckoutPaid(sessionOf(await pay(data.slug)).id);
-  await markCheckoutPaid(sessionOf(await pay(data.slug)).id);
+  await markCheckoutPaid((await sessionOf(await pay(data.slug))).id);
+  await markCheckoutPaid((await sessionOf(await pay(data.slug))).id);
   const [row] = await links();
   assert.equal(row.status, "active");
   assert.equal(row.payments, 2);
@@ -213,7 +213,7 @@ test("a reusable link stays active after payments and counts them", async () => 
 test("an expired link shows expired and refuses checkout; paid outranks expired", async () => {
   const a = (await newLink({ amount: "5.00", expires_at: Date.now() + 60_000 })).data;
   const b = (await newLink({ amount: "5.00", single_use: true, expires_at: Date.now() + 60_000 })).data;
-  await markCheckoutPaid(sessionOf(await pay(b.slug)).id);
+  await markCheckoutPaid((await sessionOf(await pay(b.slug))).id);
   await pg.query("UPDATE app_gw_links SET expires_at = 1");
   const byId = Object.fromEntries((await links()).map((l) => [l.id, l.status]));
   assert.deepEqual(byId, { [a.id]: "expired", [b.id]: "paid" });
@@ -224,7 +224,7 @@ test("a fiat link converts at checkout with the live rate (EUR 20.00 at 0.8 per 
   const { data } = await newLink({ amount: "20.00", currency: "EUR" });
   assert.equal(data.amount, "20");
   assert.equal(fetchCalls.length, 1); // creation checks the price at today's rate (LOW); checkout reuses the cached rate
-  const session = sessionOf(await pay(data.slug));
+  const session = await sessionOf(await pay(data.slug));
   assert.equal(session.amount, 25_000_000n);
   assert.deepEqual(session.items, [{ name: "Cold brew", qty: 1, price: 20_000_000n }], "a priced session's items are in its currency");
   const row = await checkoutOf(session.id);
@@ -244,11 +244,11 @@ test("a fiat link converts at checkout with the live rate (EUR 20.00 at 0.8 per 
 });
 
 test("H1: a USDT link charges its price exactly; a USD price (fiat, 1:1) rounds up to the cent like sessions do", async () => {
-  const usdt = sessionOf(await pay((await newLink({ amount: "10.123456" })).data.slug));
+  const usdt = await sessionOf(await pay((await newLink({ amount: "10.123456" })).data.slug));
   assert.equal(usdt.amount, 10_123_456n);
   assert.deepEqual(usdt.items, [{ name: "Cold brew", qty: 1, price: 10_123_456n }]);
   assert.equal((await checkoutOf(usdt.id)).usdtAmount, 10_123_456n);
-  const usd = sessionOf(await pay((await newLink({ amount: "12.345678", currency: "USD" })).data.slug));
+  const usd = await sessionOf(await pay((await newLink({ amount: "12.345678", currency: "USD" })).data.slug));
   assert.equal(usd.amount, 12_350_000n, "12.345678 USD → 12.35 USDT (the merchant is never short)");
   assert.equal(usd.priced.amount, 12_345_678n, "the price the payer saw stays as set");
   assert.equal(fetchCalls.length, 0);
@@ -278,7 +278,7 @@ test("LOW: FX down at creation skips the price check (best effort; the checkout 
 
 test("AT-13: an EUR link's session is priced and lives as long as the 10-min quote lock", async () => {
   const { data } = await newLink({ amount: "20.00", currency: "EUR" });
-  const session = sessionOf(await pay(data.slug));
+  const session = await sessionOf(await pay(data.slug));
   const { fetchedAt, ...priced } = session.priced;
   assert.deepEqual(priced, { currency: "EUR", amount: 20_000_000n, rate: "0.8", rateDate: today(), source: priced.source });
   assert.match(priced.source, /Frankfurter/);
@@ -289,12 +289,12 @@ test("AT-13: an EUR link's session is priced and lives as long as the 10-min quo
 });
 
 test("a USD link is priced at rate 1 and keeps the 30-min session; a USDT link has no priced", async () => {
-  const usd = sessionOf(await pay((await newLink({ amount: "12.50", currency: "USD" })).data.slug));
+  const usd = await sessionOf(await pay((await newLink({ amount: "12.50", currency: "USD" })).data.slug));
   assert.equal(usd.priced.currency, "USD");
   assert.equal(usd.priced.amount, 12_500_000n);
   assert.equal(usd.priced.rate, "1");
   assert.equal(usd.expiresAt - usd.createdAt, SESSION_TTL_MS);
-  const usdt = sessionOf(await pay((await newLink({ amount: "12.50" })).data.slug));
+  const usdt = await sessionOf(await pay((await newLink({ amount: "12.50" })).data.slug));
   assert.equal(usdt.priced, undefined);
   assert.deepEqual(currencyFields(usdt), { currency: "USDT" });
   assert.equal(usdt.expiresAt - usdt.createdAt, SESSION_TTL_MS);

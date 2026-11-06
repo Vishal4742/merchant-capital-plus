@@ -58,27 +58,27 @@ const location = (res) => {
   assert.equal(res.status, 303);
   return res.headers.get("location");
 };
-const sessionAt = (res) => {
+const sessionAt = async (res) => {
   const [, id] = location(res).match(CHECKOUT) ?? assert.fail(`not a checkout: ${res.headers.get("location")}`);
   return getSession(id);
 };
 
 test("a fixed link's form opens a checkout at the stored price: 303 to our own checkout path, nothing fetched", async () => {
   const link = await newLink({ amount: "25.00", reference_id: "T4-0611" });
-  const session = sessionAt(await form(linkForm, `/l/${link.slug}/checkout`, link.slug, []));
+  const session = await sessionAt(await form(linkForm, `/l/${link.slug}/checkout`, link.slug, []));
   assert.equal(session.amount, 25_000_000n);
   assert.equal(session.reference, "T4-0611");
   assert.equal(session.merchantName, "Bandra Beans");
   const row = await checkoutOf(session.id);
   assert.deepEqual({ kind: row.kind, refId: row.refId }, { kind: "link", refId: link.id });
-  const tampered = sessionAt(await form(linkForm, `/l/${link.slug}/checkout`, link.slug, [["amount", "1.00"]]));
+  const tampered = await sessionAt(await form(linkForm, `/l/${link.slug}/checkout`, link.slug, [["amount", "1.00"]]));
   assert.equal(tampered.amount, 25_000_000n, "a fixed link's stored price wins over a posted amount");
   assert.deepEqual(fetched, [], "no HTTP call: not to ourselves, not to the forged Host");
 });
 
 test("an open link takes the amount the customer typed", async () => {
   const link = await newLink({});
-  assert.equal(sessionAt(await form(linkForm, `/l/${link.slug}/checkout`, link.slug, [["amount", " 12.50 "]])).amount, 12_500_000n);
+  assert.equal((await sessionAt(await form(linkForm, `/l/${link.slug}/checkout`, link.slug, [["amount", " 12.50 "]]))).amount, 12_500_000n);
 });
 
 test("a link that can't be paid sends the customer back with a fixed message code", async () => {
@@ -106,7 +106,7 @@ test("a bad amount or slug is refused before the gateway is asked", async () => 
 
 test("a page's form sends the chosen items and quantities; prices come from the stored page", async () => {
   const page = await newPage({ items: MENU });
-  const session = sessionAt(await form(pageForm, `/p/${page.slug}/checkout`, page.slug, [["qty:Cold brew", "2"], ["qty:Croissant", "0"], ["qty:Banana bread", "1"]]));
+  const session = await sessionAt(await form(pageForm, `/p/${page.slug}/checkout`, page.slug, [["qty:Cold brew", "2"], ["qty:Croissant", "0"], ["qty:Banana bread", "1"]]));
   assert.deepEqual(session.items, [
     { name: "Cold brew", qty: 2, price: 5_000_000n },
     { name: "Banana bread", qty: 1, price: 3_500_000n },

@@ -1,7 +1,8 @@
 // claude-frontend checks for the checkout API (FR-PAY-4, FR-PAY-5): auth, validation, and the money rules.
 // Run from apps/web: npm test
-import { test, beforeEach, mock } from "node:test";
+import { test, before, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
+import { setupDb, resetDb, expireSession, agePending } from "./gw-helpers.mjs";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { toHex } from "viem";
 
@@ -48,7 +49,9 @@ globalThis.fetch = async (url, init) => {
   return res;
 };
 
-beforeEach(() => {
+before(setupDb);
+beforeEach(async () => {
+  await resetDb();
   balanceReads.length = 0;
   balance = 1_000_000_000n;
   balanceReadFails = false;
@@ -67,7 +70,7 @@ async function newSession(body = { amount: "25.00", reference: "A-1042", items: 
   return { res, data: await res.json() };
 }
 async function signedBody(id, { amount, account = customer, validBefore = BigInt(Math.floor(Date.now() / 1000) + 600) } = {}) {
-  const s = getSession(id);
+  const s = await getSession(id);
   const salt = toHex(crypto.getRandomValues(new Uint8Array(32)));
   const sale = { merchantPay: MERCHANT_PAY, merchant: s.merchant, orderRef: s.orderRef, amount: amount ?? s.amount };
   const signature = await account.signTypedData(saleAuthorization(sale, account.address, salt, validBefore));
@@ -96,7 +99,7 @@ test("a valid checkout returns a hosted URL and stores the exact amount", async 
   assert.equal(res.status, 201);
   assert.match(data.url, /^http:\/\/shop\.test\/checkout\/[0-9a-f-]{36}$/);
   assert.equal(data.amount, "25.00");
-  assert.equal(getSession(data.id).amount, 25_000_000n);
+  assert.equal((await getSession(data.id)).amount, 25_000_000n);
 });
 
 test("a correct approval is relayed once and recorded; paying again is refused", async () => {
@@ -109,7 +112,7 @@ test("a correct approval is relayed once and recorded; paying again is refused",
   assert.equal(relayCalls[0].body.action, "paySale");
   assert.equal(relayCalls[0].body.args.amount, "25000000");
   assert.match(relayCalls[0].body.sig, /^0x[0-9a-f]{130}$/, "signature sent whole as sig");
-  assert.equal(getSession(data.id).payment.txHash, `0x${"ab".repeat(32)}`);
+  assert.equal((await getSession(data.id)).payment.txHash, `0x${"ab".repeat(32)}`);
   assert.equal((await callPay(data.id, await signedBody(data.id))).status, 409);
   assert.equal(relayCalls.length, 1, "no second relay");
 });
@@ -175,9 +178,9 @@ test("a relayed sale is recorded only after the chain shows it, with the chain's
   relayReply = async () => Response.json({ txHash: `0x${"ab".repeat(32)}`, blockNumber: "5", paymentId: "41" });
   settled = async () => "42";
   assert.equal((await callPay(data.id, await signedBody(data.id))).status, 200);
-  assert.equal(getSession(data.id).payment.paymentId, "42", "the chain decides, not the relayer");
+  assert.equal((await getSession(data.id)).payment.paymentId, "42", "the chain decides, not the relayer");
   const [sale, opts] = settledCalls[0];
-  assert.deepEqual([sale.merchantPay, sale.orderRef, sale.amount, sale.payer, opts.blockNumber], [MERCHANT_PAY, getSession(data.id).orderRef, 25_000_000n, customer.address, 5n]);
+  assert.deepEqual([sale.merchantPay, sale.orderRef, sale.amount, sale.payer, opts.blockNumber], [MERCHANT_PAY, (await getSession(data.id)).orderRef, 25_000_000n, customer.address, 5n]);
 });
 
 test("a relayer 200 the chain doesn't confirm (or a failed read) stays locked and records nothing", async () => {
@@ -187,7 +190,7 @@ test("a relayer 200 the chain doesn't confirm (or a failed read) stays locked an
     const res = await callPay(data.id, await signedBody(data.id));
     assert.equal(res.status, 504);
     assert.match((await res.json()).error, /Don't pay again/);
-    assert.equal(getSession(data.id).payment, undefined);
+    assert.equal((await getSession(data.id)).payment, undefined);
     assert.equal((await callPay(data.id, await signedBody(data.id))).status, 409);
   }
 });
@@ -197,7 +200,7 @@ test("a 422 replay never locks the checkout (a stranger can burn a nonce on purp
   relayReply = async () => Response.json({ error: "authorization used", code: "replay" }, { status: 422 });
   const stranger = await callPay(data.id, await signedBody(data.id));
   assert.equal(stranger.status, 400, "refused, not pending: the real customer must not be locked out");
-  assert.equal(getSession(data.id).pending, undefined);
+  assert.equal((await getSession(data.id)).pending, undefined);
   relayReply = async () => Response.json({ txHash: `0x${"ef".repeat(32)}`, blockNumber: "2" });
   assert.equal((await callPay(data.id, await signedBody(data.id))).status, 200, "the next attempt relays at once");
   // and if the order turns out paid by this customer, a replay shows the receipt
@@ -271,7 +274,7 @@ test("an unknown outcome that the chain later shows as paid by this customer bec
   const again = await callPay(data.id, await signedBody(data.id));
   assert.equal(again.status, 409);
   assert.equal((await again.json()).receiptId, data.id);
-  assert.deepEqual([getSession(data.id).payment.paymentId, getSession(data.id).payment.txHash], ["9", null]);
+  assert.deepEqual([(await getSession(data.id)).payment.paymentId, (await getSession(data.id)).payment.txHash], ["9", null]);
   assert.equal(relayCalls.length, 1, "never relayed twice");
 });
 
@@ -283,7 +286,7 @@ test("an unknown outcome stays pending until its approval has expired, then the 
   assert.equal(pending.status, 409);
   assert.match((await pending.json()).error, /Don't pay again/);
   assert.equal(relayCalls.length, 1);
-  getSession(data.id).pending.validBefore = 0n; // the signed approval is past its validBefore: USDT can't settle it
+  await agePending(data.id); // the signed approval is past its validBefore: USDT can't settle it
   relayReply = async () => Response.json({ txHash: `0x${"ef".repeat(32)}`, blockNumber: "2" });
   assert.equal((await callPay(data.id, await signedBody(data.id))).status, 200);
   assert.equal(relayCalls.length, 2);
@@ -296,7 +299,7 @@ test("a refusal (422) for an order the chain shows paid by this customer returns
   const res = await callPay(data.id, await signedBody(data.id));
   assert.equal(res.status, 200);
   assert.deepEqual(await res.json(), { receiptId: data.id, txHash: null });
-  assert.equal(getSession(data.id).payment.paymentId, "5");
+  assert.equal((await getSession(data.id)).payment.paymentId, "5");
 });
 
 test("a relayer 429 (rate limit) sent nothing: unlocks and says try again", async () => {
@@ -334,14 +337,14 @@ test("an expired checkout whose last attempt is pending asks the chain first and
   const { data } = await newSession();
   relayReply = timeout;
   await callPay(data.id, await signedBody(data.id));
-  getSession(data.id).expiresAt = Date.now() - 1; // the 30 min checkout runs out while the outcome is unknown
+  await expireSession(data.id); // the 30 min checkout runs out while the outcome is unknown
   const stillPending = await callPay(data.id, await signedBody(data.id));
   assert.equal(stillPending.status, 409);
   assert.match((await stillPending.json()).error, /Don't pay again/);
   settled = async () => "6";
   const paid = await callPay(data.id, await signedBody(data.id));
   assert.deepEqual([paid.status, (await paid.json()).receiptId], [409, data.id]);
-  assert.equal(getSession(data.id).payment.paymentId, "6");
+  assert.equal((await getSession(data.id)).payment.paymentId, "6");
 });
 
 test("a malformed signature is a 400 mismatch, never a 500", async () => {
@@ -357,7 +360,7 @@ test("the shop's poll says 'pending' while a payment is in flight", async () => 
   let release;
   relayReply = () => new Promise((resolve) => (release = () => resolve(Response.json({ txHash: `0x${"ab".repeat(32)}`, blockNumber: "3" }))));
   const paying = callPay(data.id, await signedBody(data.id));
-  await new Promise((r) => setTimeout(r, 20));
+  while (!release) await new Promise((r) => setTimeout(r, 5)); // the relay was called: the lock is held
   assert.equal((await (await poll(data.id)).json()).status, "pending");
   release();
   assert.equal((await paying).status, 200);
@@ -372,7 +375,7 @@ test("a guest holding less than the total gets the demo message from our server:
   assert.equal(res.status, 400);
   assert.equal((await res.json()).error, "This is a demo: paying needs test USDT, and this browser doesn't have enough yet. Nothing was charged.");
   assert.equal(relayCalls.length, 0);
-  assert.equal(getSession(data.id).pending, undefined);
+  assert.equal((await getSession(data.id)).pending, undefined);
   balance = 25_000_000n; // exactly the total: no lock was left behind
   assert.equal((await callPay(data.id, await signedBody(data.id))).status, 200);
 });
@@ -390,13 +393,13 @@ test("a stale second tab after a pending payment landed gets the receipt, not th
   const { data } = await newSession();
   relayReply = timeout;
   await callPay(data.id, await signedBody(data.id));
-  assert.ok(getSession(data.id).pending, "the first attempt's outcome is unknown");
+  assert.ok((await getSession(data.id)).pending, "the first attempt's outcome is unknown");
   balance = 0n; // it landed: the guest's 25.00 is spent
   settled = async () => "1";
   const res = await callPay(data.id, await signedBody(data.id));
   assert.equal(res.status, 409);
   assert.equal((await res.json()).receiptId, data.id);
-  assert.equal(getSession(data.id).payment.paymentId, "1");
+  assert.equal((await getSession(data.id)).payment.paymentId, "1");
 });
 
 test("the balance read asks about the payer (from), with retries (security F-N3, code R2-F3)", async () => {
@@ -411,12 +414,12 @@ test("the balance read asks about the payer (from), with retries (security F-N3,
 // ARCHITECTURE §4b: the approval's validBefore never outlives the checkout, so nothing can settle after "expired".
 test("an approval valid past the checkout's expiry is refused before the relayer; one ending at it is accepted", async () => {
   const { data } = await newSession();
-  const session = getSession(data.id);
-  session.expiresAt = Date.now() + 120_000; // 2 minutes left
+  const expiresAt = Date.now() + 120_000; // 2 minutes left
+  await expireSession(data.id, expiresAt);
   const late = await callPay(data.id, await signedBody(data.id)); // signedBody signs for now + 600 s
   assert.equal(late.status, 400);
   assert.match((await late.json()).error, /expires sooner. Nothing was charged/);
   assert.equal(relayCalls.length, 0);
-  const atExpiry = BigInt(Math.floor(session.expiresAt / 1000));
+  const atExpiry = BigInt(Math.floor(expiresAt / 1000));
   assert.equal((await callPay(data.id, await signedBody(data.id, { validBefore: atExpiry }))).status, 200);
 });

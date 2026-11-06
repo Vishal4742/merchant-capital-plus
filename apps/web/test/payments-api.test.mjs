@@ -1,7 +1,8 @@
 // claude-frontend checks for GET /api/v1/payments (FR-GW-5, the SDK's payments.list): auth, the merchant filter, the cursor.
 // The log index and the chain are faked (lib/onchain.ts has its own tests). Run from apps/web: npm test
-import { test, beforeEach, mock } from "node:test";
+import { test, before, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
+import { setupDb, resetDb } from "./gw-helpers.mjs";
 
 const MERCHANT = "0x1111111111111111111111111111111111111111";
 const OTHER = "0x9999999999999999999999999999999999999999";
@@ -44,7 +45,9 @@ async function get(query = "", headers = auth) {
   return { res, data: await res.json() };
 }
 
-beforeEach(() => {
+before(setupDb);
+beforeEach(async () => {
+  await resetDb();
   indexDown = false;
   chainDown = false;
   indexCalls.length = 0;
@@ -62,8 +65,8 @@ test("listing payments needs the shop's key", async () => {
 });
 
 test("lists MERCHANT_ADDRESS's payments newest first, in the SDK's shape, amounts and refunds from the chain", async () => {
-  const session = createSession({ merchant: MERCHANT, merchantName: "Bandra Beans", amount: 25_000_000n, reference: "A-1042", items: [] });
-  recordPayment(session.id, { txHash: tx(5n), blockNumber: "1", paymentId: "5", from: PAYER, paidAt: Date.now() });
+  const session = await createSession({ merchant: MERCHANT, merchantName: "Bandra Beans", amount: 25_000_000n, reference: "A-1042", items: [] });
+  await recordPayment(session.id, { txHash: tx(5n), blockNumber: "1", paymentId: "5", from: PAYER, paidAt: Date.now(), amount: 25_000_000n });
   const { res, data } = await get();
   assert.equal(res.status, 200);
   assert.equal(res.headers.get("cache-control"), "no-store");

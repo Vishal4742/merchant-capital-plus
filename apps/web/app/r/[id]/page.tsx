@@ -48,7 +48,11 @@ export default function ReceiptPage({ params }: PageProps<"/r/[id]">) {
 async function Receipt({ params }: Pick<PageProps<"/r/[id]">, "params">) {
   const { id } = await params;
   if (/^[1-9]\d{0,19}$/.test(id)) return <PaymentReceipt paymentId={BigInt(id)} />;
-  const session = getSession(id);
+  const session = await getSession(id).catch((error: unknown) => {
+    console.error(`receipt ${id}: not read: ${error instanceof Error ? error.name : "error"}`); // the store is the database
+    return null;
+  });
+  if (session === null) return <Unreadable />;
   if (!session?.payment) notFound();
   const payment = session.payment;
   announcePaid(session, payment.amount ?? session.amount); // idempotent: recovers a lost announcement (G4 code M2)
@@ -71,11 +75,13 @@ async function Receipt({ params }: Pick<PageProps<"/r/[id]">, "params">) {
   );
 }
 
+const Unreadable = () => <p className="relative rounded-[28px] bg-surface px-8 py-6 text-ink shadow-float">We can&apos;t open this receipt right now. Try again in a minute.</p>;
+
 async function PaymentReceipt({ paymentId }: { paymentId: bigint }) {
   const pay = payConfig();
   if (!pay) notFound();
   const [record, logs] = await Promise.all([within(readPayment(pay.merchantPay, paymentId)).catch(() => null), within(paidLogs(pay.merchantPay, { paymentId })).catch(() => [])]);
-  if (!record) return <p className="relative rounded-[28px] bg-surface px-8 py-6 text-ink shadow-float">We can&apos;t open this receipt right now. Try again in a minute.</p>;
+  if (!record) return <Unreadable />;
   if (/^0x0{40}$/i.test(record.merchant)) notFound();
   const shop = merchantConfig();
   const log = logs[0];

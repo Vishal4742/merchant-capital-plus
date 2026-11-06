@@ -61,7 +61,8 @@ async function Payments() {
   if (!merchant) return <SignedOut available={Boolean(authSecret())} />;
   const pay = payConfig();
   const logs = pay ? await paidLogs(pay.merchantPay, { merchant }).catch(logged("payment index")) : null;
-  const candidates = paymentRows(listPayments(merchant), logs ?? []);
+  // our checkout records only label the chain's payments: unreadable, the chain's rows still show
+  const candidates = paymentRows((await listPayments(merchant).catch(logged("checkout records"))) ?? [], logs ?? []);
   // amounts and what is left to refund, read on chain per payment, never from the index
   const records = pay ? await Promise.all(candidates.map((row) => (row.paymentId ? readPayment(pay.merchantPay, BigInt(row.paymentId)).catch(logged(`payments(${row.paymentId})`)) : null))) : [];
   const payments = confirmed(candidates, records, merchant);
