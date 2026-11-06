@@ -42,8 +42,10 @@ const CODE_RE = /^[A-Z0-9_-]{3,32}$/;
 const MAX_REDEMPTIONS = 100_000;
 const LINKS_AND_PAGES_ONLY = "Vouchers work on payment links and pages only.";
 /** How long a hold counts against the usage limit: the checkout session's life plus a grace for a payment signed just
- *  before it expired that is still settling (security R2-L2). Measured from the checkout's start, never from a re-apply. */
-export const HOLD_MS = SESSION_TTL_MS + 5 * 60_000;
+ *  before it expired that is still settling (security R2-L2, S2: the relayer accepts signatures valid for up to 900 s).
+ *  Measured from the checkout's start, never from a re-apply. A frozen hold (being paid) counts until it is confirmed. */
+export const HOLD_MS = SESSION_TTL_MS + 15 * 60_000;
+const BEING_PAID = "This checkout is being paid.";
 
 type VoucherRow = { id: string; merchant: string; code: string; kind: VoucherKind; value: string; expires_at: string; max_redemptions: number; times_redeemed: number; min_amount: string | null; active: boolean; arkiv_entity_key: string | null; created_at: string };
 const COLUMNS = "id, merchant, code, kind, value::text, expires_at::text, max_redemptions, times_redeemed, min_amount::text, active, arkiv_entity_key, created_at::text";
@@ -180,6 +182,9 @@ export async function applyVoucher(merchant: string, code: string, sessionId: st
   const checkout = await checkoutOf(sessionId);
   if (!checkout || checkout.merchant !== merchant.toLowerCase()) return { ok: false, reason: LINKS_AND_PAGES_ONLY };
   if (checkout.paidAt !== null) return { ok: false, reason: "This checkout is already paid." };
+  // S1: the pay route claimed the price; the upsert below re-checks this, so a claim racing this read still wins
+  const frozen = await query("SELECT 1 FROM app_gw_redemptions WHERE session_id = $1 AND frozen_at IS NOT NULL", [sessionId]);
+  if (frozen.length) return { ok: false, reason: BEING_PAID };
   if (now - checkout.createdAt >= SESSION_TTL_MS) return { ok: false, reason: "This checkout has expired." }; // R2-M2
   if (usdtAmount !== checkout.usdtAmount) return { ok: false, reason: "The amount doesn't match this checkout." };
   const normalized = code.trim().toUpperCase();
@@ -203,11 +208,11 @@ export async function applyVoucher(merchant: string, code: string, sessionId: st
              SELECT $1, v.id, $3, $4, $5 FROM app_gw_vouchers v
              WHERE v.id = $2 AND v.times_redeemed + (
                SELECT count(*) FROM app_gw_redemptions r
-               WHERE r.voucher_id = v.id AND r.confirmed_at IS NULL AND r.session_id <> $1 AND r.created_at > $6
+               WHERE r.voucher_id = v.id AND r.confirmed_at IS NULL AND r.session_id <> $1 AND (r.frozen_at IS NOT NULL OR r.created_at > $6)
              ) < v.max_redemptions
              ON CONFLICT (session_id) DO UPDATE SET voucher_id = EXCLUDED.voucher_id, discount = EXCLUDED.discount,
                usdt_amount = EXCLUDED.usdt_amount, created_at = EXCLUDED.created_at
-             WHERE app_gw_redemptions.confirmed_at IS NULL
+             WHERE app_gw_redemptions.confirmed_at IS NULL AND app_gw_redemptions.frozen_at IS NULL
              RETURNING session_id`,
       // the hold starts when the checkout did ($5), so re-applying can't keep a code locked (R2-M2)
       params: [sessionId, voucher.id, discount.toString(), total.toString(), checkout.createdAt, now - HOLD_MS],
@@ -218,16 +223,34 @@ export async function applyVoucher(merchant: string, code: string, sessionId: st
 }
 
 /**
- * What the payer must be charged for a link or page session: the live (or confirmed) voucher hold's total, else the
- * checkout's amount; null for a shop's own session (its amount is the session's). claude-frontend's pay route charges
- * exactly this and refuses to relay on a mismatch, so the price can never drift from the hold (security R2-M1).
+ * Read-only: what a link or page session costs now: the live, frozen or confirmed voucher hold's total, else the
+ * checkout's amount; null for a shop's own session (its amount is the session's). For display only; the pay route
+ * charges `claimAmountDue` instead (security R2-M1, S1).
  */
 export async function amountDue(sessionId: string, now = Date.now()): Promise<bigint | null> {
   const checkout = await checkoutOf(sessionId);
   if (!checkout) return null;
   const rows = await query<{ usdt_amount: string }>(
-    "SELECT usdt_amount::text FROM app_gw_redemptions WHERE session_id = $1 AND (confirmed_at IS NOT NULL OR created_at > $2)",
+    "SELECT usdt_amount::text FROM app_gw_redemptions WHERE session_id = $1 AND (confirmed_at IS NOT NULL OR frozen_at IS NOT NULL OR created_at > $2)",
     [sessionId, now - HOLD_MS],
+  );
+  return rows[0] ? BigInt(rows[0].usdt_amount) : checkout.usdtAmount;
+}
+
+/**
+ * The pay route's price (security S1): freezes the session's live voucher hold and returns its total in one statement,
+ * so no re-apply can switch the code while the payment relays; no live hold → the checkout's amount (nothing frozen);
+ * null for a shop's own session. Idempotent: a second claim returns the same amount and keeps the first freeze time.
+ * Relay exactly this amount and pass it to `confirmRedemption`.
+ */
+export async function claimAmountDue(sessionId: string, now = Date.now()): Promise<bigint | null> {
+  const checkout = await checkoutOf(sessionId);
+  if (!checkout) return null;
+  const rows = await query<{ usdt_amount: string }>(
+    `UPDATE app_gw_redemptions SET frozen_at = COALESCE(frozen_at, $2)
+     WHERE session_id = $1 AND confirmed_at IS NULL AND (frozen_at IS NOT NULL OR created_at > $3)
+     RETURNING usdt_amount::text`,
+    [sessionId, now, now - HOLD_MS],
   );
   return rows[0] ? BigInt(rows[0].usdt_amount) : checkout.usdtAmount;
 }

@@ -265,10 +265,10 @@ test("security H1: a 1-use code applied to many open checkouts discounts only th
   assert.equal((await applyVoucher(MERCHANT, "SAVE10", sessions[0], USDT(25))).ok, true, "the holder may re-apply its own code");
 });
 
-test("a hold ends with its checkout session (+5 min grace): then another checkout can use the code", async () => {
+test("a hold ends with its checkout session (+15 min grace, S2): then another checkout can use the code", async () => {
   const { SESSION_TTL_MS } = await import("../lib/sessions.ts");
   const { HOLD_MS } = await import("../lib/server/vouchers.ts");
-  assert.equal(HOLD_MS, SESSION_TTL_MS + 5 * 60_000);
+  assert.equal(HOLD_MS, SESSION_TTL_MS + 15 * 60_000, "the relayer accepts signatures up to 900 s");
   await newVoucher({ max_redemptions: 1 });
   const t = Date.now();
   const a = await checkout(USDT(25), MERCHANT, t);
@@ -320,4 +320,89 @@ test("code review M3: paying the full price after applying a code doesn't count 
   assert.equal(await confirmRedemption(s, USDT(25)), null, "the session was paid at the full price, not 22.50");
   const listed = await (await list(req("GET", "/api/v1/vouchers", { headers: signedIn() }))).json();
   assert.equal(listed.vouchers[0].times_redeemed, 0);
+});
+
+// Batch 009 Builder A: security S1 (batch 008). The pay route claims the price, which freezes the hold, so a re-apply
+// during the relay can't switch the code and free the paid one's use.
+const timesRedeemed = async (code) => (await (await list(req("GET", "/api/v1/vouchers", { headers: signedIn() }))).json()).vouchers.find((v) => v.code === code).times_redeemed;
+
+test("S1 PoC: apply HALF, claim, re-apply ONE is refused; confirm counts HALF; HALF then refuses another checkout", async () => {
+  const { claimAmountDue } = await import("../lib/server/vouchers.ts");
+  await newVoucher({ code: "HALF", value: "50", max_redemptions: 1 });
+  await newVoucher({ code: "ONE", value: "1", max_redemptions: 1000 });
+  const t = Date.now();
+  const s1 = await checkout(USDT(100), MERCHANT, t);
+  const s2 = await checkout(USDT(100), MERCHANT, t);
+  assert.equal((await applyVoucher(MERCHANT, "HALF", s1, USDT(100), t)).ok, true);
+  const claimed = await claimAmountDue(s1, t); // the pay route: charge this, relay starts
+  assert.equal(claimed, USDT(50));
+  assert.equal((await applyVoucher(MERCHANT, "HALF", s2, USDT(100), t)).ok, false, "HALF is held by s1");
+  assert.deepEqual(await applyVoucher(MERCHANT, "ONE", s1, USDT(100), t + 1000), { ok: false, reason: "This checkout is being paid." });
+  assert.deepEqual(await applyVoucher(MERCHANT, "HALF", s1, USDT(100), t + 1000), { ok: false, reason: "This checkout is being paid." }, "not even the same code");
+  assert.equal((await confirmRedemption(s1, claimed, t + 2000))?.code, "HALF", "the relay settled at the claimed price");
+  const second = await applyVoucher(MERCHANT, "HALF", s2, USDT(100), t + 3000);
+  assert.equal(second.ok, false);
+  assert.match(second.reason, /used up/);
+  assert.equal(await timesRedeemed("HALF"), 1);
+  assert.equal(await timesRedeemed("ONE"), 0);
+});
+
+test("S1: an apply racing the claim is refused by the upsert's own guard, and the claimed price stands", async () => {
+  const { claimAmountDue, amountDue } = await import("../lib/server/vouchers.ts");
+  await newVoucher({ code: "HALF", value: "50", max_redemptions: 1 });
+  await newVoucher({ code: "ONE", value: "1", max_redemptions: 1000 });
+  const t = Date.now();
+  const s = await checkout(USDT(100), MERCHANT, t);
+  await applyVoucher(MERCHANT, "HALF", s, USDT(100), t);
+  // the apply's pre-check runs before the claim's UPDATE; its upsert runs after it
+  const [applied, claimed] = await Promise.all([applyVoucher(MERCHANT, "ONE", s, USDT(100), t), claimAmountDue(s, t)]);
+  assert.equal(applied.ok, false);
+  assert.equal(claimed, USDT(50));
+  assert.equal(await amountDue(s, t), USDT(50), "the hold is still HALF's");
+  assert.equal((await confirmRedemption(s, claimed, t)).code, "HALF");
+});
+
+test("claimAmountDue is idempotent: a second claim returns the same amount and keeps the first freeze time", async () => {
+  const { claimAmountDue } = await import("../lib/server/vouchers.ts");
+  const { query } = await import("../lib/server/db.ts");
+  await newVoucher({ code: "TEN", value: "10" });
+  const t = Date.now();
+  const s = await checkout(USDT(50), MERCHANT, t);
+  await applyVoucher(MERCHANT, "TEN", s, USDT(50), t);
+  assert.equal(await claimAmountDue(s, t + 1000), USDT(45));
+  assert.equal(await claimAmountDue(s, t + 5000), USDT(45));
+  const [{ frozen_at }] = await query("SELECT frozen_at::text FROM app_gw_redemptions WHERE session_id = $1", [s]);
+  assert.equal(Number(frozen_at), t + 1000);
+});
+
+test("claimAmountDue: a shop's own session is null; no hold or a lapsed hold is the checkout's amount, not frozen", async () => {
+  const { claimAmountDue, HOLD_MS } = await import("../lib/server/vouchers.ts");
+  const { query } = await import("../lib/server/db.ts");
+  assert.equal(await claimAmountDue("ses_from_sk_key"), null);
+  await newVoucher({ code: "TEN", value: "10" });
+  const t = Date.now();
+  const plain = await checkout(USDT(50), MERCHANT, t);
+  assert.equal(await claimAmountDue(plain, t), USDT(50), "no hold");
+  const lapsed = await checkout(USDT(50), MERCHANT, t);
+  await applyVoucher(MERCHANT, "TEN", lapsed, USDT(50), t);
+  assert.equal(await claimAmountDue(lapsed, t + HOLD_MS + 1), USDT(50), "a lapsed hold no longer discounts");
+  const [{ frozen_at }] = await query("SELECT frozen_at::text FROM app_gw_redemptions WHERE session_id = $1", [lapsed]);
+  assert.equal(frozen_at, null);
+});
+
+test("a frozen hold keeps counting after HOLD_MS (its payment may still settle), and amountDue reports it", async () => {
+  const { SESSION_TTL_MS } = await import("../lib/sessions.ts");
+  const { claimAmountDue, amountDue, HOLD_MS } = await import("../lib/server/vouchers.ts");
+  await newVoucher({ code: "HALF", value: "50", max_redemptions: 1 });
+  const t = Date.now();
+  const a = await checkout(USDT(100), MERCHANT, t);
+  await applyVoucher(MERCHANT, "HALF", a, USDT(100), t);
+  assert.equal(await claimAmountDue(a, t + SESSION_TTL_MS - 1), USDT(50), "claimed just before the session ends");
+  const late = t + HOLD_MS + 60_000;
+  const b = await checkout(USDT(100), MERCHANT, late);
+  const r = await applyVoucher(MERCHANT, "HALF", b, USDT(100), late + 1);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /used up/);
+  assert.equal(await amountDue(a, late), USDT(50));
+  assert.equal(await claimAmountDue(a, late), USDT(50), "a retried claim still gets the frozen price");
 });
