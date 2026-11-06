@@ -347,6 +347,23 @@ test("S1 PoC: apply HALF, claim, re-apply ONE is refused; confirm counts HALF; H
   assert.equal(await timesRedeemed("ONE"), 0);
 });
 
+test("releaseHold after a definitely refused relay: the payer can change the code, and nothing stays locked", async () => {
+  const { claimAmountDue, releaseHold, amountDue } = await import("../lib/server/vouchers.ts");
+  await newVoucher({ code: "HALF", value: "50", max_redemptions: 1 });
+  await newVoucher({ code: "ONE", value: "1", max_redemptions: 1000 });
+  const t = Date.now();
+  const s = await checkout(USDT(100), MERCHANT, t);
+  await applyVoucher(MERCHANT, "HALF", s, USDT(100), t);
+  assert.equal(await claimAmountDue(s, t), USDT(50));
+  assert.equal(await releaseHold(s), true, "the relay said no: nothing was sent");
+  assert.equal(await releaseHold(s), false, "releasing twice changes nothing");
+  assert.equal((await applyVoucher(MERCHANT, "ONE", s, USDT(100), t + 1000)).ok, true, "unfrozen: the payer may switch codes");
+  assert.equal(await amountDue(s, t + 1000), USDT(99));
+  const other = await checkout(USDT(100), MERCHANT, t);
+  assert.equal((await applyVoucher(MERCHANT, "HALF", other, USDT(100), t + 1000)).ok, true, "HALF's use was freed");
+  assert.equal(await releaseHold("ses_no_hold"), false);
+});
+
 test("S1: an apply racing the claim is refused by the upsert's own guard, and the claimed price stands", async () => {
   const { claimAmountDue, amountDue } = await import("../lib/server/vouchers.ts");
   await newVoucher({ code: "HALF", value: "50", max_redemptions: 1 });

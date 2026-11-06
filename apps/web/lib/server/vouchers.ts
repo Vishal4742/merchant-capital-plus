@@ -256,6 +256,19 @@ export async function claimAmountDue(sessionId: string, now = Date.now()): Promi
 }
 
 /**
+ * Unfreezes the hold after a relay is DEFINITELY refused (nothing was sent on chain), so a failed payment doesn't keep
+ * a use locked and the payer can retry or change the code. Never call it when the outcome is unknown (timeout, 5xx,
+ * dropped connection): the chain decides then, and the frozen hold must keep counting. True if a hold was unfrozen.
+ */
+export async function releaseHold(sessionId: string): Promise<boolean> {
+  const rows = await query(
+    "UPDATE app_gw_redemptions SET frozen_at = NULL WHERE session_id = $1 AND confirmed_at IS NULL AND frozen_at IS NOT NULL RETURNING session_id",
+    [sessionId],
+  );
+  return rows.length === 1;
+}
+
+/**
  * Called once the session is paid: confirms its reservation and counts one use, in one statement. The redemption row is
  * claimed first (so the same session never counts twice), then the use is counted only while uses remain (so two
  * sessions racing for the last use: one wins). Returns the counted voucher, or null (no reservation, already
