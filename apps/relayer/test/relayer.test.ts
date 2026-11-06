@@ -11,6 +11,14 @@ import {
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { addresses, capitalMarketAbi, merchantPayAbi } from '../src/contracts.ts';
 import { health, makeClient, relay, relayerClient, startBalanceRefresh, TIMING, USDT_ABI, USDT_DOMAIN } from '../src/relayer.ts';
+import { setDb, type Db } from '../src/store.ts';
+import { memoryDb } from '../db/pglite.ts';
+
+// FR-REL-10 (batch 037): every test runs on the shared Postgres store (PGlite here, Neon in production). Each fake node
+// has its own relayer key, so its budget, breaker, limits and lease rows don't touch another test's.
+const db = await memoryDb();
+setDb(db);
+const sql = (text: string, params: unknown[] = []) => db.query(text, params);
 
 const MP = addresses.merchantPay; // lowercase in the generated file
 const USDT: Address = '0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7';
@@ -1025,4 +1033,211 @@ test('fund: a signature made for another contract (to = MerchantPay) is bad_sign
   const { status, out } = await post((await signedFunding({ to: MP })).body, node);
   assert.deepEqual([status, out.code], [422, 'bad_signature']);
   assert.equal(node.sent.length, 0);
+});
+
+// ---- batch 037 (FR-REL-10): send lock, budget and limits shared by every instance ----
+// A second relayer module instance (`?b`: its own in-process queue and state) on the same database is a second Vercel
+// instance; ./store.ts resolves to the same module, so both share the database handle.
+const instanceB: typeof import('../src/relayer.ts') = await import(new URL('../src/relayer.ts?b', import.meta.url).href);
+Object.assign(instanceB.TIMING, { receiptPollMs: TIMING.receiptPollMs, receiptTimeoutMs: TIMING.receiptTimeoutMs }); // review 037 L7
+const postB = async (body: unknown, node: ReturnType<typeof fakeNode>) => {
+  const res = await instanceB.relay(JSON.stringify(body), node.client);
+  return { status: res.status, out: await res.json() };
+};
+const lc = (a: string) => a.toLowerCase();
+const HOUR = 3_600_000;
+// A row as another instance would have written it.
+const otherInstanceRow = (relayer: Address, o: { payer?: string; merchant?: string; feeWei?: bigint; reverted?: boolean; agoMs?: number } = {}) =>
+  sql('INSERT INTO rel_sent (auth_key, relayer, payer, merchant, tx_hash, fee_wei, reverted, sent_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [
+    `${random32()}:${random32()}`, lc(relayer), lc(o.payer ?? privateKeyToAccount(generatePrivateKey()).address), o.merchant ? lc(o.merchant) : null,
+    random32(), String(o.feeWei ?? 1n), o.reverted ?? false, Date.now() - (o.agoMs ?? 1_000),
+  ]);
+async function withTiming<T>(patch: Partial<typeof TIMING>, run: () => Promise<T>): Promise<T> {
+  const saved = { ...TIMING };
+  Object.assign(TIMING, patch);
+  try { return await run(); } finally { Object.assign(TIMING, saved); }
+}
+
+test('FR-REL-10: the same authorization on two instances at once is broadcast once, even when the first is never mined', async () => {
+  const raws: Hex[] = [];
+  const node = fakeNode({ on: sentButNeverMined((raw) => raws.push(raw)) });
+  const { body } = await signedSale();
+  const results = await Promise.all([post(body, node), postB(body, node)]);
+  assert.equal(raws.length, 1, 'one broadcast across both instances');
+  assert.deepEqual(results.map((r) => `${r.status} ${r.out.code}`).sort(), ['422 replay', '502 rpc_error'], JSON.stringify(results.map((r) => r.out)));
+});
+
+test('FR-REL-10: two payments on two instances are sent one after the other with distinct relayer nonces', async () => {
+  const node = fakeNode({ sendDelayMs: 20 });
+  const [a, b] = await Promise.all([signedSale(), signedSale()]);
+  const results = await Promise.all([post(a.body, node), postB(b.body, node)]);
+  assert.deepEqual(results.map((r) => r.status), [200, 200], JSON.stringify(results.map((r) => r.out)));
+  assert.deepEqual(node.sent.map((raw) => parseTransaction(raw).nonce).sort(), [7, 8]);
+});
+
+test('FR-REL-10: rows written by another instance count here: budget, payer and merchant limits, ban and breaker, with no RPC', async () => {
+  const cases: [string, number, string, (n: ReturnType<typeof fakeNode>, s: Awaited<ReturnType<typeof signedSale>>) => Promise<unknown>][] = [
+    ['budget', 503, 'budget_exhausted', (n) => otherInstanceRow(n.relayer.address, { feeWei: 100_000_000_000_000_000n - 1n })],
+    ['payer limit', 429, 'rate_limited', async (n, s) => { for (let i = 0; i < 10; i++) await otherInstanceRow(n.relayer.address, { payer: s.message.from }); }],
+    ['merchant limit', 429, 'rate_limited', async (n, s) => { for (let i = 0; i < 200; i++) await otherInstanceRow(n.relayer.address, { merchant: s.sale.merchant }); }],
+    ['ban (any age)', 422, 'payer_banned', (n, s) => otherInstanceRow(n.relayer.address, { payer: s.message.from, reverted: true, agoMs: 48 * HOUR })],
+    ['breaker', 503, 'breaker_open', async (n) => { for (let i = 0; i < 3; i++) await otherInstanceRow(n.relayer.address, { reverted: true }); }],
+  ];
+  for (const [name, status, code, seed] of cases) {
+    const node = fakeNode();
+    const sale = await signedSale();
+    await seed(node, sale);
+    const res = await post(sale.body, node);
+    assert.deepEqual([res.status, res.out.code], [status, code], `${name}: ${JSON.stringify(res.out)}`);
+    assert.deepEqual(node.calls, [], `${name}: no RPC`);
+  }
+  // an hour-old send and yesterday's spend no longer count
+  const node = fakeNode();
+  const sale = await signedSale();
+  for (let i = 0; i < 10; i++) await otherInstanceRow(node.relayer.address, { payer: sale.message.from, agoMs: HOUR + 1_000 });
+  await otherInstanceRow(node.relayer.address, { feeWei: 100_000_000_000_000_000n, agoMs: 25 * HOUR });
+  assert.equal((await post(sale.body, node)).status, 200);
+});
+
+test('FR-REL-10: a live lease held by another instance means 503 busy after the age gate, nothing sent; an expired one is taken over', async () => {
+  const node = fakeNode();
+  const relayer = lc(node.relayer.address);
+  await sql('INSERT INTO rel_lock (relayer, holder, until_ms) VALUES ($1, $2, $3)', [relayer, 'other-instance', Date.now() + 60_000]);
+  const res = await withTiming({ maxRequestAgeMs: 300, leasePollMs: 20 }, async () => post((await signedSale()).body, node));
+  assert.deepEqual([res.status, res.out.code], [503, 'busy'], JSON.stringify(res.out));
+  assert.match(res.out.error, /too slow to start/, 'it waited for the lease, not lost it at the fence (review 037 L6)');
+  assert.equal(node.sent.length, 0);
+  await sql('UPDATE rel_lock SET until_ms = $2 WHERE relayer = $1', [relayer, Date.now() - 1]); // that instance crashed
+  assert.equal((await post((await signedSale()).body, node)).status, 200);
+  assert.equal(node.sent.length, 1);
+});
+
+test('FR-REL-10: a lease lost during the presend round (fencing) means no broadcast and 503 busy', async () => {
+  const node = fakeNode({
+    on: {
+      eth_getTransactionCount: async (_params, next) => {
+        await sql('UPDATE rel_lock SET holder = $2, until_ms = $3 WHERE relayer = $1', [lc(node.relayer.address), 'thief', Date.now() + 60_000]);
+        return next();
+      },
+    },
+  });
+  const res = await post((await signedSale()).body, node);
+  assert.deepEqual([res.status, res.out.code], [503, 'busy'], JSON.stringify(res.out));
+  assert.equal(node.sent.length, 0);
+});
+
+test('FR-REL-10: database down or not configured: 503 storage_error with nothing sent; /health 502 storage_error', async () => {
+  const down: Db = { query: async () => { throw new Error('connection refused'); } };
+  const savedUrl = process.env.DATABASE_URL;
+  try {
+    for (const store of [down, undefined]) {
+      setDb(store);
+      delete process.env.DATABASE_URL;
+      const node = fakeNode();
+      const res = await post((await signedSale()).body, node);
+      assert.deepEqual([res.status, res.out.code], [503, 'storage_error'], JSON.stringify(res.out));
+      assert.equal(res.out.error, 'the relayer database is unavailable; nothing was sent, so retry');
+      assert.equal(node.sent.length, 0);
+      const h = await health(node.client);
+      assert.deepEqual([h.status, (await h.json()).code], [502, 'storage_error']);
+    }
+  } finally {
+    setDb(db);
+    if (savedUrl !== undefined) process.env.DATABASE_URL = savedUrl;
+  }
+});
+
+test('FR-REL-10: /health counts every instance; after a send the row holds the receipt fee and the lease is free', async () => {
+  const node = fakeNode();
+  await otherInstanceRow(node.relayer.address, { feeWei: 10_000_000_000_000_000n }); // 0.01 WBT on another instance
+  const sale = await signedSale();
+  assert.equal((await post(sale.body, node)).status, 200);
+  const [row] = await sql('SELECT fee_wei::text AS fee, reverted, payer, merchant, tx_hash FROM rel_sent WHERE auth_key = $1',
+    [`${lc(sale.message.from)}:${lc(sale.message.nonce)}`]);
+  const fee = GAS_USED * GAS_PRICE + L1_FEE;
+  assert.deepEqual(row, { fee: String(fee), reverted: false, payer: lc(sale.message.from), merchant: lc(sale.sale.merchant), tx_hash: keccak256(node.sent[0]) });
+  const [lease] = await sql('SELECT until_ms::text AS until FROM rel_lock WHERE relayer = $1', [lc(node.relayer.address)]);
+  assert.equal(lease.until, '0');
+  const h = await (await health(node.client)).json();
+  assert.equal(h.gasSpentToday, formatEther(10_000_000_000_000_000n + fee));
+  assert.equal(h.budgetLeft, formatEther(90_000_000_000_000_000n - fee));
+});
+
+// A database that fails only on statements matching `pattern` (review 037 M1: a failure in the middle of a request).
+const failingOn = (pattern: RegExp): Db => ({
+  query: async (text, params) => { if (pattern.test(text)) throw new Error('connection reset'); return db.query(text, params); },
+});
+async function withDb<T>(store: Db, run: () => Promise<T>): Promise<T> {
+  setDb(store);
+  try { return await run(); } finally { setDb(db); }
+}
+
+test('FR-REL-10: the database failing at the reserve write: 503 storage_error, no broadcast, the lease released', async () => {
+  const node = fakeNode();
+  const res = await withDb(failingOn(/INSERT INTO rel_sent/), async () => post((await signedSale()).body, node));
+  assert.deepEqual([res.status, res.out.code], [503, 'storage_error'], JSON.stringify(res.out));
+  assert.equal(node.sent.length, 0, 'nothing broadcast after a failed reserve');
+  const [lease] = await sql('SELECT until_ms::text AS until FROM rel_lock WHERE relayer = $1', [lc(node.relayer.address)]);
+  assert.equal(lease.until, '0', 'released in finally');
+  assert.equal((await post((await signedSale()).body, node)).status, 200, 'the next payment goes through');
+});
+
+test('FR-REL-10: the database failing after the broadcast (settle, then release) still answers 200 with the txHash', async () => {
+  const node = fakeNode();
+  const res = await withDb(failingOn(/UPDATE rel_sent|UPDATE rel_lock SET holder = NULL/), async () => post((await signedSale()).body, node));
+  assert.equal(res.status, 200, JSON.stringify(res.out));
+  assert.equal(res.out.txHash, keccak256(node.sent[0]));
+});
+
+test('FR-REL-10: a failed lease acquire still frees the lease, best effort (its answer may have been lost after commit)', async () => {
+  const node = fakeNode();
+  const lostAnswer: Db = {
+    query: async (text, params) => {
+      const rows = await db.query(text, params);
+      if (/INSERT INTO rel_lock/.test(text)) throw new Error('response lost'); // committed, but the caller never hears
+      return rows;
+    },
+  };
+  const res = await withDb(lostAnswer, async () => post((await signedSale()).body, node));
+  assert.deepEqual([res.status, res.out.code], [503, 'storage_error']);
+  const [lease] = await sql('SELECT until_ms::text AS until FROM rel_lock WHERE relayer = $1', [lc(node.relayer.address)]);
+  assert.equal(lease.until, '0', 'no 60 s lockout');
+});
+
+test('FR-REL-10: a malformed DATABASE_URL never reaches a response or a log line (security 037 L5 canary)', async () => {
+  const canary = 'CANARY-PASSWORD-9f3a';
+  const savedUrl = process.env.DATABASE_URL;
+  const logged: string[] = [];
+  const savedError = console.error;
+  console.error = (...args: unknown[]) => { logged.push(args.map(String).join(' ')); };
+  try {
+    setDb(undefined);
+    process.env.DATABASE_URL = `postgres:// user:${canary} @ not a host`;
+    const node = fakeNode();
+    const res = await relay(JSON.stringify((await signedSale()).body), node.client);
+    const h = await health(node.client);
+    const text = `${await res.text()} ${await h.text()} ${logged.join(' ')}`;
+    assert.equal(res.status, 503);
+    assert.ok(!text.includes(canary), 'the password is in the output');
+    assert.ok(logged.length > 0, 'the storage error was logged (by name)');
+  } finally {
+    console.error = savedError;
+    setDb(db);
+    if (savedUrl === undefined) delete process.env.DATABASE_URL; else process.env.DATABASE_URL = savedUrl;
+  }
+});
+
+test('FR-REL-10: as the mcplus_relayer role (db/002_relayer_role.sql) a sale relays end to end, and other tables are refused', async () => {
+  const roleDb = await memoryDb(['001_rel.sql', '002_relayer_role.sql']);
+  await roleDb.query('CREATE TABLE app_gw_keys (id text)'); // stands in for the gateway's tables
+  await roleDb.query('SET ROLE mcplus_relayer');
+  await assert.rejects(roleDb.query('SELECT * FROM app_gw_keys'), /permission denied/);
+  await assert.rejects(roleDb.query('DELETE FROM rel_sent'), /permission denied/);
+  await withDb(roleDb, async () => {
+    const node = fakeNode();
+    const sale = await signedSale();
+    assert.equal((await post(sale.body, node)).status, 200);
+    assert.deepEqual((await post(sale.body, node)).out.code, 'replay');
+    assert.equal((await (await health(node.client)).json()).budgetLeft !== '0.1', true, 'spend read back as the role');
+  });
 });

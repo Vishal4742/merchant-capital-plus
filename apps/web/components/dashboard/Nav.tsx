@@ -1,6 +1,6 @@
-// The merchant dashboard's sections (approved gateway v2 design). Built screens are links; the rest say "Soon" and are
-// not links. Between screens that send the same CSP a link is next/link (a client navigation, the shell prefetched,
-// NFR-13); every other link is a plain <a>, a full load under its own headers (security review 005 F-N4, lib/soft-nav.ts).
+// The merchant dashboard's sections (approved gateway v2 design), every one a built screen. Between screens that send the
+// same CSP a link is next/link (a client navigation, the shell prefetched, NFR-13); every other link is a plain <a>, a full
+// load under its own headers (security review 005 F-N4, lib/soft-nav.ts).
 // At phone width the list folds into a <details> menu (no JS); from md up it is the sidebar.
 import Link from "next/link";
 import { FoldedMenu } from "@/components/dashboard/FoldedMenu";
@@ -30,7 +30,7 @@ const SECTIONS = [
     title: "Developers",
     items: [
       { key: "keys", label: "API keys", href: "/merchant/developers" },
-      { key: "webhooks", label: "Webhooks" },
+      { key: "webhooks", label: "Webhooks", href: "/merchant/developers#webhooks" }, // a section of Developers (batch 045)
       { key: "docs", label: "Docs", href: "/docs" },
     ],
   },
@@ -40,7 +40,7 @@ export type NavKey = (typeof SECTIONS)[number]["items"][number]["key"];
 
 const row = "flex min-h-10 items-center justify-between gap-2 rounded-[10px] px-2.5 text-sm";
 
-const hrefOf = (key: NavKey) => SECTIONS.flatMap((section): readonly { key: NavKey; href?: string }[] => section.items).find((item) => item.key === key)?.href ?? "";
+const hrefOf = (key: NavKey) => SECTIONS.flatMap((section): readonly { key: NavKey; href: string }[] => section.items).find((item) => item.key === key)?.href ?? "";
 
 function List({ active }: { active: NavKey }) {
   const here = hrefOf(active);
@@ -55,30 +55,23 @@ function List({ active }: { active: NavKey }) {
           )}
           {section.items.map((item) => (
             <li key={item.key}>
-              {"href" in item ? (
-                softNav(here, item.href) ? (
-                  <Link
-                    href={item.href}
-                    aria-current={item.key === active ? "page" : undefined}
-                    className={`${row} ${item.key === active ? "bg-accent-soft font-medium text-accent" : "text-ink hover:bg-surface-sunk"}`}
-                  >
-                    {item.label}
-                  </Link>
-                ) : (
-                  // a full load: this screen or the target sends another CSP (F-N4)
-                  <a
-                    href={item.href}
-                    aria-current={item.key === active ? "page" : undefined}
-                    className={`${row} ${item.key === active ? "bg-accent-soft font-medium text-accent" : "text-ink hover:bg-surface-sunk"}`}
-                  >
-                    {item.label}
-                  </a>
-                )
-              ) : (
-                <span className={`${row} text-ink-muted`}>
+              {softNav(here, item.href) ? (
+                <Link
+                  href={item.href}
+                  aria-current={item.key === active ? "page" : undefined}
+                  className={`${row} ${item.key === active ? "bg-accent-soft font-medium text-accent" : "text-ink hover:bg-surface-sunk"}`}
+                >
                   {item.label}
-                  <span className="eyebrow">Soon</span>
-                </span>
+                </Link>
+              ) : (
+                // a full load: this screen or the target sends another CSP (F-N4)
+                <a
+                  href={item.href}
+                  aria-current={item.key === active ? "page" : undefined}
+                  className={`${row} ${item.key === active ? "bg-accent-soft font-medium text-accent" : "text-ink hover:bg-surface-sunk"}`}
+                >
+                  {item.label}
+                </a>
               )}
             </li>
           ))}
