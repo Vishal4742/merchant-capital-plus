@@ -6,8 +6,7 @@ on:
   push:
     branches: [main, contracts, backend, relayer, sdk]
     paths-ignore: ["**/*.md", "docs/**", "arkiv/**", "notes/**", ".batches/**"]
-  pull_request:
-    paths-ignore: ["**/*.md", "docs/**", "arkiv/**", "notes/**", ".batches/**"]
+  pull_request:   # no paths-ignore: main's branch protection requires these checks on every PR (the changes job skips heavy jobs for docs)
 
 permissions:
   contents: read
