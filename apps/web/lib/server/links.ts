@@ -46,10 +46,17 @@ export function priceField(value: unknown, name: string): bigint {
 }
 
 /** Refuses stored prices that could never be paid (FR-GW-1/2): at today's rate, one above 1,000 USDT, or under 1 USDT
- *  when `atLeastOne` (a fixed link's whole price). No prices: no rate needed. An FX outage is usdRate's 503. */
+ *  when `atLeastOne` (a fixed link's whole price). No prices: no rate needed. Best effort: during an FX outage the
+ *  check is skipped, since creating a link moves no money and the checkout re-checks the bounds at its own rate. */
 export async function payablePrices(prices: bigint[], currency: Currency, atLeastOne = false): Promise<void> {
   if (prices.length === 0) return;
-  const rate = await usdRate(currency);
+  let rate;
+  try {
+    rate = await usdRate(currency);
+  } catch (err) {
+    if (err instanceof HttpError && err.status === 503) return; // FX down: don't block a merchant creating EUR links
+    throw err;
+  }
   for (const price of prices) {
     const usdt = toUsdtUnits(formatUnits(price, 6), rate);
     if (usdt > MAX_PAYMENT || (atLeastOne && usdt < MIN_PAYMENT)) throw new HttpError(400, "That price is outside 1 to 1,000 USDT at today's rate.");

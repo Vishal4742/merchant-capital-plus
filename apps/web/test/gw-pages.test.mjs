@@ -220,12 +220,12 @@ test("LOW: a page's prices must be payable at today's rate when it is created", 
   }
 });
 
-test("LOW: FX down at creation → 503 for a fiat page with prices; an open page without a minimum and USDT pages still create", async () => {
+test("LOW: FX down at creation skips the price check (best effort; the checkout re-checks); every page still creates", async () => {
   mock.method(globalThis, "fetch", async () => {
     throw new Error("FX source down");
   });
-  assert.equal((await newPage({ currency: "EUR" })).res.status, 503);
-  assert.equal((await newPage({ currency: "EUR", items: undefined, open_amount: { min: "5.00" } })).res.status, 503);
+  assert.equal((await newPage({ currency: "EUR" })).res.status, 201);
+  assert.equal((await newPage({ currency: "EUR", items: undefined, open_amount: { min: "5.00" } })).res.status, 201);
   assert.equal((await newPage({ currency: "EUR", items: undefined, open_amount: { max: "50.00" } })).res.status, 201);
   assert.equal((await newPage({ currency: "USDT" })).res.status, 201);
 });

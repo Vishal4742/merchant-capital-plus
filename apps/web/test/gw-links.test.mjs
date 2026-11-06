@@ -266,11 +266,11 @@ test("LOW: a fixed fiat link must be 1..1,000 USDT at today's rate when it is cr
   assert.equal((await newLink({ amount: null, currency: "EUR" })).res.status, 201); // open: the payer's amount is checked at checkout
 });
 
-test("LOW: FX down at creation → 503 for a fixed fiat link; open, USD and USDT links still create", async () => {
+test("LOW: FX down at creation skips the price check (best effort; the checkout re-checks); every link still creates", async () => {
   mock.method(globalThis, "fetch", async () => {
     throw new Error("FX source down");
   });
-  assert.equal((await newLink({ amount: "20.00", currency: "EUR" })).res.status, 503);
+  assert.equal((await newLink({ amount: "20.00", currency: "EUR" })).res.status, 201);
   assert.equal((await newLink({ amount: null, currency: "EUR" })).res.status, 201);
   assert.equal((await newLink({ amount: "20.00", currency: "USD" })).res.status, 201);
   assert.equal((await newLink({ amount: "20.00" })).res.status, 201);
