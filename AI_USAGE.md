@@ -40,4 +40,5 @@ ETHGlobal asks teams to say where AI was used, down to files, and to commit spec
 | `apps/web/` landing page (gateway story, design v8) | claude-frontend | phase mode: ci PASS + human gate | 009-P4-web-landing |
 | gateway API follow-ups | claude-contracts | phase mode: ci + reviewer-security PASS (round 1) + human gate; full review at the G4 phase gate | 008-P4-gateway-followups |
 | `apps/relayer/` Postgres send lock, `rel_sent`, breaker, rate limits, daily WBT budget, shared secret | claude-relayer | 5 checks PASS + human gate | 006-P2-neon-limits |
+| `apps/relayer/` Vercel production deploy (keys as Sensitive, Production only; human yes 06:10) | claude-relayer | phase mode: ci + reviewer-security PASS + human gate | 009-P2-vercel-deploy |
 | ⟨path⟩ | ⟨lane / agent⟩ | ⟨reviewers + human⟩ | ⟨NNN⟩ |

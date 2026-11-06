@@ -2,7 +2,7 @@
 
 **A stablecoin payment gateway for merchants who sell internationally: payment links, payment pages, invoices, QR codes, discount vouchers, multi-currency prices, sales reports and instant settlement in USDT on Whitechain, with a one-line payment button and an SDK. Customers pay with zero gas. Plus Capital: get paid early from future sales.** Testnet only (Whitechain Sepolia).
 
-> Status: pre-event skeleton (written before hacking starts, Start Fresh). Slots marked `⟨…⟩` are filled with real links during the build. Requirements: `docs/SRS.md`. Design: `ARCHITECTURE.md`. How we built it: `PIPELINE.md`, `AI_USAGE.md`.
+> Status (Nov 6, 06:50 IST): gates G0–G3 passed and verified on-chain; Phase 4 (gateway screens) is being built. Slots marked `⟨…⟩` are filled as each acceptance test passes. Requirements: `docs/SRS.md`. Design: `ARCHITECTURE.md`. How we built it: `PIPELINE.md`, `AI_USAGE.md`.
 
 ## What makes it different
 - **Zero gas for the payer:** the customer signs once; our relayer pays the gas.
@@ -16,7 +16,7 @@ Repayment is enforced where the money arrives. One customer payment is split, in
 
 ## Demo
 - Live app: ⟨url⟩ · Demo shop: ⟨url⟩ · Video (2:45): ⟨url⟩
-- Walkthrough = acceptance tests AT-1 to AT-10 (`docs/SRS.md` §6)
+- Walkthrough = acceptance tests AT-1 to AT-15 (`docs/SRS.md` §6)
 
 ## Sponsor tracks
 ### Whitechain (Operate · Scale · Tokenize; one prize)
@@ -27,7 +27,7 @@ Repayment is enforced where the money arrives. One customer payment is split, in
 | **Operate:** drop-in in ≈20 lines | `apps/shop` integration: ⟨N⟩ lines (⟨file links⟩); merchant view ⟨screenshot⟩, customer view ⟨screenshot⟩; refund [0xbd91e67e…](https://explorer.testnet.whitechain.io/tx/0xbd91e67e672cf3a1c94e0fbf82335be719e2c77a4e0499328a9b767d3347f939); CSV export ⟨link⟩ |
 | **Operate (gateway):** what a merchant gets | Payment links + QR ⟨link⟩ · payment pages ⟨link⟩ · invoices with line items ⟨link⟩ · discount vouchers ⟨link⟩ · multi-currency prices (USD = USDT 1:1; EUR/GBP/INR/SGD at the ECB rate, AED via its peg; quote locked 10 min) ⟨screenshot⟩ · reports + CSV ⟨link⟩ · instant T+0 settlements ⟨link⟩ · signed webhooks (`MC-Signature`) · test-mode API keys · `/docs` with 3 steps ⟨link⟩ |
 | **Scale:** zero crypto steps for the payer | Customer pays with one "Confirm payment" from a wallet the page creates for them (no WBT, no seed phrase, no chain name) ⟨screenshot⟩ |
-| **Scale:** who pays gas / how the relayer gets WBT / what stops draining | The merchant pays a 0.10 USDT fee inside each payment; the relayer swaps fees to WBT on YetiTrade ⟨tx⟩; drain guard: allowlisted calls, simulate first, fee in the tx, gas caps, rate limits, daily WBT budget ⟨code⟩ ⟨tests⟩ |
+| **Scale:** who pays gas / how the relayer gets WBT / what stops draining | The merchant pays a 0.10 USDT fee inside each payment, sent to the relayer in the same tx; at the 6 gwei cap a ≈208k-gas sale costs ≈0.00104 WBT, so the fee covers gas up to ≈6.2 gwei. The relayer is topped up with faucet WBT; turning collected USDT fees back into WBT is a manual YetiTrade swap (the automatic swap was cut for time). Drain guard ([`apps/relayer/src/relayer.ts`](apps/relayer/src/relayer.ts), tests in [`apps/relayer/test/`](apps/relayer/test/)): only MerchantPay `paySale`/`payInvoice`, payers with code refused (incl. EIP-7702), simulate first, gas cap 6 gwei, a payer is banned after one mined revert and sending stops after 3 per hour, shared-secret header, Postgres send lock, per-IP and per-payer rate limits, daily WBT budget. Live relayer: [merchant-capital-relayer.vercel.app/health](https://merchant-capital-relayer.vercel.app/health); bad calls rejected with the relayer nonce unchanged (AT-10), /health p95 280 ms, rejects p95 ≤ 363 ms (NFR-14) |
 | **Tokenize:** real transfer rules + lifecycle | ERC-1155 claim token with ERC-7943 rules (investor allowlist (simulated KYC), ≤8 holders, maturity lock, admin freeze) ⟨code⟩; blocked transfer ⟨revert tx⟩; advance funded [AT-3](https://explorer.testnet.whitechain.io/tx/0x8d4958ebb6c20d1a1e4a269bfd6736c641f62ca02d6521e94b92934c8f3f6810) → a 5 USDT sale repays 1 USDT to the investor in the same tx [AT-4](https://explorer.testnet.whitechain.io/tx/0x9fc06d890b53dde51e469e348fc9b9bdaadfc541f82e9fbb2a833a74edba5ec8) → after the cap the investor gets 0 [AT-5](https://explorer.testnet.whitechain.io/tx/0x0269606d7668b50e5c0b8d6dca43449def7b660e92371ff4090fbff199df4360) · invoice financing: two investors buy a 100 USDT invoice [A 58.84](https://explorer.testnet.whitechain.io/tx/0x6b346413c77effb7f2084103caf93236a47349681729816bb0a850aa95a9ab3c) + [B 39.23](https://explorer.testnet.whitechain.io/tx/0xab395b1dd7c452229661dfab86f7efee79700d87bc00aaa7957390c7627d9744) → the debtor pays 100.10 and both are repaid 60 + 40 in one tx [AT-7](https://explorer.testnet.whitechain.io/tx/0xd9172e76c1f19d2152d10283a84732ac0ef14680698f7279cfc2c10dd71003b1) · transfer to a non-eligible wallet blocked (`canTransfer` = false, AT-8) |
 | Rail proof (Phase 1) | A payer with **0 WBT and nonce 0** sends 1 USDT through our relayer: [tx](https://explorer.testnet.whitechain.io/tx/0xc4629df10e9c3d259253ac368448db50d1783465555d3d0aa19de335f31c847e) (94,034 gas, paid by the relayer) · stub [PullStub](https://explorer.testnet.whitechain.io/address/0x51e2E2A530c9dabe6147D55F9bb7fcD47219325d) |
 | Feedback | `WHITECHAIN_FEEDBACK.md` |
@@ -38,7 +38,7 @@ Financing offers are Arkiv entities (`mcplus.offer.v1`) that expire at the offer
 ### Ethereum Foundation (Anon-RPC · CROPS)
 Every chain read the app makes in the browser goes through Anon-RPC by default (Nym, Tor fallback), including Arkiv reads: ⟨traffic share⟩ private. The customer pay and checkout pages make no browser chain reads at all (the amount and merchant come from our server), so they can't leak the payer's IP. Exclusions (disclosed): relayer writes over HTTPS, the two mainnet bootstrap reads (eth_call to ethereum-rpc.publicnode.com), explorer history lookups, the server-side read behind the pay and checkout pages, and the Nym worker's own plain traffic (directory lookups to validator.nymtech.net, one WSS to a Nym entry gateway, bundle fallbacks unpkg.com / raw.githubusercontent.com after jsDelivr). These carry no wallet data.
 Private-read proof (Phase 1): the app read Whitechain blocks through Nym (e.g. block 12,298,671) with **0 direct RPC requests** in 12 browser test runs; a swapped worker bundle is refused (pinned hash).
-**CROPS:** C: payment functions are permissionless, so anyone can submit a signed authorization if our relayer is down · O: ⟨license⟩ · P: private reads by default, no personal data on-chain or on Arkiv · S: non-custodial, keys stay on the user's device.
+**CROPS:** C: payment functions are permissionless, so anyone can submit a signed authorization if our relayer is down · O: MIT ([`LICENSE`](LICENSE)) · P: private reads by default, no personal data on-chain or on Arkiv · S: non-custodial, keys stay on the user's device.
 
 ## Architecture
 Full-stack: Next.js frontend, two TypeScript servers (relayer, web API incl. the gateway API: links, pages, vouchers, quotes, reports, settlements, keys, webhooks), a zero-dependency SDK + one-line pay button (`packages/sdk`), Postgres for sessions and rate limits only, and Solidity contracts on Whitechain that hold every money rule.
@@ -67,7 +67,7 @@ cp .env.example .env          # fill in the values; never commit .env
 # Contracts (Foundry; fork tests run against Whitechain Sepolia with the real USDT)
 cd contracts && forge build && forge test -vv && cd ..
 
-# Relayer (localhost only until its drain guard ships): http://127.0.0.1:8787
+# Relayer: http://127.0.0.1:8787 locally; production https://merchant-capital-relayer.vercel.app
 cd apps/relayer && npm ci && npm test && npm run dev        # GET /health, POST /relay
 
 # Web app (merchant, investor, customer pages): http://localhost:3000
@@ -79,7 +79,7 @@ cd packages/sdk && npm ci && npm test
 # Demo shop on the SDK (≤ 20 integration lines)
 cd apps/shop && npm ci && npm run dev
 ```
-Test funds: claim WBT at faucet.testnet.whitechain.io, then swap some to the prize USDT (`0xcedfB561…f55a7`) on testnet.yetitrade.fi. CI runs the same checks on every push (`.github/workflows/ci.yml`).
+Test funds: claim WBT at faucet.testnet.whitechain.io, then swap some to the prize USDT (`0xcedfb56113143d55b2358b8cfbb0deb5ad2f55a7`) on testnet.yetitrade.fi. CI runs the same checks on every push (`.github/workflows/ci.yml`).
 
 ## Limitations (honest)
 - Testnet only (official USD₮ isn't on Whitechain mainnet yet). Maturity lock 60 s and grace 120 s on testnet so the demo can show them; 1 day / 7 days in production.
@@ -89,7 +89,7 @@ Test funds: claim WBT at faucet.testnet.whitechain.io, then swap some to the pri
 - A merchant could take sales outside our checkout; default rules, recourse and public sales stats mitigate this, they don't prevent it.
 - **Admin trust (testnet):** one deployer key (`0xb4E7…714D`) is the compliance admin and the contract owner. It can force-transfer claims between eligible investors, freeze claim units and revoke investor eligibility (ERC-7943 rules, simulated KYC), and it can pause MerchantPay. Ownership uses `Ownable2Step`; production would put these roles behind a multisig.
 - Cut for time: default and recourse handling (a claim that is never repaid stays outstanding; no freeze-and-recourse lien).
-- ⟨anything else cut from the cut list⟩
+- Cut for time: the automatic fee-to-WBT swap for the relayer (FR-REL-8; refilled by hand). ⟨any later cuts⟩
 
 ## Team and AI usage
 ⟨team⟩ · AI usage per file and the full build trail: `AI_USAGE.md`, `.batches/`
