@@ -83,6 +83,27 @@ afterEach(() => {
 
 const get = (handler, query, headers = signedIn()) => handler(req("GET", `/api/v1/reports${query}`, { headers }));
 
+test("?tz=Asia/Kolkata buckets by IST days: 23:59:59 UTC on the 4th is 05:29:59 IST on the 5th (batch 008)", async () => {
+  const days = async (q) => Object.fromEntries((await (await get(report, q)).json()).days.map((d) => [d.date, d.count]));
+  assert.deepEqual(await days("?from=2026-11-04&to=2026-11-05"), { "2026-11-04": 1, "2026-11-05": 2 }, "UTC by default");
+  assert.deepEqual(await days("?from=2026-11-04&to=2026-11-05&tz=Asia/Kolkata"), { "2026-11-04": 0, "2026-11-05": 3 });
+  const ist = await (await get(report, "?from=2026-11-05&to=2026-11-05&tz=Asia/Kolkata")).json();
+  assert.deepEqual(ist.totals, { gross: "31", fees: "0.3", net: "30.7", refunds: "5", count: 3 });
+  assert.equal(ist.tz, "Asia/Kolkata");
+  assert.equal((await get(report, "?tz=Mars/Olympus")).status, 400);
+  assert.equal((await get(report, "?tz=" + "A".repeat(80))).status, 400);
+});
+
+test("the default 'today' follows the zone: at 02:00 IST on the 6th, today is the 6th in IST and the 5th in UTC", async () => {
+  const { rangeOf } = await import("../lib/server/reports.ts");
+  const now = Date.parse("2026-11-05T20:30:00Z"); // 02:00 IST on the 6th
+  assert.equal(rangeOf(req("GET", "/api/v1/reports?tz=Asia/Kolkata"), now).to, "2026-11-06");
+  assert.equal(rangeOf(req("GET", "/api/v1/reports"), now).to, "2026-11-05");
+  const r = rangeOf(req("GET", "/api/v1/reports?from=2026-11-06&to=2026-11-06&tz=Asia/Kolkata"), now);
+  assert.equal(new Date(r.start).toISOString(), "2026-11-05T18:30:00.000Z", "IST midnight");
+  assert.equal(r.end - r.start, 86_400_000);
+});
+
 test("every report route needs the dashboard cookie", async () => {
   assert.equal((await get(report, "", {})).status, 401);
   assert.equal((await get(csv, "", {})).status, 401);

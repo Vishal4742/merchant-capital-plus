@@ -36,7 +36,9 @@ function db(): Db {
   const sql = neon(url);
   current = {
     query: (text, params = []) => sql.query(text, params) as Promise<Row[]>,
-    transaction: (statements) => sql.transaction((txn) => statements.map((s) => txn.query(s.text, s.params ?? []))) as Promise<Row[][]>,
+    // pinned, not left to the server default: the voucher hold count relies on a fresh snapshot per statement (R2-L1)
+    transaction: (statements) =>
+      sql.transaction((txn) => statements.map((s) => txn.query(s.text, s.params ?? [])), { isolationLevel: "ReadCommitted" }) as Promise<Row[][]>,
   };
   return current;
 }

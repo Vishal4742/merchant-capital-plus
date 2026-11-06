@@ -10,6 +10,7 @@ process.env.AUTH_SECRET = AUTH_SECRET;
 const { setTestDb } = await import("../lib/server/db.ts");
 const { SESSION_COOKIE, signSession } = await import("../lib/auth.ts");
 const { resetRateLimits } = await import("../lib/server/http.ts");
+const { resetRateCache } = await import("../lib/server/quotes.ts");
 
 export const MERCHANT = "0x1111111111111111111111111111111111111111";
 export const OTHER_MERCHANT = "0x2222222222222222222222222222222222222222";
@@ -39,6 +40,7 @@ export async function resetDb() {
   const { rows } = await pg.query("SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'app_gw_%'");
   if (rows.length) await pg.exec(`TRUNCATE ${rows.map((r) => r.table_name).join(", ")} CASCADE`);
   resetRateLimits(); // the in-memory limiter would otherwise carry counts from one test into the next
+  resetRateCache(); // and the FX cache would serve one test's mocked rates to the next
 }
 
 /** Cookie header for a merchant signed in to the dashboard. */
