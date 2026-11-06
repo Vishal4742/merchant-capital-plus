@@ -66,6 +66,12 @@ test("the voucher is confirmed against the amount actually paid", async () => {
   assert.deepEqual(confirmedAmounts.at(-1), ["sess_v", 22_500_000n]);
 });
 
+test("F3: the claimed price passed in wins over session.amount, for the voucher and the webhook", async () => {
+  await onSessionPaid(session("sess_claimed"), 12_500_000n); // the session said 25.00; claimAmountDue charged 12.50
+  assert.deepEqual(confirmedAmounts.at(-1), ["sess_claimed", 12_500_000n]);
+  assert.equal(sent.at(-1).data.amount, "12.50");
+});
+
 test("a shop's own session (no link or page) still sends its webhook, with null link_id and page_id", async () => {
   await onSessionPaid(session("sess_shop"));
   assert.equal(sent.length, 1);
