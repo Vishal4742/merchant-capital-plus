@@ -1,14 +1,16 @@
 // POST /api/v1/sessions: a shop creates a checkout with its secret key and gets a hosted pay URL (FR-PAY-4).
 // v2 (batch 006): `currency` (a price in USD, EUR, GBP, INR, AED or SGD becomes USDT at a quote locked for the checkout,
 // FR-GW-11), `returnUrl` for the checkout's "Back to <shop>" link, plain amounts, and `Idempotency-Key` (ARCHITECTURE §4b).
+// Batch 011: a merchant's own secret key (sk_test_…) works too, and the checkout is that merchant's (FR-GW-6).
 import { createHash } from "node:crypto";
-import { merchantConfig, shopAuthorized, type MerchantConfig } from "../../../../lib/config.ts";
 import { CURRENCIES, FxUnavailableError, QUOTE_LOCK_MS, quote, type Currency } from "../../../../lib/fx.ts";
 import { BAD_RETURN_URL, SESSION_TTL_MS, createSession, currencyFields, webUrl, type LineItem } from "../../../../lib/sessions.ts";
-import { MAX_PAYMENT, MIN_PAYMENT } from "../../../../lib/server/http.ts";
+import { MAX_PAYMENT, MIN_PAYMENT, rateLimit } from "../../../../lib/server/http.ts";
+import { shopCaller, type Shop } from "../../../../lib/shop-auth.ts";
 import { formatUsdt, parseUsdt, plainUsdt } from "../../../../lib/usdt.ts";
 
 const MAX_ITEMS = 20;
+const SESSIONS_PER_MINUTE = 60;
 const MAX_REFERENCE = 40;
 const MAX_IDEMPOTENCY_KEY = 255;
 const IDEMPOTENCY_MS = 24 * 60 * 60 * 1000;
@@ -22,23 +24,28 @@ const send = ({ status, body }: Reply) => Response.json(body, { status });
 const replies = new Map<string, { hash: string; at: number; reply: Promise<Reply> }>();
 
 export async function POST(request: Request) {
-  const config = merchantConfig();
-  if (!config) return send(fail(503, "Checkout isn't set up on this server."));
-  if (!shopAuthorized(request, config.apiKey)) return send(fail(401, "Missing or wrong API key."));
+  const shop = await shopCaller(request);
+  if ("error" in shop) return send(fail(shop.status, shop.error));
+  // per merchant: any signed-in wallet can mint a key, so one key can't flood the checkout store (security 012 F3)
+  try {
+    rateLimit(`sessions:${shop.merchant.toLowerCase()}`, SESSIONS_PER_MINUTE, 60_000);
+  } catch {
+    return send(fail(429, "Too many checkouts at once. Wait a minute and try again."));
+  }
   const text = await request.text();
   const key = request.headers.get("idempotency-key");
-  if (key === null) return send(await create(text, request.url, config));
+  if (key === null) return send(await create(text, request.url, shop));
   if (!key || key.length > MAX_IDEMPOTENCY_KEY) return send(fail(400, `Idempotency-Key must be 1 to ${MAX_IDEMPOTENCY_KEY} characters.`));
 
   // the same key within 24 h gets the first checkout back; the reply is stored before the await, so two requests at
-  // the same moment still create one
-  const now = Date.now(), hash = createHash("sha256").update(text).digest("hex"), slot = `${config.merchant}:${key}`;
+  // the same moment still create one. One slot per merchant: another merchant's key never replays this checkout.
+  const now = Date.now(), hash = createHash("sha256").update(text).digest("hex"), slot = `${shop.merchant.toLowerCase()}:${key}`;
   for (const [k, kept] of replies) if (now - kept.at > IDEMPOTENCY_MS) replies.delete(k);
   const prior = replies.get(slot);
   if (prior) return send(prior.hash === hash ? await prior.reply : fail(422, "This Idempotency-Key was already used for a different request."));
   // a Map keeps insertion order, so its first key is the oldest
   if (replies.size >= MAX_IDEMPOTENCY_KEYS) replies.delete(replies.keys().next().value!);
-  const reply = create(text, request.url, config);
+  const reply = create(text, request.url, shop);
   replies.set(slot, { hash, at: now, reply });
   let done: Reply | undefined;
   try {
@@ -53,7 +60,7 @@ export async function POST(request: Request) {
 
 const isCurrency = (value: unknown): value is Currency => typeof value === "string" && (CURRENCIES as readonly string[]).includes(value);
 
-async function create(text: string, pageUrl: string, config: MerchantConfig): Promise<Reply> {
+async function create(text: string, pageUrl: string, shop: Shop): Promise<Reply> {
   let body: { amount?: unknown; currency?: unknown; reference?: unknown; items?: unknown; returnUrl?: unknown } | null = null;
   try {
     body = JSON.parse(text);
@@ -106,8 +113,8 @@ async function create(text: string, pageUrl: string, config: MerchantConfig): Pr
 
   const session = createSession(
     {
-      merchant: config.merchant,
-      merchantName: config.merchantName,
+      merchant: shop.merchant,
+      merchantName: shop.merchantName,
       amount: fx.usdt,
       reference,
       items,

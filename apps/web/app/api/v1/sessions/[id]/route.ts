@@ -1,25 +1,30 @@
 // GET /api/v1/sessions/:id: the shop polls its checkout with its secret key. Polling stands in for the FR-PAY-10
 // webhooks on the AT-1 path (PHASES.md cut list). A pending checkout is settled from the chain first.
 // v2: `currency`, `priced` (FR-GW-11) and `refunded`, read from payments(id) on chain once paid.
-import { merchantConfig, payConfig, shopAuthorized } from "../../../../../lib/config.ts";
+import { payConfig } from "../../../../../lib/config.ts";
 import { readPayment } from "../../../../../lib/onchain.ts";
 import { currencyFields, getSession, isInFlight } from "../../../../../lib/sessions.ts";
 import { settlePending } from "../../../../../lib/settle.ts";
+import { announcePaid } from "../../../../../lib/announce-paid.ts";
+import { shopCaller } from "../../../../../lib/shop-auth.ts";
 import { plainUsdt } from "../../../../../lib/usdt.ts";
 
 const fail = (status: number, error: string) => Response.json({ error }, { status });
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const config = merchantConfig();
-  if (!config) return fail(503, "Checkout isn't set up on this server.");
-  if (!shopAuthorized(request, config.apiKey)) return fail(401, "Missing or wrong API key.");
+  // the shop's key or a merchant's own sk_ key (FR-GW-6), the same rule as creating a checkout
+  const shop = await shopCaller(request);
+  if ("error" in shop) return fail(shop.status, shop.error);
   const { id } = await params;
   const found = getSession(id);
-  // only this shop's checkouts: links and pages create sessions for other merchants too (security review 006 R2-F5)
-  if (!found || found.merchant.toLowerCase() !== config.merchant.toLowerCase()) return fail(404, "No such checkout.");
+  // only the caller's own checkouts: links, pages and other keys create sessions for other merchants (security 006 R2-F5)
+  if (!found || found.merchant.toLowerCase() !== shop.merchant.toLowerCase()) return fail(404, "No such checkout.");
   const pay = payConfig();
   const state = pay ? await settlePending(found, pay.merchantPay) : found.payment ? "paid" : found.pending ? "pending" : "open";
   const session = getSession(id) ?? found;
+  // idempotent: re-announcing on each poll of a paid checkout recovers a payment.succeeded lost to a database blip
+  // (security review 012 F2); the backend sends it once per checkout
+  if (session.payment) announcePaid(session);
   const open = state === "open" && isInFlight(id) ? "pending" : state; // a payment is being relayed right now
   const status = open === "open" && Date.now() > session.expiresAt ? "expired" : open;
   const paymentId = session.payment?.paymentId ?? null;
