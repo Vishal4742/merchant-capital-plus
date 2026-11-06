@@ -1,5 +1,5 @@
-// The merchant dashboard's sections (approved gateway v2 design). Built screens are links; the rest say "Soon" and are
-// not links. Plain <a>, so every screen is a full load under its own headers (security review 005 F-N4).
+// The merchant dashboard's sections (approved gateway v2 design), every one a built screen. Plain <a>, so every screen
+// is a full load under its own headers (security review 005 F-N4).
 // At phone width the list folds into a <details> menu (no JS); from md up it is the sidebar.
 const SECTIONS = [
   {
@@ -25,7 +25,7 @@ const SECTIONS = [
     title: "Developers",
     items: [
       { key: "keys", label: "API keys", href: "/merchant/developers" },
-      { key: "webhooks", label: "Webhooks" },
+      { key: "webhooks", label: "Webhooks", href: "/merchant/developers#webhooks" }, // a section of Developers (batch 045)
       { key: "docs", label: "Docs", href: "/docs" },
     ],
   },
@@ -47,20 +47,13 @@ function List({ active }: { active: NavKey }) {
           )}
           {section.items.map((item) => (
             <li key={item.key}>
-              {"href" in item ? (
-                <a
-                  href={item.href}
-                  aria-current={item.key === active ? "page" : undefined}
-                  className={`${row} ${item.key === active ? "bg-accent-soft font-medium text-accent" : "text-ink hover:bg-surface-sunk"}`}
-                >
-                  {item.label}
-                </a>
-              ) : (
-                <span className={`${row} text-ink-muted`}>
-                  {item.label}
-                  <span className="eyebrow">Soon</span>
-                </span>
-              )}
+              <a
+                href={item.href}
+                aria-current={item.key === active ? "page" : undefined}
+                className={`${row} ${item.key === active ? "bg-accent-soft font-medium text-accent" : "text-ink hover:bg-surface-sunk"}`}
+              >
+                {item.label}
+              </a>
             </li>
           ))}
         </ul>
