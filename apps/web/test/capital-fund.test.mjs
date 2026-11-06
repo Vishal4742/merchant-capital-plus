@@ -99,7 +99,14 @@ test("an invoice claim takes at most 2 investors, so its repayment fits the rela
   assert.equal(third.posts.length, 0);
   assert.deepEqual(await fundOffer(body, world({ o: inv, holders: [two[0], INVESTOR] }).deps), { tx_hash: TX, block_number: "123" }, "an existing holder can add units");
   assert.deepEqual(await fundOffer(body, world({ o: inv, holders: [two[0]] }).deps), { tx_hash: TX, block_number: "123" }, "a second holder is fine");
-  assert.deepEqual(await fundOffer(body, world({ holders: two }).deps), { tx_hash: TX, block_number: "123" }, "advances aren't capped here");
+});
+
+test("an advance takes 1 investor: a second one is refused before any relay; the holder can add units (contracts 11:26)", async () => {
+  const other = world({ holders: ["0x5555555555555555555555555555555555555555"] });
+  await assert.rejects(fundOffer(body, other.deps), (e) => e.status === 409 && /1 investor/.test(e.message));
+  assert.equal(other.posts.length, 0);
+  assert.deepEqual(await fundOffer(body, world({ holders: [INVESTOR] }).deps), { tx_hash: TX, block_number: "123" });
+  assert.deepEqual(await fundOffer(body, world({ holders: [] }).deps), { tx_hash: TX, block_number: "123" });
 });
 
 test("a validBefore outside the relayer's 30 s – 15 min window is refused before any read or relay", async () => {
