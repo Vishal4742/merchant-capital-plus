@@ -64,4 +64,5 @@ ETHGlobal asks teams to say where AI was used, down to files, and to commit spec
 | `apps/web/lib/server/` Arkiv mirror hardening: createdBy filter, adopt only matching terms, never overwrite a stored key | claude-contracts | phase mode: ci + reviewer-security PASS (tests first) | 022-P4-arkiv-mirror-hardening |
 | `apps/web/lib/server/` webhook retries in production (dispatch on the next request) | claude-contracts | phase mode: ci PASS (tests first) | 025-P4-webhook-retries-prod |
 | `apps/web/` Vercel deploy config + docs research (curl, how a payment works, endpoint pages) | claude-frontend | phase mode: ci + reviewer-security PASS / ci PASS | 022-P4-web-vercel-deploy, 023-P4-web-docs-research |
+| `apps/web/app/api/v1/capital/**`, `apps/web/lib/server/capital*.ts` Capital tab server: offers (Arkiv × chain, terms match), publish, quote, transfer-check, merchant, gasless fund | claude-relayer (API shape by claude-contracts) | phase mode: ci + reviewer-security PASS, round 2; claude-contracts reviewed the shape | 023-P5-capital-server |
 | ⟨path⟩ | ⟨lane / agent⟩ | ⟨reviewers + human⟩ | ⟨NNN⟩ |
