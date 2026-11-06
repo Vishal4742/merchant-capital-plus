@@ -22,13 +22,34 @@ function Alert({ error }: { error: string | null }) {
   ) : null;
 }
 
-export function HostedNotice({ eyebrow, title, children }: { eyebrow: string; title: string; children: ReactNode }) {
+/** `detail`: what the link was for (a closed link); `action`: a plain link, a full load (G4 UX review F2, F3). */
+export function HostedNotice({ eyebrow, title, children, detail, action }: { eyebrow: string; title: string; children: ReactNode; detail?: ReactNode; action?: { href: string; label: string } }) {
   return (
     <section role="status" className={`${sheet} gap-3`}>
       <span className="eyebrow text-ink-muted">{eyebrow}</span>
       <h1 className="title">{title}</h1>
+      {detail}
       <p className="text-sm text-ink-muted">{children}</p>
+      {action && (
+        <a href={action.href} className="inline-flex min-h-11 items-center text-sm text-accent underline underline-offset-4">
+          {action.label}
+        </a>
+      )}
     </section>
+  );
+}
+
+/** A closed link's description and price, so a customer can tell which link this was. */
+export function LinkSummary({ link }: { link: PublicLink }) {
+  return (
+    <p className="grid gap-0.5 border-y border-hairline py-3">
+      <span className="break-words">{link.description}</span>
+      {link.amount !== null && (
+        <span className="data text-ink-muted">
+          {amountText(link.amount)} {link.currency}
+        </span>
+      )}
+    </p>
   );
 }
 

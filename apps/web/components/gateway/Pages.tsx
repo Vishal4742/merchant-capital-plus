@@ -35,7 +35,7 @@ export function PagesScreen({ pages, origin, merchantName }: { pages: Page[]; or
       <section aria-labelledby="your-pages" className="grid gap-4">
         <SectionLabel id="your-pages">Your pages · {pages.length}</SectionLabel>
         {pages.length === 0 ? (
-          <p className="text-sm text-ink-muted">No pages yet. Build one above: it&apos;s a shop page without a shop.</p>
+          <p className="text-sm text-ink-muted">No pages yet. Build one above and share its address; customers pay on a page that shows your name and items.</p>
         ) : (
           <ul className="grid items-start gap-4 md:grid-cols-2 2xl:grid-cols-3">
             {pages.map((page) => (
