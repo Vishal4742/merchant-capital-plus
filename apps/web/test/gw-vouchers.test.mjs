@@ -373,8 +373,11 @@ test("F1: releaseHold never unfreezes a paid checkout's hold", async () => {
   assert.equal(await claimAmountDue(s, t), USDT(50));
   await markCheckoutPaid(s, t + 1000); // the payment landed (e.g. someone else submitted the signed authorization)
   assert.equal(await releaseHold(s), false, "a paid checkout keeps its hold");
-  const other = await checkout(USDT(100), MERCHANT, t);
-  assert.equal((await applyVoucher(MERCHANT, "HALF", other, USDT(100), t + 2000)).ok, false, "HALF stays held");
+  // N5: checked after HOLD_MS, where an unfrozen hold would no longer count: only "frozen stays frozen" keeps HALF held
+  const { HOLD_MS } = await import("../lib/server/vouchers.ts");
+  const later = t + HOLD_MS + 60_000;
+  const other = await checkout(USDT(100), MERCHANT, later);
+  assert.equal((await applyVoucher(MERCHANT, "HALF", other, USDT(100), later + 1)).ok, false, "HALF stays held after HOLD_MS");
 });
 
 test("F4: a fiat checkout (10-min lock) can't take a code after 10 minutes; USD keeps 30", async () => {

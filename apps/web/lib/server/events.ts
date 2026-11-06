@@ -40,15 +40,17 @@ async function sendOnce(key: string, merchant: Address, type: EventType, data: R
   }
 }
 
-/** `paidAmount` = the price the pay route claimed (claimAmountDue) and relayed; defaults to the session's amount. */
-export async function onSessionPaid(session: Session, paidAmount: bigint = session.amount, now = Date.now()): Promise<void> {
+/** `paidAmount` = the price the pay route claimed (claimAmountDue) and relayed. Required on purpose (batch 012 review N1):
+ *  a default of session.amount would confirm and report the undiscounted price for a voucher payment. */
+export async function onSessionPaid(session: Session, paidAmount: bigint, now = Date.now()): Promise<void> {
   await markCheckoutPaid(session.id, now); // idempotent: single-use links read their status from this
   await confirmRedemption(session.id, paidAmount); // idempotent per session; counts only if the discounted total was paid
   await sendOnce(`paid:${session.id}`, session.merchant, "payment.succeeded", await eventData(session, paidAmount), now);
 }
 
-export async function onRefund(session: Session, amount: bigint, totalRefunded: bigint, now = Date.now()): Promise<void> {
+/** `paidAmount` = what the payer actually paid (after any voucher), so a full refund of a discounted sale reads as full (N4). */
+export async function onRefund(session: Session, amount: bigint, totalRefunded: bigint, paidAmount: bigint, now = Date.now()): Promise<void> {
   // SDK Session.refunded = the running total; refund_amount = this refund
-  const data = { ...(await eventData(session)), refunded: plain(totalRefunded), refund_amount: plain(amount) };
+  const data = { ...(await eventData(session, paidAmount)), refunded: plain(totalRefunded), refund_amount: plain(amount) };
   await sendOnce(`refund:${session.id}:${totalRefunded}`, session.merchant, "payment.refunded", data, now);
 }

@@ -213,10 +213,14 @@ export async function applyVoucher(merchant: string, code: string, sessionId: st
                SELECT count(*) FROM app_gw_redemptions r
                WHERE r.voucher_id = v.id AND r.confirmed_at IS NULL AND r.session_id <> $1 AND (r.frozen_at IS NOT NULL OR r.created_at > $6)
              ) < v.max_redemptions
+             AND NOT EXISTS (SELECT 1 FROM app_gw_checkouts c WHERE c.session_id = $1 AND c.paid_at IS NOT NULL)
              ON CONFLICT (session_id) DO UPDATE SET voucher_id = EXCLUDED.voucher_id, discount = EXCLUDED.discount,
                usdt_amount = EXCLUDED.usdt_amount, created_at = EXCLUDED.created_at
              WHERE app_gw_redemptions.confirmed_at IS NULL AND app_gw_redemptions.frozen_at IS NULL
+               AND NOT EXISTS (SELECT 1 FROM app_gw_checkouts c WHERE c.session_id = $1 AND c.paid_at IS NOT NULL)
              RETURNING session_id`,
+      // NOT EXISTS (… paid_at …) in both places (batch 012 review N2): the read above can be stale if the payment was
+      // recorded in between, so the statement itself refuses a paid checkout.
       // the hold starts when the checkout did ($5), so re-applying can't keep a code locked (R2-M2)
       params: [sessionId, voucher.id, discount.toString(), total.toString(), checkout.createdAt, now - HOLD_MS],
     },
@@ -259,9 +263,14 @@ export async function claimAmountDue(sessionId: string, now = Date.now()): Promi
 }
 
 /**
- * Unfreezes the hold after a relay is DEFINITELY refused (nothing was sent on chain), so a failed payment doesn't keep
- * a use locked and the payer can retry or change the code. Never call it when the outcome is unknown (timeout, 5xx,
- * dropped connection): the chain decides then, and the frozen hold must keep counting. True if a hold was unfrozen.
+ * Unfreezes the hold of an UNPAID checkout so a failed payment doesn't keep a use locked. True if a hold was unfrozen.
+ * Call it ONLY from the attempt that made the claim (under its lock), and only when (batch-009 review F1):
+ *   - the attempt stops before relaying (bad signature, low balance, expired), or the relayer answers BUSY / 4xx;
+ *   - the relayer answers 422 AND `findPayment` returned exactly null (anyone can call paySale, so a 422 alone isn't
+ *     proof the order is unpaid);
+ *   - settlePending's "open" branch (the chain shows no payment and the authorization has expired).
+ * NEVER on an unknown outcome (timeout, 5xx, dropped connection), a 409, STILL_PENDING, or a paid checkout: the chain
+ * decides then, and the frozen hold must keep counting. A paid checkout is refused here anyway (F1).
  */
 export async function releaseHold(sessionId: string): Promise<boolean> {
   // never on a paid checkout (batch-009 review F1): a late or mistaken release would free a use that was paid for
