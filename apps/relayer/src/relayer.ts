@@ -19,7 +19,9 @@ const DEFAULT_RPC = 'https://rpc.ankr.com/whitechain_testnet';
 const RPC_TIMEOUT_MS = 8_000;
 // NFR-4 (payment ≤ 5 s): Ankr's eth_sendRawTransactionSync waited ~7 s for a 1 s-block chain (G2, 06:16), so send plainly
 // and poll our own receipt. Tests shrink these.
-export const TIMING = { receiptPollMs: 250, receiptTimeoutMs: 8_000 }; // 1 s blocks: ~4 polls per block
+// 1 s blocks: ~4 polls per block. Worst case after the age gate: the 8 s send timeout + the 8 s poll (+ one poll's
+// overrun), about 37-44 s: past the web's 35 s, which it treats as unknown (it polls the chain), and under the 60 s maxDuration.
+export const TIMING = { receiptPollMs: 250, receiptTimeoutMs: 8_000, maxRequestAgeMs: 20_000 };
 const BALANCE_TTL_MS = 5_000; // /health WBT balance may be 5 s old (human 23:27, NFR-14 ≤ 300 ms p95); a send clears it
 // Refresh it every 3 s (human 01:14): stays inside the 5 s rule and keeps the RPC socket warm (Node drops idle ones at ~4 s).
 const BALANCE_REFRESH_MS = 3_000;
@@ -352,33 +354,42 @@ function calldata(p: Payment): Hex {
   }
 }
 
-/** One parallel round of reads plus a gas-capped simulation; throws only if a read fails. */
+/** One parallel round of reads, a gas estimate and a gas-capped simulation; throws only if a read fails. */
 async function rpcChecks(client: RelayerClient, p: Payment): Promise<Reject | undefined> {
   const value = await signedValue(client, p);
-  const [used, code, balance, gasPrice, failedSimulation] = await Promise.all([
+  const [used, code, balance, gasPrice, failedSimulation, gasNeeded] = await Promise.all([
     client.readContract({ address: USDT, abi: USDT_ABI, functionName: 'authorizationState', args: [p.from, p.nonce] }),
     client.getCode({ address: p.from }),
     client.readContract({ address: USDT, abi: USDT_ABI, functionName: 'balanceOf', args: [p.from] }),
     client.getGasPrice(),
     simulate(client, p),
+    // the plain address, so viem doesn't fill nonce and fees first; an estimate reverts whenever the call would, and
+    // then the gas-capped simulation decides (claude-contracts Q19: a 3-holder invoice repayment needs 421,338 gas)
+    client.estimateGas({ account: client.account.address, to: p.target, data: calldata(p) }).catch(() => undefined),
   ]);
   if (used) return REPLAY;
   if (code !== undefined && code !== '0x') return reject(422, 'payer_has_code', 'the payer must be a plain account (no contract code)');
   if (balance < value) return reject(422, 'insufficient_funds', 'the payer does not hold enough USDT');
   if (gasPrice > FEES.maxFeePerGas) return reject(503, 'gas_price_cap', 'network gas price is above the relayer cap; retry later');
+  if (gasNeeded !== undefined && gasNeeded > FEES.gas) return reject(422, 'too_much_gas', `this payment needs ${gasNeeded} gas, above the relayer's ${FEES.gas} limit`);
   if (failedSimulation) return simulationReject(failedSimulation);
 }
 
-/** Our own receipt, looked up by our hash only (so never a replacement's), polled until TIMING.receiptTimeoutMs. */
+/** Our own receipt, looked up by our hash only (so never a replacement's), polled until TIMING.receiptTimeoutMs.
+ *  A 429 or 5xx mid-poll doesn't end it (security 018 F1b): only the deadline does, and then the last error is thrown. */
 async function ownReceipt(client: RelayerClient, hash: Hash) {
   const deadline = Date.now() + TIMING.receiptTimeoutMs;
+  let lastError: unknown;
   for (;;) {
-    const receipt = await client.getTransactionReceipt({ hash }).catch((e: unknown) => {
-      if (e instanceof TransactionReceiptNotFoundError) return undefined;
-      throw e;
-    });
-    if (receipt) return receipt;
-    if (Date.now() >= deadline) return undefined;
+    try {
+      return await client.getTransactionReceipt({ hash });
+    } catch (e) {
+      if (!(e instanceof TransactionReceiptNotFoundError)) lastError = e;
+    }
+    if (Date.now() >= deadline) {
+      if (lastError) throw lastError;
+      return undefined;
+    }
     await sleep(TIMING.receiptPollMs);
   }
 }
@@ -401,10 +412,15 @@ function stopwatch() {
 }
 type Stopwatch = ReturnType<typeof stopwatch>;
 let relays = 0; // the first /relay of this process is the cold one
+// Queued behind a hung send (security 018 F4): never sign after the web has given up. Nothing was sent, so 503: the web
+// shows it as "Nothing was charged; try again" (security 022 L1).
+const tooOld = (clock: Stopwatch) => clock.read().total > TIMING.maxRequestAgeMs;
+const QUEUED_TOO_LONG = reject(503, 'busy', 'the relayer was too slow to start this payment; nothing was sent, so retry');
 
 /** Runs inside the send lock: re-simulate on fresh state, sign with capped fees, send once, poll our receipt. */
 async function send(client: RelayerClient, p: Payment, clock: Stopwatch): Promise<Reject | Sent> {
   clock.lap('queue');
+  if (tooOld(clock)) return QUEUED_TOO_LONG; // before any RPC in the lock (security 022 L2)
   if (tooLate(p)) return EXPIRED; // queue time counts
   if (sentAuthorizations.has(sentKey(p))) return REPLAY;
   let nonce: number;
@@ -419,6 +435,7 @@ async function send(client: RelayerClient, p: Payment, clock: Stopwatch): Promis
     return reject(502, 'rpc_error', reason(e));
   }
   if (tooLate(p)) return EXPIRED; // and so does a slow simulate/nonce step: never sign what could expire unmined
+  if (tooOld(clock)) return QUEUED_TOO_LONG; // and the simulate/nonce round may have been slow too
   const ledger = ledgerChecks(client, p); // queued requests: the budget or the breaker may have moved while we waited
   if (ledger) return ledger;
   const signed = await client.account.signTransaction({
