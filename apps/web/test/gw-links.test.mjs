@@ -243,14 +243,14 @@ test("a fiat link converts at checkout with the live rate (EUR 20.00 at 0.8 per 
   assert.equal((await pay(big.slug)).status, 400, "checkout still checks the total");
 });
 
-test("H1: USDT and USD links charge their price exactly, no rounding to the cent", async () => {
+test("H1: a USDT link charges its price exactly; a USD price (fiat, 1:1) rounds up to the cent like sessions do", async () => {
   const usdt = sessionOf(await pay((await newLink({ amount: "10.123456" })).data.slug));
   assert.equal(usdt.amount, 10_123_456n);
   assert.deepEqual(usdt.items, [{ name: "Cold brew", qty: 1, price: 10_123_456n }]);
   assert.equal((await checkoutOf(usdt.id)).usdtAmount, 10_123_456n);
   const usd = sessionOf(await pay((await newLink({ amount: "12.345678", currency: "USD" })).data.slug));
-  assert.equal(usd.amount, 12_345_678n);
-  assert.equal(usd.priced.amount, 12_345_678n);
+  assert.equal(usd.amount, 12_350_000n, "12.345678 USD → 12.35 USDT (the merchant is never short)");
+  assert.equal(usd.priced.amount, 12_345_678n, "the price the payer saw stays as set");
   assert.equal(fetchCalls.length, 0);
 });
 

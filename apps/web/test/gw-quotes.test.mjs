@@ -52,9 +52,9 @@ test("rounding is up to the cent, never down, and exact amounts stay exact", () 
   assert.equal(toUsdtUnits("1", { num: 3n, den: 1n }), 340_000n); // 0.3333… → 0.34
   assert.equal(toUsdtUnits("3", { num: 3n, den: 1n }), 1_000_000n); // exactly 1.00
   assert.equal(toUsdtUnits("5.0005", { num: 1n, den: 2n }), 10_010_000n); // 10.001 → 10.01 (half-up would give 10.00)
-  // batch 015 (G4 review H1): a rate of exactly 1 (USD, USDT) converts exactly, no rounding
-  assert.equal(toUsdtUnits("10.123456", { num: 1n, den: 1n }), 10_123_456n);
-  assert.equal(toUsdtUnits("10.001", { num: 1n, den: 1n }), 10_001_000n);
+  // batch 015 (G4 review H1): a USDT price (exact) is charged exactly; USD is a fiat price at 1:1, up to the cent
+  assert.equal(toUsdtUnits("10.123456", { num: 1n, den: 1n, exact: true }), 10_123_456n);
+  assert.equal(toUsdtUnits("10.001", { num: 1n, den: 1n }), 10_010_000n);
   assert.throws(() => toUsdtUnits("1.1234567", { num: 1n, den: 1n }), /decimal string/);
   assert.throws(() => toUsdtUnits("-1", { num: 1n, den: 1n }), /decimal string/);
 });
@@ -132,9 +132,11 @@ test("S3: during an outage a cached rate still obeys the 7-day rule", async () =
   assert.equal(err.status, 503);
 });
 
-test("F6: after a failed fetch, the next 60 s make no new request (503 at once without a cache)", async () => {
+test("F6: after a fetch that timed out, the next 60 s make no new request (503 at once without a cache)", async () => {
   (await import("../lib/server/quotes.ts")).resetRateCache();
-  const down = mock.method(globalThis, "fetch", async () => new Response("down", { status: 502 }));
+  const down = mock.method(globalThis, "fetch", async () => {
+    throw new DOMException("The operation timed out.", "TimeoutError"); // what AbortSignal.timeout raises
+  });
   const t = Date.now();
   assert.equal((await usdRate("EUR", t).catch((e) => e)).status, 503);
   assert.equal((await usdRate("EUR", t + 10_000).catch((e) => e)).status, 503);
@@ -143,6 +145,18 @@ test("F6: after a failed fetch, the next 60 s make no new request (503 at once w
   const up = v2();
   assert.equal((await usdRate("EUR", t + 61_000)).rate, "0.88875");
   assert.equal(up.mock.callCount(), 1, "retried after 60 s");
+});
+
+test("F6: a fast failure (connection refused) doesn't back off: the next request tries again", async () => {
+  (await import("../lib/server/quotes.ts")).resetRateCache();
+  mock.method(globalThis, "fetch", async () => {
+    throw new TypeError("fetch failed");
+  });
+  const t = Date.now();
+  assert.equal((await usdRate("EUR", t).catch((e) => e)).status, 503);
+  mock.restoreAll();
+  v2();
+  assert.equal((await usdRate("EUR", t + 1000)).rate, "0.88875", "one second later it works");
 });
 
 test("the bands are ±15% of the 06 Nov rates (AED: peg ± 1%), the same numbers claude-frontend uses", async () => {
