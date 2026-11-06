@@ -7,4 +7,6 @@ Log:
 - 03:31 RED b5ceb00 (8 of 32 failing, all new), GREEN 3e48d40 (39/39, tsc clean, button.js 2026 B, copy identical). Pushed.
 - 03:45 round 1 verdicts: test PASS, ux-ui PASS, code CHANGES (H1 DOM clobbering of document.currentScript; H2 amount formats '1,000.00' vs '1000.00'), security CHANGES (HIGH-1 = the same clobbering). claude-frontend agreed one plainUsdt format (03:44).
 - 03:52 round 2 fixes 1c5c294 (47/47; EUR/USD now priced by the real v2 route). Round 2 tester launched (real-Chrome clobbering proof).
+- 04:10 round 2 all PASS (test, code, security: 12 clobbering shapes in real Chrome all land on the gateway; ux-ui); ci = run 42123543707 on 83a0627, 47/47.
+- 04:12 HUMAN GATE (grill me): "Approve and merge"; sameAmount comma laxity → next batch; user-content data-mc-* risk accepted (README rule + merchant name on checkout).
 - 03:36 round 1 tester PASS (39/39; headless Chrome via CDP on a :4400 stub at 375/1440 light/dark: keyboard Enter → /checkout/<id>, link, shop-written and late-added elements navigate, one console error for the bad id). Reviewers code/security/ux-ui launched.
