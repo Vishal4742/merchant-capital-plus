@@ -77,6 +77,8 @@ async function relay(signed: Signed, action: "paySale" | "payInvoice", target: R
   }
   const data = (await res.json().catch(() => ({}))) as { txHash?: Hex; blockNumber?: string | number; paymentId?: string | number; code?: string };
   const str = (v: string | number | undefined) => (v === undefined ? null : String(v));
+  // the relayer's refusal code (never the body or a secret), so an operator can tell busy from breaker or storage (batch 057)
+  if (!res.ok) console.error(`relay ${action}: relayer answered ${res.status}${typeof data.code === "string" ? ` ${data.code.slice(0, 40)}` : ""}`);
   if (res.ok && data.txHash && /^0x[0-9a-fA-F]{64}$/.test(data.txHash)) return { ok: true, txHash: data.txHash, blockNumber: str(data.blockNumber), paymentId: str(data.paymentId) };
   if (res.status === 422 && data.code === "insufficient_funds") return { ok: false, status: 400, refused: true, message: NOT_FUNDED };
   const again = action === "paySale" ? "start the checkout again" : "try again"; // an invoice is reused: retry the same link
