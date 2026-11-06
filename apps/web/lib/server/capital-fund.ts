@@ -6,7 +6,6 @@ import { verifyTypedData, type Hex } from "viem";
 import { payConfig } from "../config.ts";
 import { BUSY, NOT_FUNDED, UNKNOWN } from "../relay.ts";
 import { receiveTypes, usdtDomain } from "../usdt.ts";
-import { redactArkivError } from "../arkiv.ts";
 import { syncOffer } from "./capital-arkiv.ts";
 import { CAPITAL_MARKET, fundingNonce, isVerifiedInvestor, offerStatus, parseFundBody, quoteUnits, readOffer, type Deps, type FundBody } from "./capital.ts";
 import { HttpError, MIN_PAYMENT } from "./http.ts";
@@ -50,9 +49,9 @@ export async function fundOffer(raw: Record<string, unknown>, deps: FundDeps = {
   (deps.schedule ?? after)(async () => {
     try {
       const fresh = await readOffer(f.claimId, deps);
-      if (fresh) await syncOffer(fresh, deps);
+      if (fresh) await syncOffer(fresh, deps, undefined, { create: false }); // patch only: publish is the one that creates
     } catch (err) {
-      console.error(`capital: Arkiv refresh after funding claim ${f.claimId} failed: ${redactArkivError(err, process.env.ARKIV_ACCESS_KEY).slice(0, 300)}`);
+      console.error(`capital: Arkiv refresh after funding claim ${f.claimId} failed: ${err instanceof Error ? err.name : "error"}`); // the name only (claude-contracts)
     }
   });
   return tx;

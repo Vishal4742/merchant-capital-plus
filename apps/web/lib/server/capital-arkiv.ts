@@ -156,13 +156,15 @@ export async function offerBook(deps: CapitalDeps = {}, now = Math.floor(Date.no
     .filter((o) => offerStatus(o, now) !== null)
     .map((o) => {
       const row = rowFor(o, rows);
-      return offerJson(o, now, row && { entityKey: row.entityKey, matches: matches(o, row.terms) });
+      return offerJson(o, now, row && { entityKey: row.entityKey, matches: matches(o, row.terms), terms: row.terms as Record<string, string> });
     });
 }
 
-/** Writes the offer's current chain state to Arkiv: patches our entity if anything changed (F5), or creates it while
- *  the offer is open. Clients get fixed messages; the SDK's text goes to the log, redacted (F7). */
-export async function syncOffer(o: ChainOffer, deps: CapitalDeps = {}, now = Math.floor(Date.now() / 1000)): Promise<{ entity_key: string }> {
+/** Writes the offer's current chain state to Arkiv: patches our entity if anything changed (F5), or, for publish only,
+ *  creates it while the offer is open (the after-funding refresh passes create: false, so a race with publish can't
+ *  make two entities). It expires at maturity, so a funded offer keeps its entity until it repays (claude-contracts).
+ *  Clients get fixed messages; the SDK's text goes to the log, redacted (F7). */
+export async function syncOffer(o: ChainOffer, deps: CapitalDeps = {}, now = Math.floor(Date.now() / 1000), { create = true } = {}): Promise<{ entity_key: string } | null> {
   let s: OfferStore;
   try {
     s = store(deps);
@@ -192,10 +194,11 @@ export async function syncOffer(o: ChainOffer, deps: CapitalDeps = {}, now = Mat
     }
     return { entity_key: existing.entityKey };
   }
+  if (!create) return null;
   if (offerStatus(o, now) !== "open") throw new HttpError(409, "Only an open offer can be published: this one is cancelled, past its deadline or sold out.");
   let entityKey: string;
   try {
-    entityKey = await s.create(terms, o.offerDeadline);
+    entityKey = await s.create(terms, o.maturity);
   } catch (err) {
     throw arkivFailed(err);
   }
@@ -208,5 +211,5 @@ export async function publishOffer(merchant: Address, claimId: bigint, deps: Cap
   const o = await readOffer(claimId, deps);
   if (!o) throw new HttpError(404, "There's no offer with that id.");
   if (o.merchant.toLowerCase() !== merchant.toLowerCase()) throw new HttpError(403, "That offer belongs to another merchant.");
-  return syncOffer(o, deps, now);
+  return (await syncOffer(o, deps, now)) as { entity_key: string }; // create: true never returns null
 }

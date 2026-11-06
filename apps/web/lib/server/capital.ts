@@ -90,9 +90,11 @@ export function offerStatus(o: ChainOffer, now = nowSeconds()): OfferStatus | nu
   return now > o.offerDeadline ? null : "open";
 }
 
-export interface ArkivMatch { entityKey: string; matches: boolean }
+/** Our Arkiv entity for an offer: its key, the Buy gate, and its own values (claude-contracts D3: null when none). */
+export interface ArkivMatch { entityKey: string; matches: boolean; terms: Record<string, string> }
 
-/** claude-contracts' 08:53 offer shape. Fields that don't apply to the kind are null. */
+/** claude-contracts' 08:53 offer shape with the 10:49 decisions: face and price always (an advance's face is its cap),
+ *  principal and cap for advances only, holdback_pct 0 for invoices (Q12); arkiv.terms is the entity's values (D3). */
 export function offerJson(o: ChainOffer, now = nowSeconds(), arkiv?: ArkivMatch) {
   const advance = o.kind === "advance";
   return {
@@ -101,15 +103,15 @@ export function offerJson(o: ChainOffer, now = nowSeconds(), arkiv?: ArkivMatch)
     merchant: o.merchant,
     merchant_name: merchantName(o.merchant),
     principal: advance ? plainUsdt(o.price) : null,
-    face: advance ? null : plainUsdt(o.face),
+    face: plainUsdt(o.face),
     price: plainUsdt(o.price),
     cap: advance ? plainUsdt(o.face) : null,
-    holdback_pct: advance ? o.bps / 100 : null,
+    holdback_pct: advance ? o.bps / 100 : 0,
     maturity: iso(o.maturity),
     offer_deadline: iso(o.offerDeadline),
     units_left: (o.face - o.sold).toString(),
     status: offerStatus(o, now),
-    arkiv: { entity_key: arkiv?.entityKey ?? null, matches: arkiv?.matches ?? false },
+    arkiv: { entity_key: arkiv?.entityKey ?? null, matches: arkiv?.matches ?? false, terms: arkiv?.terms ?? null },
   };
 }
 export type OfferJson = ReturnType<typeof offerJson>;
