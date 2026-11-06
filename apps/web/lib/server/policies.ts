@@ -10,7 +10,7 @@ import { getAddress, isAddress, recoverMessageAddress, type Address, type Hex } 
 import { whitechainSepolia } from "viem/chains";
 import { createSiweMessage, generateSiweNonce } from "viem/siwe";
 import { USDT } from "../usdt.ts";
-import { merchantAdvance } from "./capital.ts";
+import { v1Obligations } from "./capital.ts";
 import { query } from "./db.ts";
 import { HttpError, sharedRateLimit } from "./http.ts";
 import { Forbidden, concurrencyConflict, requireScope, type AuthContext } from "./identity.ts";
@@ -166,9 +166,10 @@ async function signer(message: string, signature: unknown): Promise<string> {
   }
 }
 
-/** CON-11: does this wallet carry V1 Capital obligations (a running advance)? A failed read refuses activation (503). */
+/** CON-11: does this wallet carry V1 Capital obligations (an advance or an outstanding invoice claim; capital.ts
+ *  v1Obligations)? A failed read throws, and activation refuses (503). */
 export type ObligationsRead = (recipient: Address) => Promise<boolean>;
-export const readV1Obligations: ObligationsRead = async (recipient) => (await merchantAdvance(recipient)) !== null;
+export const readV1Obligations: ObligationsRead = (recipient) => v1Obligations(recipient);
 
 const SQL_ACTIVATE = `WITH actor AS (
     SELECT 1 FROM wf_memberships WHERE business_id = $1 AND principal_id = $2 AND role = 'owner' FOR SHARE

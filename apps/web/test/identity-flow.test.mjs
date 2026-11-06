@@ -6,8 +6,8 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 
-let advance = async () => null; // CON-11: V1 CapitalMarket advance read (RPC in production)
-mock.module("../lib/server/capital.ts", { namedExports: { merchantAdvance: (a) => advance(a) } });
+let advance = async () => false; // CON-11: V1 CapitalMarket obligations read (RPC in production; capital-obligations.test.mjs tests the rule)
+mock.module("../lib/server/capital.ts", { namedExports: { v1Obligations: (a) => advance(a) } });
 
 const ORIGIN = "http://localhost";
 const APP_ID = "clabcdefghijklmnopqrstuvw";
@@ -81,7 +81,7 @@ async function activate(cookie, recipient, approver, expected = 0, over = {}) {
 
 beforeEach(async () => {
   await resetDb();
-  advance = async () => null;
+  advance = async () => false;
 });
 
 test("1, 4, 5: Privy sign-in starts a revocable session; /me shows the verified email and wallets; logout kills a copied cookie", async () => {
@@ -260,7 +260,7 @@ test("CON-11: a failed Capital obligations read refuses activation (503) and con
   advance = async () => { throw new Error("rpc down"); };
   const down = await activate(a.cookie, recipient, ua.accounts[0]);
   assert.equal(down.status, 503);
-  advance = async () => ({ claim_id: "7" });
+  advance = async () => true;
   const again = await call(policyRoute.POST, "POST", "/api/v2/business/policy", { cookie: a.cookie, body: down.sent });
   assert.equal(again.status, 201, "the same signed pair still works: nothing was consumed by the refusal");
   assert.equal(again.body.v1Obligations, true);
