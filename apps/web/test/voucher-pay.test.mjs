@@ -436,7 +436,8 @@ test("the sheet signs the amount it shows and sends it, with no voucher read bef
   const sheet = readFileSync(new URL("../components/Checkout.tsx", import.meta.url), "utf8");
   assert.equal(sheet.match(/\/voucher`/g)?.length, 1, "the code route is called only to apply or remove a code");
   assert.match(sheet, /amountUnits: sale\?\.amount/, "the first units are the server-rendered amount due");
-  assert.match(sheet, /signSale\(\{ \.\.\.sale, amount: due\.amountUnits \}, expiresAt\)/, "it signs the units the sheet shows");
+  // the guest or, with "Pay with your wallet", the customer's own wallet (batch 032): the same units either way
+  assert.match(sheet, /signSale\(\{ \.\.\.sale, amount: due\.amountUnits \}, expiresAt, payer\)/, "it signs the units the sheet shows");
   assert.match(sheet, /JSON\.stringify\(\{ \.\.\.approval, amount: due\.amountUnits \}\)/, "and sends them as amount");
   assert.match(sheet, /res\.status === 409 && isDue\(data\)/, "a 409 with the amount due updates the sheet");
 });
