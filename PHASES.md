@@ -89,7 +89,7 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 
 - [x] `F` *(batch 010 verified 07:42: phase mode, ci + review-security PASS, 328 tests pass; /merchant/links, /merchant/pages, hosted /l and /p, server-rendered QR; live on :3100; AT-11 runs at G4)* Payment Links with QR codes (FR-GW-1, FR-GW-3); Payment Pages (FR-GW-2)
 - [ ] `F` Discount vouchers: codes as Arkiv entities that expire, redemptions counted on our server (FR-GW-12, FR-ARK-1–5 now apply to voucher entities)
-- [ ] `F` Multi-currency prices with a locked FX quote at checkout (FR-GW-11) · *batch 006 (06:20): sessions v2 with FX quotes on checkout; switch to the backend quotes module pending*
+- [ ] `F` Multi-currency prices with a locked FX quote at checkout (FR-GW-11) · *batch 006 (06:20): sessions v2 with FX quotes on checkout; backend batch 009 verified 07:44: fiat link/page sessions priced with the 10-min lock, ±15% bands, voucher hold frozen at claim (PR #14); frontend switch to the backend quotes module pending*
 - [ ] `F` Reports with a sales chart and CSV, and a Settlements page (FR-GW-9, FR-GW-10)
 - [ ] `F` API keys, webhooks, a `/docs` page and the test-mode badge (FR-GW-6, 7, 8, 14) · *batch 006 (06:20): test-mode strip, /docs, dashboard shell, payments API done; keys + webhooks screens pending*
 - [x] `S` *(SDK core verified 03:21, batch 005-P4-sdk-core: Gateway sessions/payments/webhooks, zero deps; pay button batch 007 verified 05:57 incl. a DOM-clobbering fix proven in Chrome; PR #8, #9)* SDK + payment-button script in `packages/sdk` (FR-GW-4, FR-GW-5)

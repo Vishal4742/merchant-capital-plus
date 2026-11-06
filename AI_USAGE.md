@@ -42,4 +42,5 @@ ETHGlobal asks teams to say where AI was used, down to files, and to commit spec
 | `apps/relayer/` Postgres send lock, `rel_sent`, breaker, rate limits, daily WBT budget, shared secret | claude-relayer | 5 checks PASS + human gate | 006-P2-neon-limits |
 | `apps/relayer/` Vercel production deploy (keys as Sensitive, Production only; human yes 06:10) | claude-relayer | phase mode: ci + reviewer-security PASS + human gate | 009-P2-vercel-deploy |
 | `apps/web/` payment links, payment pages, QR codes, gateway API client | claude-frontend | phase mode: ci + reviewer-security PASS; full review at the G4 phase gate | 010-P4-web-links-pages-qr |
+| `apps/web/lib/server/` FX-priced link and page sessions, voucher hold freeze and release, ±15% bands | claude-contracts | phase mode: ci + reviewer-security PASS; full review at the G4 phase gate | 009-P4-gateway-s1-fx-priced |
 | ⟨path⟩ | ⟨lane / agent⟩ | ⟨reviewers + human⟩ | ⟨NNN⟩ |
