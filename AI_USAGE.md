@@ -69,4 +69,6 @@ ETHGlobal asks teams to say where AI was used, down to files, and to commit spec
 | `contracts/script/Seed.s.sol` UI-run targets + holder-gas fork test (caps: 2 invoice holders, 1 advance holder) | claude-contracts | phase mode: ci (154 forge tests) + reviewer-security PASS | 009-P5-holder-gas-seed-ui |
 | `apps/web/` checkout sessions, in-flight lock, idempotency and used nonces in Neon (works across Vercel instances) | claude-frontend | phase mode: ci (558 tests) + reviewer-security PASS | 026-P4-web-sessions-neon |
 | `apps/web/` dashboard Refund button calls refunds/sync after the receipt (payment.refunded) | claude-frontend | phase mode: ci (568 tests) + reviewer-security PASS | 027-P4-web-refund-sync |
+| `apps/web/` Vouchers screen: Arkiv status + 'Publish to Arkiv' retry | claude-frontend | phase mode: ci PASS (Money: no) | 028-P4-web-voucher-publish |
+| `apps/web/` merchant onboarding: 3-step setup when signed out (wallet, add Whitechain Testnet, sign in) + Get started checklist (human request) | claude-frontend | phase mode: ci (578 tests, 122 Playwright) + reviewer-security PASS | 029-P4-web-onboarding |
 | ⟨path⟩ | ⟨lane / agent⟩ | ⟨reviewers + human⟩ | ⟨NNN⟩ |
