@@ -272,7 +272,8 @@ function ReceivingWallet({ role, principalWallets }: { role: Role; principalWall
       setStep("busy");
       const policy = await api<Policy>("/api/v2/business/policy", {
         method: "POST",
-        body: { proofNonce: proof.nonce, proofSignature: signed.proofSignature, approvalNonce: signed.approvalNonce, approvalSignature: signed.approvalSignature, expectedCurrentVersion: current?.version ?? 0 },
+        // one key per signed pair (FR-AUTH-4): a retry of this same confirmation returns the version it created
+        body: { proofNonce: proof.nonce, proofSignature: signed.proofSignature, approvalNonce: signed.approvalNonce, approvalSignature: signed.approvalSignature, expectedCurrentVersion: current?.version ?? 0, idempotencyKey: `activate:${signed.approvalNonce}` },
       });
       setCurrent(policy);
       setProof(null);

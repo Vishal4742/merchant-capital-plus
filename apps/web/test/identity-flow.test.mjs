@@ -64,6 +64,7 @@ const addMember = (cookie, body) => call(membersRoute.POST, "POST", "/api/v2/bus
 const setRole = (cookie, principalId, role, key) => call(memberRoute.PATCH, "PATCH", `/api/v2/business/members/${principalId}`, { cookie, body: { role, idempotencyKey: key }, p: { principalId } });
 const remove = (cookie, principalId, key) => call(memberRoute.DELETE, "DELETE", `/api/v2/business/members/${principalId}?idempotencyKey=${key}`, { cookie, p: { principalId } });
 
+let activations = 0; // a fresh idempotency key per activation request (round 2, L3)
 /** The full receiving-policy step: proof (recipient signs) → approval (approver signs) → activate. */
 async function activate(cookie, recipient, approver, expected = 0, over = {}) {
   const proof = await call(proofRoute.POST, "POST", "/api/v2/business/policy/proof", { cookie, body: { address: recipient.address } });
@@ -73,7 +74,7 @@ async function activate(cookie, recipient, approver, expected = 0, over = {}) {
   const body = {
     proofNonce: proof.body.nonce, proofSignature: await (over.proofSigner ?? recipient).signMessage({ message: proof.body.message }),
     approvalNonce: approval.body.nonce, approvalSignature: await (over.approvalSigner ?? approver).signMessage({ message: approval.body.message }),
-    expectedCurrentVersion: expected, ...over.body,
+    expectedCurrentVersion: expected, idempotencyKey: `act-${++activations}`, ...over.body,
   };
   const done = await call(policyRoute.POST, "POST", "/api/v2/business/policy", { cookie, body });
   return { stage: "activate", ...done, proof, approval, sent: body };
@@ -181,6 +182,28 @@ test("10: a workspace never loses its last Owner; two Owners may hand over; idem
   void b;
 });
 
+test("round 2 (M1): a replayed member write gets its stored answer; the same key with another payload is 409", async () => {
+  const [ua, ub] = [user("alice"), user("bob")];
+  const a = await signIn(ua);
+  await signIn(ub);
+  await create(a.cookie);
+  const add = (role) => addMember(a.cookie, { wallet: ub.accounts[0].address, role, idempotencyKey: "m1" });
+  const first = await add("viewer");
+  assert.equal(first.status, 201);
+  const again = await add("viewer");
+  assert.deepEqual([again.status, again.body], [first.status, first.body], "replay: the stored answer, not 'already in this workspace'");
+  assert.equal((await add("operator")).status, 409, "same key, different payload");
+  const bob = first.body.principalId;
+  const r1 = await setRole(a.cookie, bob, "operator", "m2");
+  assert.equal(r1.status, 200);
+  const r2 = await setRole(a.cookie, bob, "operator", "m2");
+  assert.deepEqual([r2.status, r2.body], [r1.status, r1.body]);
+  const rm = await remove(a.cookie, bob, "m3");
+  assert.equal(rm.status, 200);
+  const rm2 = await remove(a.cookie, bob, "m3");
+  assert.deepEqual([rm2.status, rm2.body], [rm.status, rm.body], "removal replay: the stored answer, not 404");
+});
+
 test("10 (race): two Owners demoting themselves at once on one connection still leave exactly one Owner", async () => {
   const [ua, ub] = [user("alice"), user("bob")];
   const a = await signIn(ua), b = await signIn(ub);
@@ -207,8 +230,12 @@ test("FR-BIZ-3/4: receiving proof + Owner approval activate version 1; GET shows
   assert.match(r.proof.body.message, /^localhost wants you to sign in with your Ethereum account:\n0x[0-9a-fA-F]{40}\n\nWhiteFlow receiving-wallet proof/);
   assert.match(r.proof.body.message, /Chain ID: 1874/);
   assert.ok(r.approval.body.message.includes(`urn:whiteflow:policy:${r.body.policyHash}`), "the approval binds the policy hash (EIP-4361 resource)");
-  // replaying the same signed pair is refused (both challenges were consumed)
-  assert.equal((await call(policyRoute.POST, "POST", "/api/v2/business/policy", { cookie: a.cookie, body: r.sent })).status, 409);
+  // the same request again (same idempotency key) gets the stored answer (round 2, L3); the same signed pair under a
+  // new key is refused: both challenges were consumed
+  const same = await call(policyRoute.POST, "POST", "/api/v2/business/policy", { cookie: a.cookie, body: r.sent });
+  assert.deepEqual([same.status, same.body], [201, r.body]);
+  assert.equal((await call(policyRoute.POST, "POST", "/api/v2/business/policy", { cookie: a.cookie, body: { ...r.sent, idempotencyKey: "fresh-key" } })).status, 409);
+  assert.equal((await call(policyRoute.POST, "POST", "/api/v2/business/policy", { cookie: a.cookie, body: { ...r.sent, idempotencyKey: undefined } })).status, 400, "the key is required");
   const g = await call(policyRoute.GET, "GET", "/api/v2/business/policy", { cookie: a.cookie, origin: null });
   assert.equal(g.body.current.version, 1);
   // version 2 needs expectedCurrentVersion 1; a stale expectation is 409 and consumes nothing new
@@ -236,7 +263,7 @@ test("11, 12: the proof must be signed by the receiving wallet, the approval by 
   assert.equal(ok.status, 201, "the second linked wallet approves");
   const p = await call(proofRoute.POST, "POST", "/api/v2/business/policy/proof", { cookie: a.cookie, body: { address: recipient.address } });
   const swapped = await call(policyRoute.POST, "POST", "/api/v2/business/policy", {
-    cookie: a.cookie, body: { proofNonce: p.body.nonce, proofSignature: await recipient.signMessage({ message: p.body.message }), approvalNonce: p.body.nonce, approvalSignature: await recipient.signMessage({ message: p.body.message }), expectedCurrentVersion: 1 },
+    cookie: a.cookie, body: { proofNonce: p.body.nonce, proofSignature: await recipient.signMessage({ message: p.body.message }), approvalNonce: p.body.nonce, approvalSignature: await recipient.signMessage({ message: p.body.message }), expectedCurrentVersion: 1, idempotencyKey: "swap-1" },
   });
   assert.equal(swapped.status, 409);
   assert.equal((await call(proofRoute.POST, "POST", "/api/v2/business/policy/proof", { cookie: a.cookie, body: { address: "0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7" } })).status, 400, "not the token address");
@@ -301,7 +328,7 @@ test("round 2 (L2, S-L2): the proof and the approval are EIP-4361 for our domain
     body: {
       proofNonce: proof.body.nonce, proofSignature: await recipient.signMessage({ message: proof.body.message }),
       approvalNonce: approval.body.nonce, approvalSignature: await ua.accounts[0].signMessage({ message: approval.body.message }),
-      expectedCurrentVersion: 0,
+      expectedCurrentVersion: 0, idempotencyKey: "nina-1",
     },
   });
   assert.equal(done.status, 201, JSON.stringify(done.body));

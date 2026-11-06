@@ -1,6 +1,7 @@
 // GET /api/v2/business/policy: the current receiving policy (null before activation) and its immutable history.
-// POST /api/v2/business/policy { proofNonce, proofSignature, approvalNonce, approvalSignature, expectedCurrentVersion }:
-// activate the next version (Owner, both signatures, one statement).
+// POST /api/v2/business/policy { proofNonce, proofSignature, approvalNonce, approvalSignature, expectedCurrentVersion,
+// idempotencyKey }: activate the next version (Owner, both signatures, one statement). The same key again returns the
+// version it created (FR-AUTH-4).
 import { contextFromRequest, mutationContext } from "../../../../../lib/server/auth-sessions.ts";
 import { ok } from "../../../../../lib/server/http.ts";
 import { activatePolicy, currentPolicy, policyHistory } from "../../../../../lib/server/policies.ts";
@@ -17,6 +18,6 @@ export const POST = (request: Request) =>
   v2(async () => {
     const ctx = await mutationContext(request);
     const b = await body(request);
-    const { proofNonce, proofSignature, approvalNonce, approvalSignature, expectedCurrentVersion } = b;
-    return ok(await activatePolicy(ctx, { proofNonce, proofSignature, approvalNonce, approvalSignature, expectedCurrentVersion }), 201);
+    const { proofNonce, proofSignature, approvalNonce, approvalSignature, expectedCurrentVersion, idempotencyKey } = b;
+    return ok(await activatePolicy(ctx, { proofNonce, proofSignature, approvalNonce, approvalSignature, expectedCurrentVersion, idempotencyKey }), 201);
   });

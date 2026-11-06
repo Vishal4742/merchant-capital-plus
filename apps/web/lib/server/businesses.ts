@@ -56,22 +56,41 @@ function timezoneField(value: unknown): string {
 const pgCode = (err: unknown) => (err as { code?: unknown })?.code;
 const pgConstraint = (err: unknown) => (err as { constraint?: unknown })?.constraint;
 
-/** Runs a statement that also inserts its wf_idempotency row. On a replay of the same key, returns the stored answer
- *  (same hash) or 409 (different hash). Other errors map: 23514 owner_count CHECK → 409 last Owner; 40P01/40001 → 409. */
-async function withIdempotency<T>(
-  run: () => Promise<T>,
-  replay: { businessId: string; principalId: string; operation: string; key: string; hash: string },
-): Promise<T> {
+export interface IdempotencySlot {
+  businessId: string;
+  principalId: string;
+  operation: string;
+  key: string;
+  hash: string;
+}
+const KEY_REUSED = "That idempotency key was already used for a different request.";
+
+/** FR-AUTH-4: the stored answer for this key (same request hash), undefined if the key is unused, 409 if it was used
+ *  for a different request. Read BEFORE the write (review M1): a replay must not re-run the domain write, whose own
+ *  constraints (e.g. "already a member") would answer differently from the original. */
+export async function storedAnswer<T>(slot: IdempotencySlot): Promise<T | undefined> {
+  const [row] = await query<{ request_hash: string; response: T }>(
+    "SELECT request_hash, response FROM wf_idempotency WHERE business_id = $1 AND principal_id = $2 AND operation = $3 AND key = $4",
+    [slot.businessId, slot.principalId, slot.operation, slot.key],
+  );
+  if (!row) return undefined;
+  if (row.request_hash !== slot.hash) throw new HttpError(409, KEY_REUSED);
+  return row.response;
+}
+
+/** Runs a statement that also inserts its wf_idempotency row (plain INSERT: the record and the write commit together).
+ *  A replay returns the stored answer before anything runs; a concurrent duplicate that loses the INSERT race gets the
+ *  winner's answer (same hash) or 409. Other errors map: 23514 owner_count CHECK → 409 last Owner; 40P01/40001 → 409. */
+async function withIdempotency<T>(run: () => Promise<T>, replay: IdempotencySlot): Promise<T> {
+  const stored = await storedAnswer<T>(replay);
+  if (stored !== undefined) return stored;
   try {
     return await run();
   } catch (err) {
     if (pgCode(err) === "23505" && pgConstraint(err) === "wf_idempotency_pkey") {
-      const [row] = await query<{ request_hash: string; response: T }>(
-        "SELECT request_hash, response FROM wf_idempotency WHERE business_id = $1 AND principal_id = $2 AND operation = $3 AND key = $4",
-        [replay.businessId, replay.principalId, replay.operation, replay.key],
-      );
-      if (row && row.request_hash === replay.hash) return row.response;
-      throw new HttpError(409, "That idempotency key was already used for a different request.");
+      const raced = await storedAnswer<T>(replay);
+      if (raced !== undefined) return raced;
+      throw new HttpError(409, KEY_REUSED);
     }
     if (pgCode(err) === "23514") throw new HttpError(409, LAST_OWNER);
     throw concurrencyConflict(err);

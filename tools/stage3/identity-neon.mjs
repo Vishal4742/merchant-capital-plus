@@ -30,7 +30,14 @@ if (!raw) {
 }
 const DB = "wf_s2_web";
 const urlFor = (db) => {
-  const u = new URL(raw);
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    // never the parser's error: it quotes the whole input, password included (051 review S-L4 pattern)
+    console.log("FAIL  configuration: DATABASE_URL isn't a valid URL");
+    process.exit(1);
+  }
   u.pathname = `/${db}`;
   return u.toString();
 };
@@ -166,6 +173,7 @@ async function signedPair(owner, ownerWallet, biz, expected) {
     proofNonce: proof.nonce, proofSignature: await recipient.signMessage({ message: proof.message }),
     approvalNonce: approval.nonce, approvalSignature: await ownerWallet.signMessage({ message: approval.message }),
     expectedCurrentVersion: expected,
+    idempotencyKey: `race-${approval.nonce.slice(0, 24)}`, // one key per signed pair (round 2, L3)
   };
 }
 
@@ -186,7 +194,8 @@ async function signedPair(owner, ownerWallet, biz, expected) {
     `lock waits seen=${seen}; statuses=${statuses(answers)}; versions=${versions.map((v) => v.version).join(",")}`);
 }
 
-// ---- acceptance 3: one signed pair replayed by 3 processes at once → exactly one activation, both challenges consumed once
+// ---- acceptance 3: one signed pair replayed by 3 processes at once (the same request: same idempotency key) → exactly
+// one activation, both challenges consumed once, and every process gets that version (FR-AUTH-4, round 2 L3)
 {
   const wallet = privateKeyToAccount(generatePrivateKey());
   const a = await principal(wallet.address);
@@ -196,9 +205,10 @@ async function signedPair(owner, ownerWallet, biz, expected) {
   const { answers, seen } = await race([1, 2, 3].map(() => ({ kind: "activate", ctx: ctxOf(a, biz), args: pair })), holder, 3);
   const versions = await sql.query("SELECT version FROM wf_settlement_policies WHERE business_id = $1", [biz]);
   const consumed = await sql.query("SELECT count(*)::int AS n FROM wf_challenges WHERE nonce IN ($1, $2) AND consumed_at IS NOT NULL", [pair.proofNonce, pair.approvalNonce]);
+  const sameVersion = answers.every((x) => x.ok && x.result.version === 1);
   check("3: one signed proof + approval replayed concurrently by 3 processes",
-    seen >= 3 && statuses(answers) === "200,409,409" && versions.length === 1 && consumed[0].n === 2,
-    `lock waits seen=${seen}; statuses=${statuses(answers)}; versions=${versions.length}; consumed=${consumed[0].n}`);
+    seen >= 3 && statuses(answers) === "200,200,200" && sameVersion && versions.length === 1 && consumed[0].n === 2,
+    `lock waits seen=${seen}; statuses=${statuses(answers)}; every answer version 1=${sameVersion}; versions=${versions.length}; consumed=${consumed[0].n}`);
 }
 
 const failed = results.filter((ok) => !ok).length;

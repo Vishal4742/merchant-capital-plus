@@ -10,6 +10,7 @@ import { getAddress, isAddress, recoverMessageAddress, type Address, type Hex } 
 import { whitechainSepolia } from "viem/chains";
 import { createSiweMessage, generateSiweNonce } from "viem/siwe";
 import { USDT } from "../usdt.ts";
+import { idempotencyKey, requestHash, storedAnswer } from "./businesses.ts";
 import { v1Obligations } from "./capital.ts";
 import { query } from "./db.ts";
 import { HttpError, sharedRateLimit } from "./http.ts";
@@ -200,19 +201,30 @@ const SQL_ACTIVATE = `WITH actor AS (
     INSERT INTO wf_audit_events (id, business_id, actor_principal_id, role, source, credential_id, request_id, action, target, version_hash, outcome, detail, at)
     SELECT $14, $1, $2, 'owner', 'session', $15, $16, 'policy.activate', $8, $10, 'ok',
            jsonb_build_object('version', $3::int + 1, 'approvalWallet', $11::text, 'v1Obligations', $12::boolean), $6 FROM pol
+  ), idem AS (
+    INSERT INTO wf_idempotency (business_id, principal_id, operation, key, request_hash, response, created_at)
+    SELECT $1, $2, 'policy.activate', $17, $18, to_jsonb(p), $6 FROM pol p
   )
   SELECT (SELECT count(*) FROM actor)::int AS is_owner, p.* FROM (SELECT 1) one LEFT JOIN pol p ON true`;
 
 /** Step 3 (Owner): verifies both signatures, re-checks everything inside one statement and inserts the next version. */
 export async function activatePolicy(
   ctx: AuthContext,
-  input: { proofNonce: unknown; proofSignature: unknown; approvalNonce: unknown; approvalSignature: unknown; expectedCurrentVersion: unknown },
+  input: { proofNonce: unknown; proofSignature: unknown; approvalNonce: unknown; approvalSignature: unknown; expectedCurrentVersion: unknown; idempotencyKey: unknown },
   { now = Date.now(), obligations = readV1Obligations }: { now?: number; obligations?: ObligationsRead } = {},
 ): Promise<SettlementPolicy> {
   requireScope(ctx, "policy:activate");
   if (!ctx.principalId || ctx.source !== "session") throw new Forbidden();
   const expected = Number(input.expectedCurrentVersion);
   if (!Number.isInteger(expected) || expected < 0) throw new HttpError(400, "expectedCurrentVersion must be the version you saw (0 for none).");
+  // FR-AUTH-4 (review L3): the same request again returns the version it created, before the consumed challenges are
+  // checked; the same key for a different request is 409
+  const slot = {
+    businessId: ctx.businessId, principalId: ctx.principalId, operation: "policy.activate", key: idempotencyKey(input.idempotencyKey),
+    hash: requestHash({ proofNonce: input.proofNonce, approvalNonce: input.approvalNonce, expectedCurrentVersion: expected }),
+  };
+  const stored = await storedAnswer<Record<string, unknown>>(slot);
+  if (stored !== undefined) return toPolicy(stored);
   const proof = await challenge(input.proofNonce, "receiving", ctx.businessId, now);
   const approval = await challenge(input.approvalNonce, "approval", ctx.businessId, now);
   if (approval.principal_id !== ctx.principalId || approval.payload.proofNonce !== proof.nonce) throw new HttpError(409, EXPIRED);
@@ -227,12 +239,19 @@ export async function activatePolicy(
   const hash = String(proof.payload.policyHash);
   const rows = await query<Record<string, unknown> & { is_owner: number }>(SQL_ACTIVATE, [
     ctx.businessId, ctx.principalId, expected, proof.nonce, approval.nonce, now, POLICY_CHAIN_ID, proof.address, POLICY_TOKEN, hash,
-    approval.address, v1Obligations, newId("ntf"), newId("aud"), ctx.credentialId, ctx.requestId,
-  ]).catch((err) => {
-    if ((err as { code?: unknown })?.code === "23505") throw new HttpError(409, "The receiving policy changed at the same time. Reload and try again.");
+    approval.address, v1Obligations, newId("ntf"), newId("aud"), ctx.credentialId, ctx.requestId, slot.key, slot.hash,
+  ]).catch(async (err) => {
+    const e = err as { code?: unknown; constraint?: unknown };
+    if (e?.code === "23505" && e.constraint === "wf_idempotency_pkey") return null; // a concurrent duplicate won: its answer below
+    if (e?.code === "23505") throw new HttpError(409, "The receiving policy changed at the same time. Reload and try again.");
     throw concurrencyConflict(err);
   });
-  const row = rows[0];
+  const row = rows?.[0];
+  if (!row || row.version === null || row.version === undefined) {
+    // nothing inserted: a concurrent duplicate of this request may have won (same key, same hash) → its answer
+    const raced = await storedAnswer<Record<string, unknown>>(slot);
+    if (raced !== undefined) return toPolicy(raced);
+  }
   if (!row || row.is_owner === 0) throw new Forbidden();
   if (row.version === null || row.version === undefined) throw new HttpError(409, "The receiving policy changed, or this confirmation expired. Reload and start again.");
   return toPolicy(row);
