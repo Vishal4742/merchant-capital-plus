@@ -17,6 +17,21 @@ Human decisions (2026-11-07 00:4x, AskUserQuestion):
 - Package: "Evolve packages/mcp". pay_checkout, spending_report and MCP_PAYER_KEY are removed (SRS v3.0 R1).
 - Security: redacted the Privy app secret from the uncommitted .batches/050-P5-privy-onboarding/batch.md in P:/WhiteFlow
   (human approved). The human must still rotate it.
+Round 2 request (human, 2026-11-07, after the external production review of afd5a07): extend into a
+production-capable merchant collection product per "Whiteflow Merchant MCP — production implementation prompt" and the
+"production readiness" review (findings F1–F8). It changes no deploy, merge, credential or policy state.
+Human decisions (2026-11-07, round 2, AskUserQuestion):
+- Invoice currency: "USDT-only invoices" for a narrow USDT-native pilot. INR pricing stays on links.
+- Publication: "Owner approves on review page". finalize creates a proposal bound to the invoice revision hash, total,
+  currency, customer and expiry; an Owner approves it once; the server enforces this.
+- Backend base: "Stack on Stage 3, coordinate". Stage 2–4 (scoped credentials, customer/invoice tables, event ledger)
+  get an interface contract plus a handoff to whiteflow-ef now, and are built later on wf/stage3-v1-cutover with ef's
+  agreement.
+- Change control: "Approve SRS, hand routes over". The SRS-CHANGE (FR-MCP-12..17, FR-GW-16) is approved. The
+  apps/web route changes leave PR #45 for a handoff branch that claude-contracts owns (with the F1 fix);
+  PR #45 keeps packages/mcp only.
 Agent ids (builders, for SendMessage resumes): claude (this session)
 Log:
 - 00:50 batch started in its own worktree from origin/main e7e41bf (P:/WhiteFlow holds another lane's uncommitted batch 050).
+- round 1 closed with security PASS, code PASS and CI PASS (afd5a07).
+- round 2: production review findings, decisions above.
