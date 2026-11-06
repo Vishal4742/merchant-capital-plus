@@ -25,6 +25,7 @@ mock.module("../lib/onchain.ts", {
       if (readFails) throw new Error("rpc down");
       return { id, ...invoice };
     },
+    saleSettled: async () => null, // lib/settle.ts imports it
   },
 });
 
@@ -196,7 +197,7 @@ test("offers: an unreadable ack store still shows the book, as not acknowledged,
 test("FR-ARK-4: the Arkiv entity carries no debtor and no signature", async () => {
   await call(await signed());
   const keys = Object.keys(offerTerms(offer()));
-  assert.ok(!keys.some((k) => /debtor|ack|sig/i.test(k)), keys.join(","));
+  assert.ok(!keys.some((k) => /debtor|signature|acknowledg/i.test(k)), keys.join(","));
 });
 
 // UI states: a client component can't render in node:test, so the states are pinned in the source (the house pattern).

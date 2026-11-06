@@ -6,8 +6,10 @@ import { addr, defineSchema, str, u64 } from "@arkiv-network/sdk/schema";
 import type { Address, Hex } from "viem";
 import { whitechainSepolia } from "viem/chains";
 import { arkivClients, redactArkivError } from "../arkiv.ts";
+import { payConfig } from "../config.ts";
 import { CAPITAL_MARKET, chainOffers, offerJson, offerStatus, readOffer, type ChainOffer, type Deps, type OfferJson } from "./capital.ts";
 import { HttpError } from "./http.ts";
+import { ackView, acksFor, type InvoiceAck } from "./invoice-acks.ts";
 
 export const OFFER_TYPE = "mcplus.offer.v1";
 // The Arkiv attribute "chainId" (ARCHITECTURE §5) is quoted below: it names the offer's chain, always
@@ -149,15 +151,31 @@ function rowFor(o: ChainOffer, rows: OfferRow[]): OfferRow | undefined {
 
 const sameTerms = (a: Partial<OfferTerms>, b: OfferTerms) => (Object.keys(COLUMN_KINDS) as (keyof OfferTerms)[]).every((k) => a[k] === b[k]);
 
-/** GET /offers: the chain's offers in the book (AT-9 filtering), each with its Arkiv entity and the Buy gate. */
+/** The debtor acks for these invoice offers (FR-INV-8), from our database. Unreadable: none, so the book still shows,
+ *  every invoice as "Not acknowledged yet" (the safe side for an investor), and the log says why. */
+async function debtorAcks(offers: ChainOffer[]): Promise<Map<string, InvoiceAck>> {
+  const merchantPay = payConfig()?.merchantPay;
+  const ids = offers.filter((o) => o.kind === "invoice").map((o) => o.invoiceId);
+  if (!merchantPay || ids.length === 0) return new Map();
+  try {
+    return await acksFor(merchantPay, ids);
+  } catch (err) {
+    console.error(`capital: debtor acks unreadable: ${err instanceof Error ? err.name : "error"}`); // never the message: it can hold SQL
+    return new Map();
+  }
+}
+
+/** GET /offers: the chain's offers in the book (AT-9 filtering), each with its Arkiv entity, the Buy gate and, for an
+ *  invoice, whether its debtor acknowledged it. */
 export async function offerBook(deps: CapitalDeps = {}, now = Math.floor(Date.now() / 1000)): Promise<OfferJson[]> {
   const [offers, rows] = await Promise.all([chainOffers(deps), offerRows(deps)]);
-  return offers
-    .filter((o) => offerStatus(o, now) !== null)
-    .map((o) => {
-      const row = rowFor(o, rows);
-      return offerJson(o, now, row && { entityKey: row.entityKey, matches: matches(o, row.terms), terms: row.terms as Record<string, string> });
-    });
+  const listed = offers.filter((o) => offerStatus(o, now) !== null);
+  const acks = await debtorAcks(listed);
+  return listed.map((o) => {
+    const row = rowFor(o, rows);
+    const ack = o.kind === "invoice" ? acks.get(o.invoiceId.toString()) : undefined;
+    return offerJson(o, now, row && { entityKey: row.entityKey, matches: matches(o, row.terms), terms: row.terms as Record<string, string> }, ack && ackView(ack));
+  });
 }
 
 /** Writes the offer's current chain state to Arkiv: patches our entity if anything changed (F5), or, for publish only,
