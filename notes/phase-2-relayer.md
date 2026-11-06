@@ -10,6 +10,11 @@ Plan (22:50): **002** drain guard (no DB) · **003** limits, budget, pause, mult
 
 See `.batches/002-P2-drain-guard/` (spec, build report, rounds). Request flow: parse → free checks (window 30 s–15 min, ≥ 1 USDT, signature, sent set) → one RPC round (replay, payer code, balance, gas price, gas-capped simulation) → send lock (re-simulate, sign with fixed gas/fees, `eth_sendRawTransactionSync`, receipt-hash check).
 
+## Batch 007-P2-merchantpay-relay — closed 2026-11-06 03:35
+**Built:** `/relay` calls exactly MerchantPay `0xab81…4251` `paySale` / `payInvoice` (PullStub `pull` removed). The authorization nonce is recomputed as MerchantPay does (checked equal to the on-chain `saleNonce` / `invoiceNonce`); invoices sign `amount + relayFee` (fee read single-flight, cached 60 s); local `bad_merchant`; reverts map to `order_paid` / `wrong_amount` / `bad_merchant`; 200 adds `paymentId` (own `Paid` log), `gasUsed`, `gasCostWei`. Default RPC = Whitechain's.
+**Verified:** 42/42, tsc 0, CI green run 42116814002; live rejects (Whitechain RPC) p50 146 / p95 266 ms; relayer nonce 3 unchanged. One round, all five PASS.
+**Follow-ups → batch 006:** `gasCostWei` must add the OP-Stack `receipt.l1Fee` (reviewer-code MEDIUM; the budget uses it); a zero `orderRef` → local 400 instead of `bad_merchant` after a round; `EnforcedPause` → its own 503 code; refuse when `relayFee == 0`; drop the test-only `USDT` / `USDT_DOMAIN` exports.
+
 ## Batch 003 draft (Neon ready since 00:58; breaker numbers decided 02:44)
 **SRS:** FR-REL-5 (rate limits per payer / merchant / IP, daily WBT budget, 503 when exhausted), FR-REL-6 (`gasSpentToday`, `budgetLeft` in `/health`), ARCHITECTURE §3 points 7, 8, 10 and "serialized sends (Postgres advisory lock)", NFR-14 (still ≤ 500 ms rejects).
 
