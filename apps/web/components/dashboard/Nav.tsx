@@ -18,7 +18,7 @@ const SECTIONS = [
     items: [
       { key: "reports", label: "Reports", href: "/merchant/reports" },
       { key: "settlements", label: "Settlements", href: "/merchant/settlements" },
-      { key: "capital", label: "Capital" },
+      { key: "capital", label: "Capital", href: "/merchant/capital" },
     ],
   },
   {
