@@ -1,11 +1,12 @@
 // GET /api/v1/reports.csv?from=YYYY-MM-DD&to=YYYY-MM-DD → the report's payments, one CSV row each (SRS FR-GW-9).
-// Dashboard only: the SIWE session cookie.
-import { handle, signedInMerchant } from "../../../../lib/server/http.ts";
+// Batch 051 R2-1 payments:read (any member of the workspace that linked the merchant wallet).
+import { handle } from "../../../../lib/server/http.ts";
+import { legacyAccess } from "../../../../lib/server/legacy.ts";
 import { merchantHistory, merchantPayAddress, rangeOf, reportCsv } from "../../../../lib/server/reports.ts";
 
 export async function GET(request: Request) {
   return handle(async () => {
-    const merchant = signedInMerchant(request);
+    const { merchant } = await legacyAccess(request, "payments:read");
     const range = rangeOf(request);
     const csv = reportCsv(await merchantHistory(merchantPayAddress(), merchant), range);
     return new Response(csv, {

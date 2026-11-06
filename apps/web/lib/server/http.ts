@@ -1,11 +1,11 @@
-// Shared helpers for the gateway API routes (batch 007): JSON errors, the signed-in merchant, input validation.
+// Shared helpers for the gateway API routes (batch 007): JSON errors, input validation, rate limits. Who the caller is
+// comes from lib/server/legacy.ts legacyAccess() (batch 051: the WhiteFlow workspace session; the wallet cookie is retired).
 // Route handlers stay framework-free (they read the Request), so tests call them directly.
 import { createHash, randomBytes, randomInt } from "node:crypto";
 // next/navigation's server export of it: "next/navigation.js" is the browser module (it breaks route bundles), and the
 // bare "next/navigation" doesn't resolve under Node's test runner. ponytail: an internal path; recheck on a Next upgrade.
 import { unstable_rethrow } from "next/dist/client/components/unstable-rethrow.js";
 import type { Address } from "viem";
-import { SESSION_COOKIE, authSecret, cookieFrom, readSession } from "../auth.ts";
 import { merchantConfig } from "../config.ts";
 import { parseUsdt } from "../usdt.ts";
 import { DbUnavailable, query } from "./db.ts";
@@ -42,14 +42,6 @@ export async function handle(run: () => Promise<Response>): Promise<Response> {
     console.error("gateway api error:", err instanceof Error ? err.name : typeof err); // never the message: it can hold SQL or URLs
     return fail(500, "Something went wrong on our side. Try again.");
   }
-}
-
-/** The merchant signed in to the dashboard (the SIWE session cookie), or 401. */
-export function signedInMerchant(request: Request): Address {
-  const secret = authSecret();
-  const merchant = secret ? readSession(cookieFrom(request, SESSION_COOKIE), secret) : null;
-  if (!merchant) throw new HttpError(401, "Sign in to your merchant dashboard first.");
-  return merchant;
 }
 
 /** The request body as a JSON object, at most `maxBytes`. */

@@ -1,10 +1,12 @@
 // Server-only API keys (SRS FR-GW-6): pk_test_ (publishable) and sk_test_ (secret), test mode only (FR-GW-14).
 // Only a SHA-256 of each key is stored and the key is shown once. authenticateKey() is the check claude-frontend's
 // POST /api/v1/sessions uses for Bearer keys (FR-PAY-4).
+// Batch 051 (FR-AUTH-3): a key belongs to the WhiteFlow workspace that linked its merchant wallet. A new key takes that
+// workspace in its INSERT; keys made before the link get it in the claim statement (lib/server/legacy.ts).
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { getAddress, type Address } from "viem";
 import { query } from "./db.ts";
-import { HttpError, newId, signedInMerchant } from "./http.ts";
+import { HttpError, newId } from "./http.ts";
 
 export type KeyKind = "pk" | "sk";
 export const MAX_KEYS = 20; // live keys per merchant
@@ -31,7 +33,8 @@ export async function createKey(merchant: Address, label: string, kind: KeyKind,
   const key = `${kind}_test_${randomBytes(24).toString("base64url")}`; // 24 bytes → 32 base64url chars
   const record: ApiKey = { id: newId("key"), label, kind, prefix: key.slice(0, 12), createdAt: now, lastUsedAt: null };
   await query(
-    "INSERT INTO app_gw_keys (id, merchant, kind, label, prefix, key_hash, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    `INSERT INTO app_gw_keys (id, merchant, kind, label, prefix, key_hash, created_at, business_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, (SELECT id FROM wf_businesses WHERE legacy_merchant = $2))`,
     [record.id, owner, kind, label, record.prefix, sha256(key), now],
   );
   return { key, record };
@@ -51,33 +54,24 @@ export async function revokeKey(merchant: Address, id: string, now = Date.now())
   return rows.length === 1;
 }
 
-/** The merchant behind a request's `Authorization: Bearer <pk_test_|sk_test_…>`, or null (missing, malformed, unknown, revoked). */
-export async function authenticateKey(request: Request, now = Date.now()): Promise<{ merchant: Address; kind: KeyKind; keyId: string } | null> {
+/** The merchant (and workspace, once linked) behind a request's `Authorization: Bearer <pk_test_|sk_test_…>`, or null
+ *  (missing, malformed, unknown, revoked). */
+export async function authenticateKey(
+  request: Request,
+  now = Date.now(),
+): Promise<{ merchant: Address; kind: KeyKind; keyId: string; businessId: string | null } | null> {
   const auth = request.headers.get("authorization") ?? "";
   const key = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
   if (!KEY_PATTERN.test(key)) return null;
   const hash = sha256(key);
-  const rows = await query<{ id: string; merchant: string; kind: KeyKind; key_hash: string }>(
-    "SELECT id, merchant, kind, key_hash FROM app_gw_keys WHERE key_hash = $1 AND revoked_at IS NULL",
+  const rows = await query<{ id: string; merchant: string; kind: KeyKind; key_hash: string; business_id: string | null }>(
+    "SELECT id, merchant, kind, key_hash, business_id FROM app_gw_keys WHERE key_hash = $1 AND revoked_at IS NULL",
     [hash],
   );
   const row = rows[0];
   if (!row || !timingSafeEqual(Buffer.from(row.key_hash, "hex"), Buffer.from(hash, "hex"))) return null;
   await query("UPDATE app_gw_keys SET last_used_at = $2 WHERE id = $1", [row.id, now]);
-  return { merchant: getAddress(row.merchant), kind: row.kind, keyId: row.id };
-}
-
-/** The merchant behind the dashboard cookie, or behind a live secret (sk_test_) key: what a shop's own server or setup
- *  script uses (AT-14). Publishable keys never manage the account. 401 otherwise. */
-export async function merchantByCookieOrSecretKey(request: Request): Promise<Address> {
-  try {
-    return signedInMerchant(request);
-  } catch (err) {
-    if (!(err instanceof HttpError) || err.status !== 401) throw err;
-  }
-  const key = await authenticateKey(request);
-  if (key?.kind === "sk") return key.merchant;
-  throw new HttpError(401, "Sign in to your merchant dashboard, or send your secret API key.");
+  return { merchant: getAddress(row.merchant), kind: row.kind, keyId: row.id, businessId: row.business_id };
 }
 
 export const keyJson = (k: ApiKey) => ({
