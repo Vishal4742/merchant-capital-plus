@@ -9,6 +9,16 @@ export const FAILED = "The payment didn't go through. Nothing was charged.";
  *  send it after their own balance read; the relayer's insufficient_funds maps to it too. The sheets show it in the
  *  warning tone, not as an error (UX review 005 N3). */
 export const NOT_FUNDED = "This is a demo: paying needs test USDT, and this browser doesn't have enough yet. Nothing was charged.";
+/** "Pay with your wallet" (FR-PAY-16): our server says the connected wallet is short, before any approval prompt. */
+export const WALLET_SHORT = "This wallet doesn't have enough test USDT for this payment. Nothing was charged.";
+/** The customer said no in their wallet (EIP-1193 4001). Their choice, not a failure (UX review 032 L3). */
+export const WALLET_CANCELLED = "You cancelled in your wallet. Nothing was charged.";
+
+/** The colour of a sheet's error line: a demo limit is amber, a cancel is plain ink, anything else is an error. */
+export function errorTone(message: string): string {
+  if (message === NOT_FUNDED || message === WALLET_SHORT) return "text-warning";
+  return message === WALLET_CANCELLED ? "text-ink-muted" : "text-critical";
+}
 
 export type Outcome =
   | { kind: "paid"; receiptId: string | null; txHash: Hex | null }

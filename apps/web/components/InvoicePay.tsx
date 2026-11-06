@@ -3,18 +3,16 @@
 // The customer's invoice sheet (FR-PAY-3, FR-PAY-7, FR-PAY-9): the checkout's press-and-hold flow and plain words (no
 // "sign", "gas" or chain names). The customer pays what is still owed plus a 0.10 USDT fee on top (Phase 3 MerchantPay),
 // and the sheet says so. Paid and cancelled invoices show a closed sheet, not a toast.
+// Batch 032 (FR-PAY-16): the checkout's short-balance notice before the hold and its "Pay with your wallet" option.
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type { Hex } from "viem";
 import { Confirming } from "@/components/Confirming";
 import { HoldButton } from "@/components/HoldButton";
-import { FAILED, NOT_FUNDED, outcome, type PayAnswer } from "@/lib/outcome";
+import { GuestShort, WalletOption, loadSigner, useGuestFunds, walletPayer } from "@/components/WalletPay";
+import { FAILED, errorTone, outcome, type PayAnswer } from "@/lib/outcome";
 import type { InvoicePayTerms } from "@/lib/sign-sale";
 import { EXPLORER } from "@/lib/usdt";
-
-// The signer (viem + the guest key) loads after first paint, so it never slows the sheet (NFR-12).
-type Signer = typeof import("@/lib/sign-sale");
-const loadSigner = () => import("@/lib/sign-sale");
 
 export interface InvoicePayProps {
   invoiceId: string;
@@ -37,6 +35,8 @@ export interface InvoicePayProps {
 type Paid = { receiptId: string | null; txHash: Hex | null };
 // confirming: an attempt's outcome is unknown, here or on the server; it never offers the button again (002 security D4)
 type Phase = "ready" | "confirming" | "cancelled";
+/** Who approves: the guest (hold to pay) or the customer's own wallet. */
+type Via = "hold" | "wallet";
 
 /** The sheet already shows what happened (confirming or cancelled): no extra error line. */
 class Shown extends Error {}
@@ -64,25 +64,29 @@ export function InvoicePay({ invoiceId, merchantName, dueText, invoiceText, paid
   const [phase, setPhase] = useState<Phase>(state === "pending" ? "confirming" : state === "cancelled" ? "cancelled" : "ready");
   // the page, not the button, owns the payment in flight: a remounted button can't start a second one (R3 D3)
   const inFlight = useRef<Promise<void> | null>(null);
-  const signer = useRef<Promise<Signer> | null>(null);
-  useEffect(() => {
-    if (!terms || state !== "open") return;
-    const warm = () => {
-      signer.current ??= loadSigner();
-    };
-    const hasIdle = typeof window.requestIdleCallback === "function"; // Safari lacks it: fall back to a short timeout
-    const id = hasIdle ? window.requestIdleCallback(warm) : window.setTimeout(warm, 300);
-    return () => (hasIdle ? window.cancelIdleCallback(id) : window.clearTimeout(id));
-  }, [terms, state]);
+  const [paying, setPaying] = useState<Via | null>(null);
+  const fundsUrl = `/api/v1/invoices/${invoiceId}/funds`;
+  // loads the signer after first paint, then asks our server whether this browser can pay owed + fee (FR-PAY-16)
+  const guest = useGuestFunds(terms && state === "open" && !paid && phase === "ready" ? fundsUrl : null, "");
 
-  const pay = () => (inFlight.current ??= submit().finally(() => (inFlight.current = null)));
+  function pay(via: Via) {
+    if (!inFlight.current) {
+      setPaying(via);
+      inFlight.current = submit(via).finally(() => {
+        inFlight.current = null;
+        setPaying(null);
+      });
+    }
+    return inFlight.current;
+  }
 
-  async function submit() {
+  async function submit(via: Via) {
     setError(null);
     try {
       if (!terms) throw new Error("Payments aren't live yet.");
-      const { signInvoice } = await (signer.current ??= loadSigner());
-      const approval = await signInvoice(terms);
+      const { signInvoice } = await loadSigner();
+      // the customer's own wallet: connected, on chain 1874, enough USDT per our server, before it asks to approve
+      const approval = await signInvoice(terms, via === "wallet" ? await walletPayer(fundsUrl) : undefined);
       let res: Response;
       try {
         res = await fetch(`/api/v1/invoices/${invoiceId}/pay`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(approval) });
@@ -151,11 +155,22 @@ export function InvoicePay({ invoiceId, merchantName, dueText, invoiceText, paid
         </p>
       ) : terms ? (
         <div className="grid gap-3">
-          <HoldButton label={`Hold to pay ${totalText} USDT`} busyLabel="Paying" doneLabel="Paid" onConfirm={pay} aria-describedby="pay-hint" className="w-full" />
-          <p id="pay-hint" className="text-center text-sm text-ink-muted">
-            You pay {totalText} USDT: the {owedText} due plus a {feeText} USDT payment fee.
-            <span className="block">Press and hold the button, or press Enter, to pay.</span>
-          </p>
+          {/* short: said before the hold, never after it (a hold already under way stays), and the wallet leads */}
+          {/* submit() already shows its error; the rejection only matters to the hold button */}
+          {guest.funds === "short" && guest.address && paying !== "hold" ? (
+            <GuestShort amountText={totalText} address={guest.address} onRecheck={guest.recheck}>
+              <WalletOption primary busy={paying === "wallet"} disabled={paying !== null} onPay={() => void pay("wallet").catch(() => undefined)} />
+            </GuestShort>
+          ) : (
+            <>
+              <HoldButton label={`Hold to pay ${totalText} USDT`} busyLabel="Paying" doneLabel="Paid" onConfirm={() => pay("hold")} aria-describedby="pay-hint" className="w-full" />
+              <p id="pay-hint" className="text-center text-sm text-ink-muted">
+                You pay {totalText} USDT: the {owedText} due plus a {feeText} USDT payment fee.
+                <span className="block">Press and hold the button, or press Enter, to pay.</span>
+              </p>
+              <WalletOption busy={paying === "wallet"} disabled={paying !== null} onPay={() => void pay("wallet").catch(() => undefined)} />
+            </>
+          )}
         </div>
       ) : (
         <p role="status" className="text-sm text-ink-muted">
@@ -163,8 +178,8 @@ export function InvoicePay({ invoiceId, merchantName, dueText, invoiceText, paid
         </p>
       )}
       {error && (
-        // the demo message explains a limit, it isn't a failure: the warning tone, not red (UX review 005 N3)
-        <p role="alert" className={`text-sm ${error === NOT_FUNDED ? "text-warning" : "text-critical"}`}>
+        // a demo limit is amber and a cancel plain ink, not red (UX review 005 N3, 032 L3); centred under the hint (032 L4)
+        <p role="alert" className={`text-center text-sm ${errorTone(error)}`}>
           {error}
         </p>
       )}
