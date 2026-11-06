@@ -3,11 +3,11 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ApiError } from "../client.ts";
-import type { Customer, DuplicateCustomers } from "../contract.ts";
+import { DuplicateCustomersSchema, type Customer } from "../contract.ts";
 import { labelled } from "../dates.ts";
 import { INVOICE_CURRENCIES } from "../money.ts";
 import { DATA_NOTICE, untrusted } from "../safety.ts";
-import { IDEMPOTENCY_KEY, replayNote, type Ctx } from "./context.ts";
+import { IDEMPOTENCY_KEY, Mismatch, replayNote, type Ctx } from "./context.ts";
 
 const READ = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 const CREATE = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
@@ -15,7 +15,11 @@ export const idempotencyKey = z
   .string()
   .regex(IDEMPOTENCY_KEY, "8 to 100 letters, digits or _ . : -")
   .optional()
-  .describe("Optional. Leave it out normally: retries of the same request are recognised automatically. Pass a NEW value only to deliberately create a second, identical record.");
+  .describe("Optional, advanced: your own key for this exact request. Leave it out normally: a retry of an unresolved request is resumed automatically.");
+export const createAnother = z
+  .boolean()
+  .optional()
+  .describe("true only when the merchant deliberately wants a second record identical to one just created (e.g. two identical sales). Never to retry an error.");
 
 const customerOut = (c: Customer) => ({ id: c.id, name: untrusted(c.name, 100), email: c.email_masked ? untrusted(c.email_masked, 260) : null });
 
@@ -45,6 +49,11 @@ export function registerBusinessTools(server: McpServer, ctx: Ctx): void {
           payment_methods: account.payment_methods,
           payment_limits: account.payment_limits,
           permissions: scopes ?? "This testnet key is a full merchant secret key: WhiteFlow keys have no scopes yet.",
+          publication: account.capabilities.invoices
+            ? account.publish_policy === "owner_approval"
+              ? "An Owner approves each invoice on the review page before it is published (enforced by WhiteFlow)."
+              : "Invoices are published as soon as they're finalized."
+            : null,
           credential_expires_at: account.credential.expires_at,
           available: account.capabilities,
           next_action: account.capabilities.invoices ? "Ask what to collect: a payment link or an invoice." : "This backend supports payment links, payments and the collection summary; invoices and customers are not available yet.",
@@ -93,26 +102,33 @@ export function registerBusinessTools(server: McpServer, ctx: Ctx): void {
         email: z.string().max(254).optional().describe("Optional email, only if the merchant gave it."),
         confirm_new: z.boolean().optional().describe("true only after the merchant confirmed that a listed possible duplicate is a different customer."),
         idempotency_key: idempotencyKey,
+        create_another: createAnother,
       },
       annotations: CREATE,
     },
-    ({ name, email, confirm_new, idempotency_key }) =>
+    ({ name, email, confirm_new, idempotency_key, create_another }) =>
       ctx.reply(async () => {
         await ctx.require("customers", "Creating customers");
         const body = { name, ...(email ? { email } : {}), ...(confirm_new ? { confirm_new: true } : {}) };
+        // the stored name is the one asked for (after the same trimming the server does), or it's not a success (F3)
+        const verify = (c: Customer) => {
+          if (untrusted(c.name, 100) !== untrusted(name, 100)) throw new Mismatch(`the customer came back as "${untrusted(c.name, 100)}", not "${untrusted(name, 100)}"`);
+        };
         try {
-          const { data, replayed, recovered } = await ctx.write("create_customer", body, idempotency_key, (key) => ctx.client.createCustomer(body, key));
+          const written = await ctx.write("create_customer", body, { key: idempotency_key, createAnother: create_another }, (key) => ctx.client.createCustomer(body, key), verify);
+          const { data, replayed } = written;
           return {
             summary: `${replayed ? "Found the customer created earlier" : "Created customer"} ${untrusted(data.name, 100)} (${data.id}).`,
             customer: customerOut(data),
             replayed,
-            ...(replayed ? { note: replayNote(replayed, recovered, "customer") } : {}),
+            ...(replayed ? { note: replayNote(written, "customer") } : {}),
             next_action: "Use this customer_id for create_invoice_draft or create_payment_link.",
             data_notice: DATA_NOTICE,
           };
         } catch (error) {
-          if (error instanceof ApiError && error.status === 409 && Array.isArray((error.body as unknown as DuplicateCustomers | null)?.possible_duplicates)) {
-            const duplicates = (error.body as unknown as DuplicateCustomers).possible_duplicates.map(customerOut);
+          const duplicate = error instanceof ApiError && error.status === 409 ? DuplicateCustomersSchema.safeParse(error.body) : null;
+          if (duplicate?.success) {
+            const duplicates = duplicate.data.possible_duplicates.map(customerOut);
             return {
               summary: "Not created: a customer with this name or email may already exist.",
               created: false,

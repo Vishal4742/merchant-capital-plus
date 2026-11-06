@@ -8,8 +8,8 @@ import { sha256, type SMerchant, type SandboxState, change, read } from "./store
 import type { Account, Scope } from "../contract.ts";
 import {
   SandboxHttpError,
+  approvalJson,
   customerJson,
-  finalized,
   findInvoice,
   invoiceJson,
   linkDetail,
@@ -17,11 +17,13 @@ import {
   newCustomer,
   newInvoice,
   newLink,
+  publicationRequest,
   receivables,
   reminderDraft,
   report,
   searchCustomers,
   today,
+  updatedDraft,
 } from "./records.ts";
 
 const IDEMPOTENCY_MS = 24 * 60 * 60_000;
@@ -98,7 +100,9 @@ function idempotentWrite(dir: string, request: Request, text: string, route: str
     if (prior && prior.hash !== hash) return { result: json(422, { error: "This Idempotency-Key was already used for a different request." }) };
     if (prior) return { result: json(prior.status, prior.body, { "idempotent-replayed": "true" }) };
     const done = run(state, caller, input, now, params);
-    const slot = { merchant_id: caller.merchant.id, route, key, hash, status: done.status, body: done.body, at: now };
+    const record = done.body as { id?: unknown; invoice?: { id?: unknown } };
+    const resultId = typeof record?.id === "string" ? record.id : typeof record?.invoice?.id === "string" ? record.invoice.id : null;
+    const slot = { merchant_id: caller.merchant.id, route, key, hash, status: done.status, body: done.body, result_id: resultId, at: now };
     return { next: { ...done.next, idempotency: [...live, slot] }, result: json(done.status, done.body) };
   });
 }
@@ -114,7 +118,8 @@ function account(caller: Caller): Account {
     payment_methods: [{ id: "sandbox_simulated", label: "Simulated payments from the sandbox CLI only (no real money, no network)" }],
     timezone: caller.merchant.timezone,
     credential: { type: "sandbox_key", key_id: caller.keyId, scopes: caller.scopes, expires_at: caller.expiresAt === null ? null : new Date(caller.expiresAt).toISOString() },
-    capabilities: { links: true, payments: true, reports: true, customers: true, invoices: true, reminders: true },
+    capabilities: { links: true, payments: true, reports: true, customers: true, invoices: true, reminders: true, operations: true, approvals: true },
+    publish_policy: caller.merchant.publish_policy,
   };
 }
 
@@ -145,15 +150,29 @@ const writes: Record<string, { pattern: RegExp; scope: Scope; run: Write }> = {
       return { next, status: 201, body: invoiceJson(next, invoice, now) };
     },
   },
+  update: {
+    pattern: /^\/api\/v1\/invoices\/(inv_[\w-]{1,40})$/,
+    scope: "invoices:write",
+    run: (state, caller, input, now, [ref]) => {
+      const found = findInvoice(state, caller.merchant.id, ref);
+      if (!found) throw new SandboxHttpError(404, "No such invoice.");
+      const { invoice, approvals } = updatedDraft(state, caller.merchant, found, input, now);
+      const next = { ...state, approvals, invoices: state.invoices.map((i) => (i.id === invoice.id ? invoice : i)) };
+      return { next, status: 200, body: invoiceJson(next, invoice, now) };
+    },
+  },
+  // Owner-approval policy (human decision 2026-11-07): finalize asks for publication; an Owner decides it on the review
+  // page (sandbox: `whiteflow-sandbox approve`). Nothing is published here.
   finalize: {
     pattern: /^\/api\/v1\/invoices\/([\w-]{1,64})\/finalize$/,
     scope: "invoices:write",
-    run: (state, caller, _input, now, [ref]) => {
+    run: (state, caller, input, now, [ref]) => {
       const found = findInvoice(state, caller.merchant.id, ref);
       if (!found) throw new SandboxHttpError(404, "No such invoice.");
-      const { invoice, merchant } = finalized(caller.merchant, found, now);
-      const next = { ...state, invoices: state.invoices.map((i) => (i.id === invoice.id ? invoice : i)), merchants: state.merchants.map((m) => (m.id === merchant.id ? merchant : m)) };
-      return { next, status: 200, body: invoiceJson(next, invoice, now) };
+      const approval = publicationRequest(state, caller.merchant, found, input, now);
+      const others = state.approvals.map((a) => (a.invoice_id === found.id && a.status === "pending" && a.id !== approval.id ? { ...a, status: "superseded" as const, decided_at: now } : a));
+      const next = { ...state, approvals: others.some((a) => a.id === approval.id) ? others : [...others, approval] };
+      return { next, status: 202, body: { status: "approval_required", approval: approvalJson(approval, now), invoice: invoiceJson(next, found, now) } };
     },
   },
 };
@@ -162,6 +181,18 @@ function get(state: SandboxState, caller: Caller, url: URL, now: number): unknow
   const path = url.pathname, q = url.searchParams, m = caller.merchant;
   let match: RegExpExecArray | null;
   if (path === "/api/v1/account") return need(caller, "account:read"), account(caller);
+  if ((match = /^\/api\/v1\/operations\/([\w.:-]{1,255})$/.exec(path))) {
+    need(caller, "account:read");
+    const slot = state.idempotency.find((s) => s.merchant_id === m.id && s.key === decodeURIComponent(match![1]));
+    if (!slot) throw new SandboxHttpError(404, "No operation with that Idempotency-Key for this merchant (or it is older than 24 hours).");
+    return { idempotency_key: slot.key, route: slot.route, state: "succeeded", http_status: slot.status, result_id: slot.result_id ?? null, created_at: new Date(slot.at).toISOString() };
+  }
+  if ((match = /^\/api\/v1\/approvals\/(apr_[\w-]{1,40})$/.exec(path))) {
+    need(caller, "invoices:read");
+    const approval = state.approvals.find((a) => a.id === match![1] && a.merchant_id === m.id);
+    if (!approval) throw new SandboxHttpError(404, "No such approval request.");
+    return approvalJson(approval, now);
+  }
   if (path === "/api/v1/customers") {
     need(caller, "customers:read");
     return { data: searchCustomers(state, m.id, q.get("query") ?? "", limitParam(q.get("limit"), 20, 10)).map(customerJson), next: null };

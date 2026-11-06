@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "whiteflow-merchant",
   "display_name": "WhiteFlow Merchant",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Create payment links and invoices, track collections and see what's outstanding, by asking. Sandbox by default; testnet with your WhiteFlow sk_test_ key.",
   "long_description": "WhiteFlow Merchant lets a business manage payment collection from a conversation: find or create customers, create payment links, draft and finalize invoices, check whether they've been paid, list verified payments, summarize collections and draft reminders.\n\n**Two modes.** *Sandbox* (the default) is a local simulator: no account, no network, no real money; payments are simulated by you with the bundled `sandbox-cli`. *Testnet* uses the WhiteFlow gateway on Whitechain Testnet with your own `sk_test_` secret key (test USDT, not real money). On testnet, payment links, payments and collection summaries are live; customers and invoices are not on the testnet backend yet, and those tools say so.\n\n**What it never does.** It doesn't send email, move money, sign transactions, refund, or change keys, wallets or webhooks. Creating a link or finalizing an invoice sends nothing. Payment status comes only from WhiteFlow's verified records.",
   "author": {
@@ -70,12 +70,16 @@
       "description": "Save a private invoice DRAFT (not sent, not payable) for an existing customer_id: line items with quantity × unit price, a due date, and only an explicit discount or tax the merchant stated. Invoices are in USDT, the settlement asset: if the merchant priced in another currency, ask for the USDT amounts or offer a payment link; never convert. Never invent a tax rate. Resolve a relative due date (\"next Friday\") with get_business_profile's today and confirm the resulting date."
     },
     {
+      "name": "update_invoice_draft",
+      "description": "Change a DRAFT before publication: customer, line items, due date, discount, tax or memo (give only what changes; `discount: null` / `tax: null` removes one). It creates a new revision, and any pending publication approval for the old one is cancelled. Published invoices can't be edited."
+    },
+    {
       "name": "finalize_invoice",
-      "description": "Turn a reviewed DRAFT into an open invoice: assigns its number and returns the hosted payment URL (and a PDF URL where supported). Only after the merchant approved the draft's totals. It does NOT email or send anything."
+      "description": "Ask to publish a reviewed DRAFT. This doesn't publish by itself: WhiteFlow creates an approval request for this exact version (total, currency, customer), and an Owner of the business approves it on the review page; then the invoice gets its number and payment URL. A conversation 'yes' is not that approval. The connector re-checks the totals first and refuses if they don't add up. Nothing is emailed or sent."
     },
     {
       "name": "get_invoice",
-      "description": "An invoice's status (draft, open, overdue, paid), totals, amount paid and still due, due date, payment URL, and its verified payments. Paid status comes only from WhiteFlow's verified payment records."
+      "description": "An invoice's status (draft, awaiting approval, open, overdue, paid), totals, amount paid and still due, due date, payment URL, and its verified payments. Paid status comes only from WhiteFlow's verified payment records."
     },
     {
       "name": "list_invoices",
@@ -92,6 +96,10 @@
     {
       "name": "get_collection_summary",
       "description": "Money collected in a period (gross, fees, refunds, net and count, per currency) and, where the backend has invoices, what is outstanding and overdue now. Days are the business's own time zone. Give a period, or from and to."
+    },
+    {
+      "name": "get_operation_status",
+      "description": "Writes whose outcome is still unknown or needs reconciliation (after a timeout, a lost reply, or a reply that didn't match the request), or one write by its idempotency_key: what was attempted, when, and what WhiteFlow's records say. Pass acknowledge: true only after the merchant has checked the record themselves; it clears the local flag so a new, identical request can be made."
     }
   ],
   "tools_generated": false,

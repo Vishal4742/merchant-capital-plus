@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { simulatePayment } from "../src/sandbox/provider.ts";
-import { NOW, sandbox } from "./helpers.ts";
+import { NOW, approveAs, publish, sandbox } from "./helpers.ts";
 
 const LINES = [{ description: "Consulting session", quantity: 3, unit_price: "20.00" }];
 
@@ -39,11 +39,20 @@ test("demo: customer → draft → finalize → URL → simulated signed payment
   assert.equal(draft.json.invoice.payment_url, null);
   assert.match(draft.json.summary, /Not sent and not payable yet/);
 
-  const final = await call("finalize_invoice", { invoice: draft.json.invoice.id });
-  assert.equal(final.isError, false, final.text);
+  // finalize only ASKS to publish; the business Owner approves this exact version (sandbox: the CLI, a person)
+  const requested = await call("finalize_invoice", { invoice: draft.json.invoice.id });
+  assert.equal(requested.isError, false, requested.text);
+  assert.equal(requested.json.approval.status, "pending");
+  assert.equal(requested.json.approval.total, "60.00");
+  assert.equal(requested.json.invoice.status, "draft (awaiting Owner approval)");
+  assert.equal(requested.json.invoice.payment_url, null);
+  assert.match(requested.json.summary, /waiting for an Owner's approval\. Not published yet; nothing was sent/);
+  assert.match(requested.json.next_action, /npm run sandbox -- approve apr_/);
+  assert.equal(approveAs(stateDir, requested.json.approval.id).code, 0);
+  const final = await call("get_invoice", { invoice: draft.json.invoice.id });
   assert.equal(final.json.invoice.number, "WF-1001");
   assert.equal(final.json.invoice.status, "open");
-  assert.equal(final.json.delivered, false);
+  assert.equal(final.json.invoice.approval.status, "approved");
   assert.equal(final.json.invoice.pdf_url, null);
   // 3. the payment URL
   assert.match(final.json.invoice.payment_url, /^https:\/\/sandbox\.whiteflow\.invalid\/i\/inv_/);
@@ -96,7 +105,7 @@ test("discount and explicit tax: integer math, one half-up rounding each, shown 
 });
 
 test("lifecycle refusals: non-USDT invoice, past due date, too precise, names instead of ids, finalize twice", async () => {
-  const { call } = await sandbox();
+  const { call, stateDir } = await sandbox();
   const id = await customer(call);
   const inr = await call("create_invoice_draft", { customer_id: id, currency: "INR", line_items: [{ description: "Session", quantity: 3, unit_price: "2000" }], due_date: "2026-11-13" });
   assert.equal(inr.isError, true);
@@ -115,11 +124,11 @@ test("lifecycle refusals: non-USDT invoice, past due date, too precise, names in
   assert.match(big.json.error, /between 1 and 1,000 USDT/);
 
   const draft = await call("create_invoice_draft", { customer_id: id, currency: "USDT", line_items: LINES, due_date: "2026-11-13" });
-  await call("finalize_invoice", { invoice: draft.json.invoice.id });
-  // a second, separate finalize (new key) of the same invoice is a 409, not a second number
+  await publish(call, stateDir, draft.json.invoice.id);
+  // a second, separate finalize (new key) of the published invoice changes nothing: never a second number
   const again = await call("finalize_invoice", { invoice: draft.json.invoice.id, idempotency_key: "deliberate-second-finalize" });
-  assert.equal(again.isError, true);
-  assert.match(again.json.error, /already open/);
+  assert.match(again.json.summary, /already open/);
+  assert.equal(again.json.invoice.number, "WF-1001");
   const reminderOfDraft = await call("create_invoice_draft", { customer_id: id, currency: "USDT", line_items: LINES, due_date: "2026-11-20" });
   const r = await call("prepare_invoice_reminder", { invoice: reminderOfDraft.json.invoice.id });
   assert.match(r.json.error, /still a draft/);
@@ -127,10 +136,10 @@ test("lifecycle refusals: non-USDT invoice, past due date, too precise, names in
 
 test("overdue: listed by status, totalled in the summary, and the reminder is a draft that names the right recipient", async () => {
   let clock = NOW;
-  const { call } = await sandbox({ now: () => clock });
+  const { call, stateDir } = await sandbox({ now: () => clock });
   const id = await customer(call);
   const draft = await call("create_invoice_draft", { customer_id: id, currency: "USDT", line_items: LINES, due_date: "2026-11-07" });
-  await call("finalize_invoice", { invoice: draft.json.invoice.id });
+  await publish(call, stateDir, draft.json.invoice.id, () => clock);
   clock = NOW + 3 * 86_400_000; // Monday 2026-11-09 in Kolkata
   const overdue = await call("list_invoices", { status: "overdue" });
   assert.equal(overdue.json.invoices.length, 1);

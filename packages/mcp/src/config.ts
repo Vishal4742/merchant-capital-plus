@@ -14,6 +14,9 @@ export interface Config {
   apiKey: string | null; // sandbox: optional (the local default key is used)
   baseUrl: URL | null; // testnet only
   timezone: string | null; // used when the backend has none; null → UTC
+  /** Extra https origins whose checkout/invoice URLs may be shown (an approved custom checkout domain). The gateway's
+   *  own origin is always trusted; nothing else is (production review F3). */
+  trustedOrigins: string[];
   warnings: string[];
 }
 
@@ -35,16 +38,17 @@ export function parseConfig(rawEnv: Record<string, string | undefined>): Config 
   if (zone && !validZone(zone)) throw new Error("WHITEFLOW_TIMEZONE must be an IANA time zone like Asia/Kolkata or Europe/London.");
   if (env.MCP_PAYER_KEY) warnings.push("MCP_PAYER_KEY is ignored: the WhiteFlow connector never signs or pays (pay_checkout was removed). Delete it from your config.");
   if (env.MCP_SECRET_KEY && !key) warnings.push("MCP_SECRET_KEY is no longer read: set WHITEFLOW_API_KEY and WHITEFLOW_MODE=testnet instead.");
+  const trustedOrigins = (env.WHITEFLOW_TRUSTED_ORIGINS ?? "").split(",").map((o) => o.trim()).filter(Boolean).map((o) => gatewayOrigin(o, "WHITEFLOW_TRUSTED_ORIGINS").origin);
 
   if (mode === "testnet") {
     if (!key) throw new Error("Testnet mode needs WHITEFLOW_API_KEY: your secret key from the WhiteFlow dashboard's Developers screen (it starts sk_test_).");
     if (key.startsWith("pk_")) throw new Error("WHITEFLOW_API_KEY is a publishable key (pk_…). Use your secret key (sk_test_…); a publishable key can't read or create records.");
     if (!TESTNET_KEY.test(key)) throw new Error("WHITEFLOW_API_KEY must be your secret key, starting sk_test_ (Developers screen).");
-    return { mode, apiKey: key, baseUrl: gatewayOrigin(env.WHITEFLOW_BASE_URL?.trim() || DEFAULT_BASE_URL), timezone: zone, warnings };
+    return { mode, apiKey: key, baseUrl: gatewayOrigin(env.WHITEFLOW_BASE_URL?.trim() || DEFAULT_BASE_URL), timezone: zone, trustedOrigins, warnings };
   }
   if (key && !SANDBOX_KEY.test(key)) {
     throw new Error(key.startsWith("sk_") ? "That's a testnet key (sk_…): set WHITEFLOW_MODE=testnet to use it. Sandbox mode needs no key." : "In sandbox mode leave WHITEFLOW_API_KEY empty (a local sandbox key is made for you), or give a wf_sbx_ key.");
   }
   if (env.WHITEFLOW_BASE_URL && env.WHITEFLOW_BASE_URL !== DEFAULT_BASE_URL) warnings.push("WHITEFLOW_BASE_URL is ignored in sandbox mode.");
-  return { mode, apiKey: key, baseUrl: null, timezone: zone, warnings };
+  return { mode, apiKey: key, baseUrl: null, timezone: zone, trustedOrigins: [], warnings };
 }

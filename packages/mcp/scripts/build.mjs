@@ -2,6 +2,7 @@
 // dependency inside, so the .mcpb ships no node_modules and no dev-only package. Also writes the bundled packages'
 // licences, and fails if any machine-specific path (this checkout, the home folder) ended up in the output.
 // Usage: node scripts/build.mjs
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -67,6 +68,15 @@ export async function buildServer() {
     "",
   ].join("\n");
   writeFileSync(join(bundleDir, "THIRD_PARTY_LICENSES"), text);
+
+  // a CycloneDX SBOM of what is inside the bundle (production review F8). Deterministic: no timestamp, and the serial
+  // number is derived from the component list, so the same source gives the same bytes.
+  const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+  const components = bundled.map((p) => ({ type: "library", name: p.name, version: p.version, purl: `pkg:npm/${p.name.replace("@", "%40")}@${p.version}`, licenses: [{ expression: p.license }] }));
+  const digest = createHash("sha256").update(JSON.stringify(components)).digest("hex");
+  const serial = `urn:uuid:${digest.slice(0, 8)}-${digest.slice(8, 12)}-5${digest.slice(13, 16)}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+  const sbom = { bomFormat: "CycloneDX", specVersion: "1.5", serialNumber: serial, version: 1, metadata: { component: { type: "application", name: "whiteflow-merchant", version: pkg.version, licenses: [{ expression: pkg.license }] } }, components };
+  writeFileSync(join(bundleDir, "sbom.cdx.json"), `${JSON.stringify(sbom, null, 2)}\n`);
   return { files: readdirSync(join(bundleDir, "server")), packages: bundled.map((p) => `${p.name}@${p.version}`) };
 }
 

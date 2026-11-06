@@ -4,12 +4,14 @@
 // mark something paid. Prints no keys and no webhook secret.
 //   whiteflow-sandbox init [--timezone Asia/Kolkata]
 //   whiteflow-sandbox pay <WF-1001 | inv_… | lnk_… | slug> [--amount 12.50] [--scenario normal|duplicate|out-of-order|bad-signature|fail]
+//   whiteflow-sandbox approve <apr_…> | reject <apr_…>   (the Owner, on the review page)
 //   whiteflow-sandbox reconcile
 //   whiteflow-sandbox status
 import { parseMoney } from "../money.ts";
 import { validZone } from "../dates.ts";
-import { defaultStateDir, ensureSandbox, read } from "./store.ts";
+import { change, defaultStateDir, ensureSandbox, read } from "./store.ts";
 import { reconcile, simulatePayment, type Scenario } from "./provider.ts";
+import { decide } from "./records.ts";
 
 const SCENARIOS: Scenario[] = ["normal", "duplicate", "out-of-order", "bad-signature", "fail"];
 
@@ -18,7 +20,7 @@ function option(args: string[], name: string): string | undefined {
   return i >= 0 ? args[i + 1] : undefined;
 }
 
-export function run(argv: string[], env: Record<string, string | undefined>, out: (line: string) => void): number {
+export function run(argv: string[], env: Record<string, string | undefined>, out: (line: string) => void, now: () => number = Date.now): number {
   const [command, ...args] = argv;
   const dir = defaultStateDir(env);
   const zone = option(args, "timezone") ?? env.WHITEFLOW_TIMEZONE ?? "UTC";
@@ -41,6 +43,20 @@ export function run(argv: string[], env: Record<string, string | undefined>, out
       for (const d of result.deliveries) out(`  ${d.type.padEnd(18)} ${d.outcome.padEnd(9)} ${d.reason}`);
       return 0;
     }
+    case "approve":
+    case "reject": {
+      // SANDBOX stand-in for the business Owner's authenticated review page (production: a signed-in Owner, never a
+      // tool). It decides one exact invoice revision once.
+      const id = args.find((a) => /^apr_[\w-]{1,40}$/.test(a));
+      if (!id) throw new Error(`Usage: whiteflow-sandbox ${command} <apr_…> (the id from finalize_invoice's result)`);
+      const outcome = change(dir, (state) => {
+        const { next, outcome } = decide(state, id, command, now());
+        return { next, result: outcome };
+      });
+      const said = { approved: "approved: the invoice is published (open) with its number and payment URL", rejected: "rejected: the invoice stays a draft", superseded: "not applied: the draft changed after the request, so this approval no longer matches it" } as Record<string, string>;
+      out(`SANDBOX Owner decision on ${id}: ${said[outcome] ?? outcome}.`);
+      return outcome === "superseded" ? 1 : 0;
+    }
     case "reconcile": {
       const { checked, drift } = reconcile(dir);
       out(`Reconciled ${checked} invoice(s) against verified payments: ${drift.length ? `${drift.length} corrected` : "no drift"}.`);
@@ -54,7 +70,7 @@ export function run(argv: string[], env: Record<string, string | undefined>, out
       return 0;
     }
     default:
-      out("Usage: whiteflow-sandbox init | pay <ref> [--amount] [--scenario] | reconcile | status");
+      out("Usage: whiteflow-sandbox init | pay <ref> [--amount] [--scenario] | approve <apr_…> | reject <apr_…> | reconcile | status");
       return command ? 1 : 0;
   }
 }

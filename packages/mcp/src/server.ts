@@ -16,9 +16,10 @@ import { registerCollectionTools } from "./tools/collections.ts";
 import { makeContext } from "./tools/context.ts";
 import { registerInvoiceTools } from "./tools/invoices.ts";
 import { registerLinkTools } from "./tools/links.ts";
+import { registerOperationTools } from "./tools/operations.ts";
 
 export const SERVER_NAME = "whiteflow";
-export const VERSION = "0.2.0";
+export const VERSION = "0.3.0";
 
 export interface ServerOptions {
   env: Record<string, string | undefined>;
@@ -49,8 +50,9 @@ export function createServer(opts: ServerOptions): McpServer {
   for (const warning of config.warnings) log.info(warning);
 
   const client = new WhiteflowClient({ baseUrl: base, apiKey, fetch: sandbox ? sandboxFetch(dir, now) : (opts.fetch ?? globalThis.fetch), timeoutMs: opts.timeoutMs, sleep: opts.sleep });
-  const journal = new Journal(join(dir, "journal.json"), `${base.origin}|${apiKey}`, now);
-  const ctx = makeContext({ mode: config.mode, client, journal, reply: replier(redact, log, ENVIRONMENT[config.mode]), log, now, configuredZone: config.timezone });
+  // the journal binds each write to the authenticated merchant (see tools/context.ts), not to this key
+  const journal = new Journal(join(dir, "journal.json"), now);
+  const ctx = makeContext({ mode: config.mode, client, journal, reply: replier(redact, log, ENVIRONMENT[config.mode]), log, now, configuredZone: config.timezone, trustedOrigins: config.trustedOrigins });
 
   const server = new McpServer(
     { name: SERVER_NAME, version: VERSION },
@@ -65,6 +67,7 @@ export function createServer(opts: ServerOptions): McpServer {
   registerLinkTools(server, ctx);
   registerInvoiceTools(server, ctx);
   registerCollectionTools(server, ctx);
+  registerOperationTools(server, ctx);
   registerPrompts(server);
   log.info(`started in ${config.mode} mode${sandbox ? ` (sandbox data in ${dir})` : ` against ${base.origin}`}`);
   return server;

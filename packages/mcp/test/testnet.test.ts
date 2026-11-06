@@ -79,7 +79,8 @@ test("timeout with an unknown outcome: the tool says it's safe to retry, and the
   const lost = await first.call("create_payment_link", { amount: "15000", currency: "INR", description: "Acme website redesign" });
   assert.equal(lost.isError, true);
   assert.equal(lost.json.outcome, "unknown");
-  assert.match(lost.json.error, /didn't answer in time.*safe to call this tool again/);
+  assert.match(lost.json.error, /didn't answer in time.*resumes this operation .* until 2026-11-07T12:00:00\.000Z, while WhiteFlow can still replay it/);
+  assert.equal(lost.json.resumable_until, '2026-11-07T12:00:00.000Z');
   const key = lost.json.idempotency_key;
   assert.equal(calls.filter((c) => c.method === "POST").length, 3); // the first try and two retries, one key
   assert.ok(calls.filter((c) => c.method === "POST").every((c) => c.headers.get("idempotency-key") === key));
@@ -89,7 +90,7 @@ test("timeout with an unknown outcome: the tool says it's safe to retry, and the
   const recovered = await second.call("create_payment_link", { amount: "15000", currency: "INR", description: "Acme website redesign" });
   assert.equal(recovered.isError, false, recovered.text);
   assert.equal(calls.at(-1)!.headers.get("idempotency-key"), key);
-  assert.match(recovered.json.note, /reused that attempt's idempotency key/);
+  assert.match(recovered.json.note, /resumed that unresolved attempt/);
 });
 
 test("a lost reply then 429s, or a 'still being processed' 409, stays ambiguous: the next call reuses the key (review 052 M1)", async () => {

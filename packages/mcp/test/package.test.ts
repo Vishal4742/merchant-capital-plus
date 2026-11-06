@@ -52,7 +52,7 @@ test("whiteflow.mcpb: validated, self-contained, launches from the unpacked arch
   const built = await pack();
   assert.ok(existsSync(archive));
   assert.match(readFileSync(`${archive}.sha256`, "utf8"), /^[0-9a-f]{64}  whiteflow\.mcpb\n$/);
-  assert.deepEqual(built.files, ["LICENSE", "README.md", "THIRD_PARTY_LICENSES", "icon.png", "manifest.json", "server/index.mjs", "server/sandbox-cli.mjs"]);
+  assert.deepEqual(built.files, ["LICENSE", "README.md", "THIRD_PARTY_LICENSES", "icon.png", "manifest.json", "sbom.cdx.json", "server/index.mjs", "server/sandbox-cli.mjs"]);
   assert.equal(readFileSync(new URL("manifest.json", ROOT), "utf8").replace(/\r\n/g, "\n"), await manifestText(), "manifest.json is current");
 
   const installed = tempDir(); // outside the repo: no node_modules anywhere above it
@@ -63,6 +63,9 @@ test("whiteflow.mcpb: validated, self-contained, launches from the unpacked arch
   const licences = readFileSync(join(installed, "THIRD_PARTY_LICENSES"), "utf8");
   assert.match(licences, /@modelcontextprotocol\/sdk 1\.32\.2/);
   assert.match(licences, /zod 4\.6\.7/);
+  const sbom = JSON.parse(readFileSync(join(installed, "sbom.cdx.json"), "utf8"));
+  assert.equal(sbom.bomFormat, "CycloneDX");
+  assert.ok(sbom.components.some((c: { purl: string }) => c.purl === "pkg:npm/%40modelcontextprotocol/sdk@1.32.2"));
   for (const file of readdirSync(join(installed, "server"))) {
     const text = readFileSync(join(installed, "server", file), "utf8");
     assert.ok(!/sk_test_[A-Za-z0-9_-]{16}|wf_sbx_[A-Za-z0-9_-]{32}|PRIVATE KEY/.test(text), `${file} has a key-shaped string`);
@@ -90,7 +93,13 @@ test("whiteflow.mcpb: validated, self-contained, launches from the unpacked arch
     const customer = (await server.call("create_customer", { name: "Priya Sharma", email: "priya@example.com" })).customer;
     const draft = await server.call("create_invoice_draft", { customer_id: customer.id, currency: "USDT", line_items: [{ description: "Consulting session", quantity: 3, unit_price: "20.00" }], due_date: new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10) }); // a week out: the bundle runs on the real clock
     assert.ok(draft.invoice, JSON.stringify(draft));
-    const final = await server.call("finalize_invoice", { invoice: draft.invoice.id });
+    // publication needs the Owner: finalize asks; the bundled CLI (the review page's stand-in) approves this version
+    const requested = await server.call("finalize_invoice", { invoice: draft.invoice.id });
+    assert.equal(requested.approval.status, "pending");
+    const approved = spawnSync(process.execPath, [join(installed, "server", "sandbox-cli.mjs"), "approve", requested.approval.id], { cwd: installed, env, encoding: "utf8" });
+    assert.equal(approved.status, 0, approved.stderr);
+    assert.match(approved.stdout, /approved: the invoice is published/);
+    const final = await server.call("get_invoice", { invoice: draft.invoice.id });
     assert.equal(final.invoice.number, "WF-1001");
     const paid = spawnSync(process.execPath, [join(installed, "server", "sandbox-cli.mjs"), "pay", "WF-1001"], { cwd: installed, env, encoding: "utf8" });
     assert.equal(paid.status, 0, paid.stderr);

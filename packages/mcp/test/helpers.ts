@@ -7,6 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer, type ServerOptions } from "../src/server.ts";
 import type { Logger } from "../src/safety.ts";
+import { run as sandboxCli } from "../src/sandbox/cli.ts";
 
 export const BASE = "https://gateway.test";
 export const TESTNET_KEY = ["sk", "test", "AbCdEfGhIjKlMnOpQrStUvWxYz012345"].join("_");
@@ -59,6 +60,22 @@ export async function connect(env: Record<string, string | undefined>, opts: Par
     return { text, json, isError: Boolean(result.isError) };
   };
   return { client, call, log: log as ReturnType<typeof memoryLog> };
+}
+
+/** The business Owner approves a publication request through the sandbox CLI (the stand-in for the review page). */
+export function approveAs(stateDir: string, approvalId: string, decision: "approve" | "reject" = "approve", now: () => number = () => NOW): { code: number; said: string } {
+  const lines: string[] = [];
+  const code = sandboxCli([decision, approvalId], { WHITEFLOW_STATE_DIR: stateDir }, (line) => lines.push(line), now);
+  return { code, said: lines.join("\n") };
+}
+
+/** finalize_invoice (the request) + the Owner's approval: the invoice as it is afterwards (published). */
+export async function publish(call: (name: string, args?: Record<string, unknown>) => Promise<ToolResult>, stateDir: string, invoice: string, now: () => number = () => NOW): Promise<ToolResult> {
+  const requested = await call("finalize_invoice", { invoice });
+  if (requested.isError || !requested.json.approval?.id) return requested;
+  const decided = approveAs(stateDir, requested.json.approval.id, "approve", now);
+  if (decided.code !== 0) throw new Error(decided.said);
+  return call("get_invoice", { invoice });
 }
 
 /** A sandbox server (the default mode) in its own state dir, in Asia/Kolkata. */

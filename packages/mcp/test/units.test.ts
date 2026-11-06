@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { endOfDay, resolvePeriod, resolveRange, startOfDay } from "../src/dates.ts";
-import { Journal, REUSE_WINDOW_MS } from "../src/journal.ts";
+import { Journal, JournalRefusal, SERVER_RETENTION_MS } from "../src/journal.ts";
 import { applyBps, decimal, display, invoiceTotals, parseMoney, percentToBps } from "../src/money.ts";
 import { maskEmail, redactor, untrusted } from "../src/safety.ts";
 import { tempDir } from "./helpers.ts";
@@ -84,22 +84,36 @@ test("untrusted text: control, zero-width and bidi characters removed, length bo
   assert.equal(redact("key sk_test_SECRETSECRET and abcdef0123456789 and short"), "key [redacted] and [redacted] and short");
 });
 
-test("journal: a same-payload retry within the window reuses the key; a refusal, another payload, another account or an old entry don't", () => {
+test("journal: resumes unresolved writes, replays an accidental repeat, separates merchants, never evicts unresolved (F2)", () => {
   let now = 1_000_000;
   const file = join(tempDir(), "journal.json");
-  const a = new Journal(file, "https://gw|key-a", () => now);
-  const first = a.claim("create_payment_link", { amount: "10", currency: "USDT" });
+  const j = new Journal(file, () => now);
+  const a = Journal.scope("https://gw", "test", "0xAAA"), b = Journal.scope("https://gw", "test", "0xBBB");
+  assert.equal(Journal.scope("https://gw", "test", "0xaaa"), a, "the merchant id is case-insensitive");
+  const first = j.claim(a, "create_payment_link", { amount: "10", currency: "USDT" });
   assert.equal(first.source, "new");
-  // property order doesn't matter
-  const again = a.claim("create_payment_link", { currency: "USDT", amount: "10" });
-  assert.deepEqual([again.key, again.source, again.previousOutcome], [first.key, "recovered", "pending"]);
-  assert.equal(a.claim("create_payment_link", { amount: "11", currency: "USDT" }).source, "new");
-  assert.equal(a.claim("create_payment_link", { amount: "10", currency: "USDT" }, "caller-key-123").key, "caller-key-123");
-  const b = new Journal(file, "https://gw|key-b", () => now);
-  assert.equal(b.claim("create_payment_link", { amount: "10", currency: "USDT" }).source, "new");
-  const fresh = a.claim("finalize_invoice", { invoice: "inv_1" });
-  a.settle(fresh.key, "refused");
-  assert.equal(a.claim("finalize_invoice", { invoice: "inv_1" }).source, "new");
-  now += REUSE_WINDOW_MS + 1;
-  assert.equal(a.claim("create_payment_link", { amount: "10", currency: "USDT" }).source, "new");
+  // property order doesn't matter; an unresolved one is resumed however late, within the server's retention
+  now += 20 * 3_600_000;
+  const again = j.claim(a, "create_payment_link", { currency: "USDT", amount: "10" });
+  assert.deepEqual([again.key, again.source], [first.key, "resumed"]);
+  assert.equal(j.claim(a, "create_payment_link", { amount: "11", currency: "USDT" }).source, "new");
+  assert.equal(j.claim(b, "create_payment_link", { amount: "10", currency: "USDT" }).source, "new", "another merchant never shares");
+  // a caller key reused for another request is refused without touching its entry (review F9)
+  assert.equal(j.claim(a, "create_payment_link", { amount: "12", currency: "USDT" }, { callerKey: "caller-key-123" }).key, "caller-key-123");
+  assert.throws(() => j.claim(a, "create_payment_link", { amount: "13", currency: "USDT" }, { callerKey: "caller-key-123" }), JournalRefusal);
+  // settled: an accidental repeat within 15 minutes replays; create_another makes a new one; a refusal frees it
+  j.settle(a, first.key, "done");
+  assert.equal(j.claim(a, "create_payment_link", { amount: "10", currency: "USDT" }).source, "replay");
+  assert.equal(j.claim(a, "create_payment_link", { amount: "10", currency: "USDT" }, { createAnother: true }).source, "new");
+  const refused = j.claim(a, "finalize_invoice", { invoice: "inv_1" });
+  j.settle(a, refused.key, "refused");
+  assert.equal(j.claim(a, "finalize_invoice", { invoice: "inv_1" }).source, "new");
+  // past the server's retention, an unresolved write is flagged, never re-sent with a fresh key
+  const stuck = j.claim(a, "create_invoice_draft", { total: "5" });
+  now += SERVER_RETENTION_MS;
+  assert.throws(() => j.claim(a, "create_invoice_draft", { total: "5" }), (e: JournalRefusal) => e.entry?.outcome === "needs_reconciliation" && e.entry.key === stuck.key);
+  assert.throws(() => j.claim(a, "create_invoice_draft", { total: "5" }), JournalRefusal, "still blocked on the next call");
+  assert.ok(j.unresolved(a).some((e) => e.key === stuck.key));
+  j.settle(a, stuck.key, "acknowledged");
+  assert.equal(j.claim(a, "create_invoice_draft", { total: "5" }).source, "new");
 });

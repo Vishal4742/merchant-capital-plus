@@ -16,6 +16,8 @@ export interface SMerchant {
   name: string;
   timezone: string;
   next_number: number; // WF-<n> for the next finalized invoice
+  /** Human decision 2026-11-07: an Owner approves each publication on the review page (sandbox: the CLI's approve). */
+  publish_policy: "owner_approval";
 }
 export interface SKey {
   id: string;
@@ -57,6 +59,7 @@ export interface SInvoice {
   merchant_id: string;
   number: string | null;
   status: "draft" | "open" | "paid";
+  revision: number; // +1 on every draft edit; an approval is bound to one revision
   customer_id: string;
   currency: string;
   line_items: SLine[];
@@ -90,7 +93,23 @@ export interface SIdempotency {
   hash: string;
   status: number;
   body: unknown;
+  result_id: string | null;
   at: number;
+}
+/** A request to publish one exact invoice revision; an Owner decides it once (production review F4). */
+export interface SApproval {
+  id: string;
+  merchant_id: string;
+  invoice_id: string;
+  revision: number;
+  hash: string; // the invoice content's hash at the request
+  total: string;
+  currency: string;
+  customer_id: string;
+  requested_at: number;
+  expires_at: number;
+  status: "pending" | "approved" | "rejected" | "superseded" | "expired";
+  decided_at: number | null;
 }
 export interface SEventLog {
   id: string;
@@ -109,6 +128,7 @@ export interface SandboxState {
   links: SLink[];
   invoices: SInvoice[];
   payments: SPayment[];
+  approvals: SApproval[];
   idempotency: SIdempotency[];
   processed_events: string[];
   event_log: SEventLog[];
@@ -138,13 +158,22 @@ const empty = (): SandboxState => ({
   links: [],
   invoices: [],
   payments: [],
+  approvals: [],
   idempotency: [],
   processed_events: [],
   event_log: [],
 });
 
-export const read = (dir: string): SandboxState => snapshot(stateFile(dir), empty);
-export const change = <R>(dir: string, fn: (state: SandboxState) => { next?: SandboxState; result: R }): R => transact(stateFile(dir), empty, fn);
+/** A sandbox made before round 2 gets the fields it lacks (no approvals yet, revision 1, the Owner-approval policy). */
+const current = (state: SandboxState): SandboxState => ({
+  ...state,
+  approvals: state.approvals ?? [],
+  merchants: state.merchants.map((m) => ({ ...m, publish_policy: m.publish_policy ?? "owner_approval" })),
+  invoices: state.invoices.map((i) => ({ ...i, revision: i.revision ?? 1 })),
+});
+
+export const read = (dir: string): SandboxState => current(snapshot(stateFile(dir), empty));
+export const change = <R>(dir: string, fn: (state: SandboxState) => { next?: SandboxState; result: R }): R => transact(stateFile(dir), empty, (state) => fn(current(state)));
 
 /** Adds a simulated merchant with one key; returns the key (shown once, like a real one). */
 export function addMerchant(dir: string, opts: { name: string; timezone: string; scopes?: Scope[]; expiresAt?: number | null; now?: number }): { merchantId: string; apiKey: string; keyId: string } {
@@ -152,7 +181,7 @@ export function addMerchant(dir: string, opts: { name: string; timezone: string;
   change(dir, (state) => ({
     next: {
       ...state,
-      merchants: [...state.merchants, { id: merchantId, name: opts.name, timezone: opts.timezone, next_number: 1001 }],
+      merchants: [...state.merchants, { id: merchantId, name: opts.name, timezone: opts.timezone, next_number: 1001, publish_policy: "owner_approval" }],
       keys: [...state.keys, { id: keyId, merchant_id: merchantId, hash: sha256(apiKey), label: "sandbox", scopes: opts.scopes ?? ALL_SCOPES, expires_at: opts.expiresAt ?? null, revoked_at: null }],
     },
     result: undefined,

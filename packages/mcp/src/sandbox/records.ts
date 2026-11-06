@@ -1,12 +1,14 @@
 // SANDBOX ONLY (batch 052, FR-MCP-13/14/16/17): the contract's records as the simulator keeps them. Validation and
 // state transitions mirror the contract (API-CONTRACT.md); money uses src/money.ts, the same integer code the tools use.
-import type { Customer, Invoice, Link, LinkDetail, Receivables, ReminderDraft, Report } from "../contract.ts";
+import type { Approval, Customer, Invoice, Link, LinkDetail, Receivables, ReminderDraft, Report } from "../contract.ts";
+import { canonical } from "../journal.ts";
 import { addDays, calendarDate, dateIn, labelled } from "../dates.ts";
 import { CURRENCIES, DIGITS, MoneyError, bpsToPercent, decimal, display, invoiceTotals, isCurrency, parseMoney, type Currency, type DiscountInput, type TaxInput } from "../money.ts";
 import { maskEmail, untrusted } from "../safety.ts";
-import { newId, type SCustomer, type SInvoice, type SLink, type SMerchant, type SPayment, type SandboxState } from "./store.ts";
+import { newId, sha256, type SApproval, type SCustomer, type SInvoice, type SLink, type SMerchant, type SPayment, type SandboxState } from "./store.ts";
 
 export const SANDBOX_BASE = "https://sandbox.whiteflow.invalid";
+export const APPROVAL_TTL_MS = 48 * 60 * 60_000;
 export const MIN_USDT = 1_000_000n; // the gateway's 1 USDT minimum (apps/web MIN_PAYMENT)
 export const MAX_USDT = 1_000_000_000n; // and its 1,000 USDT testnet maximum (MAX_PAYMENT)
 const MAX_LINES = 50;
@@ -98,6 +100,7 @@ export function linkJson(state: SandboxState, link: SLink, now: number): Link {
     currency: link.currency,
     description: link.description,
     reference_id: link.reference_id,
+    customer_id: link.customer_id,
     single_use: link.single_use,
     status: linkStatus(link, paid, now),
     expires_at: iso(link.expires_at),
@@ -152,6 +155,7 @@ export function invoiceJson(state: SandboxState, invoice: SInvoice, now: number)
     id: invoice.id,
     number: invoice.number,
     status: invoice.status,
+    revision: invoice.revision,
     overdue: invoice.status === "open" && invoice.due_date < today(merchant, now),
     customer: { id: invoice.customer_id, name: customer?.name ?? "(deleted customer)" },
     currency,
@@ -171,11 +175,13 @@ export function invoiceJson(state: SandboxState, invoice: SInvoice, now: number)
     created_at: iso(invoice.created_at)!,
     finalized_at: iso(invoice.finalized_at),
     paid_at: iso(invoice.paid_at),
+    approval: latestApproval(state, invoice.id, now),
     payments: succeededFor(state, "invoice", invoice.id).map((p) => ({ id: p.id, amount: usdt(p.amount), currency: "USDT", status: "succeeded", paid_at: iso(p.succeeded_at)!, evidence: `sandbox:${p.provider_ref}` })),
   };
 }
 
-export function newInvoice(state: SandboxState, merchant: SMerchant, body: Record<string, unknown>, now: number): SInvoice {
+/** The editable content of a draft, validated (create and update share it). */
+function draftFields(state: SandboxState, merchant: SMerchant, body: Record<string, unknown>, now: number): Omit<SInvoice, "id" | "merchant_id" | "number" | "status" | "revision" | "amount_paid" | "created_at" | "finalized_at" | "paid_at"> {
   const customerId = typeof body.customer_id === "string" ? body.customer_id : "";
   if (!state.customers.some((c) => c.id === customerId && c.merchant_id === merchant.id)) throw new SandboxHttpError(404, "No such customer: search_customers or create_customer first, then use its id.");
   const currency = typeof body.currency === "string" ? body.currency.toUpperCase() : "";
@@ -199,10 +205,6 @@ export function newInvoice(state: SandboxState, merchant: SMerchant, body: Recor
   if (dueDate > addDays(local, 366 * 2)) throw bad("due_date must be within two years.");
   const memo = text(body.memo, "memo", { max: 500, required: false });
   return {
-    id: newId("inv"),
-    merchant_id: merchant.id,
-    number: null,
-    status: "draft",
     customer_id: customerId,
     currency,
     line_items: totals.lines.map((l) => ({ description: l.description, quantity: l.quantity, unit_price: l.unitPrice.toString(), amount: l.amount.toString() })),
@@ -210,12 +212,87 @@ export function newInvoice(state: SandboxState, merchant: SMerchant, body: Recor
     discount: totals.discount ? { type: totals.discount.type, bps: totals.discount.bps?.toString() ?? null, amount: totals.discount.amount.toString() } : null,
     tax: totals.tax ? { name: untrusted(totals.tax.name, 40), bps: totals.tax.bps.toString(), amount: totals.tax.amount.toString() } : null,
     total: totals.total.toString(),
-    amount_paid: "0",
     memo,
     due_date: dueDate,
-    created_at: now,
-    finalized_at: null,
-    paid_at: null,
+  };
+}
+
+export function newInvoice(state: SandboxState, merchant: SMerchant, body: Record<string, unknown>, now: number): SInvoice {
+  const fields = draftFields(state, merchant, body, now);
+  return { id: newId("inv"), merchant_id: merchant.id, number: null, status: "draft", revision: 1, amount_paid: "0", created_at: now, finalized_at: null, paid_at: null, ...fields };
+}
+
+/** A draft edit: only a draft, only against the revision the caller read (409 otherwise). It makes a new revision
+ *  and supersedes any pending approval of the old one (F4: an approval covers exactly one version). */
+export function updatedDraft(state: SandboxState, merchant: SMerchant, invoice: SInvoice, body: Record<string, unknown>, now: number): { invoice: SInvoice; approvals: SApproval[] } {
+  if (invoice.status !== "draft") throw new SandboxHttpError(409, `Invoice ${invoice.number} is ${invoice.status}; only a draft can be edited.`);
+  if (body.revision !== invoice.revision) throw new SandboxHttpError(409, `This draft changed since it was read (now revision ${invoice.revision}). Read it again, then edit.`);
+  const next = { ...invoice, ...draftFields(state, merchant, { currency: invoice.currency, ...body }, now), revision: invoice.revision + 1 };
+  const approvals = state.approvals.map((a) => (a.invoice_id === invoice.id && a.status === "pending" ? { ...a, status: "superseded" as const, decided_at: now } : a));
+  return { invoice: next, approvals };
+}
+
+/** What an approval binds: everything a customer would be asked to pay against (F4). */
+export const contentHash = (i: SInvoice) => sha256(canonical({ customer_id: i.customer_id, currency: i.currency, line_items: i.line_items, subtotal: i.subtotal, discount: i.discount, tax: i.tax, total: i.total, memo: i.memo, due_date: i.due_date }));
+
+export function approvalJson(approval: SApproval, now: number): Approval {
+  const status = approval.status === "pending" && approval.expires_at <= now ? "expired" : approval.status;
+  return {
+    id: approval.id,
+    invoice_id: approval.invoice_id,
+    revision: approval.revision,
+    status,
+    total: decimal(BigInt(approval.total), approval.currency as Currency),
+    currency: approval.currency,
+    customer_id: approval.customer_id,
+    requested_at: iso(approval.requested_at)!,
+    expires_at: iso(approval.expires_at)!,
+    decided_at: iso(approval.decided_at),
+    review_url: `${SANDBOX_BASE}/review/${approval.id}`,
+  };
+}
+
+function latestApproval(state: SandboxState, invoiceId: string, now: number): Approval | null {
+  const latest = state.approvals.filter((a) => a.invoice_id === invoiceId).sort((a, b) => b.requested_at - a.requested_at)[0];
+  return latest ? approvalJson(latest, now) : null;
+}
+
+/** finalize under the Owner-approval policy: an approval request for the draft's current revision (one per revision:
+ *  asking again returns the pending one). The caller must name the revision it reviewed. Publishes nothing. */
+export function publicationRequest(state: SandboxState, merchant: SMerchant, invoice: SInvoice, body: Record<string, unknown>, now: number): SApproval {
+  if (invoice.status !== "draft") throw new SandboxHttpError(409, `Invoice ${invoice.number} is already ${invoice.status}; only a draft can be published.`);
+  if (body.revision !== invoice.revision) throw new SandboxHttpError(409, `This draft changed since it was reviewed (now revision ${invoice.revision}). Review it again before asking to publish.`);
+  const local = today(merchant, now);
+  if (invoice.due_date < local) throw new SandboxHttpError(422, `This draft's due date ${invoice.due_date} has passed (today is ${local}). Update the due date first.`);
+  const hash = contentHash(invoice);
+  const pending = state.approvals.find((a) => a.invoice_id === invoice.id && a.status === "pending" && a.revision === invoice.revision && a.hash === hash && a.expires_at > now);
+  if (pending) return pending;
+  return { id: newId("apr"), merchant_id: merchant.id, invoice_id: invoice.id, revision: invoice.revision, hash, total: invoice.total, currency: invoice.currency, customer_id: invoice.customer_id, requested_at: now, expires_at: now + APPROVAL_TTL_MS, status: "pending", decided_at: null };
+}
+
+/** The Owner's decision (sandbox stand-in for the authenticated review page): once, before expiry, and only if the
+ *  invoice is still exactly the version that was approved. Approving publishes it (number, payment URL). */
+export function decide(state: SandboxState, approvalId: string, decision: "approve" | "reject", now: number): { next: SandboxState; outcome: SApproval["status"] } {
+  const approval = state.approvals.find((a) => a.id === approvalId);
+  if (!approval) throw new Error(`No sandbox approval ${approvalId}.`);
+  const view = approvalJson(approval, now);
+  if (view.status !== "pending") throw new Error(`Approval ${approvalId} is ${view.status}; it can't be decided (again).`);
+  const invoice = state.invoices.find((i) => i.id === approval.invoice_id)!;
+  const decided = (status: SApproval["status"]) => state.approvals.map((a) => (a.id === approvalId ? { ...a, status, decided_at: now } : a));
+  if (decision === "reject") return { next: { ...state, approvals: decided("rejected") }, outcome: "rejected" };
+  if (invoice.status !== "draft" || invoice.revision !== approval.revision || contentHash(invoice) !== approval.hash || invoice.total !== approval.total) {
+    return { next: { ...state, approvals: decided("superseded") }, outcome: "superseded" };
+  }
+  const merchant = state.merchants.find((m) => m.id === invoice.merchant_id)!;
+  const { invoice: open, merchant: numbered } = finalized(merchant, invoice, now);
+  return {
+    next: {
+      ...state,
+      approvals: decided("approved"),
+      invoices: state.invoices.map((i) => (i.id === open.id ? open : i)),
+      merchants: state.merchants.map((m) => (m.id === numbered.id ? numbered : m)),
+    },
+    outcome: "approved",
   };
 }
 

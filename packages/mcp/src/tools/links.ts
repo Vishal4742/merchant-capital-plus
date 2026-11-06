@@ -3,12 +3,12 @@
 // payment the relayer submitted and the chain confirmed), never the model's reading of a page or redirect.
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { Link, LinkDetail } from "../contract.ts";
+import type { Link } from "../contract.ts";
 import { DateError, calendarDate, dateIn, endOfDay, labelled } from "../dates.ts";
 import { CURRENCIES, MoneyError, decimal, display, fromApi, parseMoney, type Currency } from "../money.ts";
 import { DATA_NOTICE, ToolRefusal, untrusted } from "../safety.ts";
-import { idempotencyKey } from "./business.ts";
-import { EXPLORER_TX, replayNote, type Ctx, type Profile } from "./context.ts";
+import { createAnother, idempotencyKey } from "./business.ts";
+import { EXPLORER_TX, Mismatch, replayNote, type Ctx, type Profile } from "./context.ts";
 
 const LINK_ID = /^lnk_[A-Za-z0-9_-]{1,40}$/;
 
@@ -24,12 +24,22 @@ function price(text: string | null, currency: Currency): { amount: string | null
   }
 }
 
-function linkOut(ctx: Ctx, link: Link, profile: Profile) {
+/** A link's URL, only if it's on a trusted WhiteFlow origin; for a read, an untrusted one is refused outright. */
+function readUrl(ctx: Ctx, value: string): string {
+  try {
+    return ctx.trustedUrl(value, "the link's URL");
+  } catch (error) {
+    if (error instanceof Mismatch) throw new ToolRefusal(`WhiteFlow returned a link URL that isn't on a trusted origin (${error.message}). Don't share it; check the link in the dashboard.`);
+    throw error;
+  }
+}
+
+function linkOut(link: Link, url: string, profile: Profile) {
   const currency = link.currency as Currency;
   const { amount, display: shown } = price(link.amount, currency);
   return {
     id: link.id,
-    url: ctx.client.absolute(link.url),
+    url,
     amount,
     currency,
     amount_display: shown,
@@ -64,6 +74,7 @@ export function registerLinkTools(server: McpServer, ctx: Ctx): void {
         expires_on: z.string().optional().describe("Optional last day the link can be paid, YYYY-MM-DD in the business time zone (it closes at the end of that day)."),
         single_use: z.boolean().default(true).describe("true (default): closes after one payment. false: a reusable link."),
         idempotency_key: idempotencyKey,
+        create_another: createAnother,
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -100,8 +111,32 @@ export function registerLinkTools(server: McpServer, ctx: Ctx): void {
           ...(expiresAt ? { expires_at: expiresAt } : {}),
           ...(input.customer_id ? { customer_id: input.customer_id } : {}),
         };
-        const { data, replayed, recovered } = await ctx.write("create_payment_link", body, input.idempotency_key, (key) => ctx.client.createLink(body, key));
-        const link = linkOut(ctx, data, profile);
+        let url = "";
+        // the link must be the one asked for: same price, currency, text, reference, use and expiry, on a trusted
+        // origin. Anything else is never reported as a success (production review F3).
+        const verify = (got: Link) => {
+          const wrong: string[] = [];
+          let units: bigint | null = null;
+          try {
+            units = got.amount === null ? null : fromApi(got.amount, price.currency);
+          } catch {
+            wrong.push(`amount ${got.amount}`);
+          }
+          if (units !== price.units) wrong.push(`amount ${got.amount ?? "none"} instead of ${body.amount}`);
+          if (got.currency !== price.currency) wrong.push(`currency ${got.currency} instead of ${price.currency}`);
+          // compared after the same normalisation (trim, collapsed spaces, no control characters) on both sides
+          const same = (a: string | null | undefined, b: string | null | undefined) => untrusted(a ?? "", 400) === untrusted(b ?? "", 400);
+          if (!same(got.description, input.description)) wrong.push("a different description");
+          if (!same(got.reference_id, input.reference)) wrong.push("a different reference");
+          if (got.single_use !== input.single_use) wrong.push(`single_use ${got.single_use}`);
+          if ((got.expires_at ? Date.parse(got.expires_at) : null) !== (expiresAt ? Date.parse(expiresAt) : null)) wrong.push("a different expiry");
+          if (got.customer_id !== undefined && (got.customer_id ?? null) !== (input.customer_id ?? null)) wrong.push("a different customer");
+          if (wrong.length) throw new Mismatch(wrong.join(", "));
+          url = ctx.trustedUrl(got.url, "the link's URL");
+        };
+        const written = await ctx.write("create_payment_link", body, { key: input.idempotency_key, createAnother: input.create_another }, (key) => ctx.client.createLink(body, key), verify);
+        const { data, replayed } = written;
+        const link = linkOut(data, url, profile);
         return {
           summary: `${replayed ? "Found the payment link already created" : "Created a payment link"} for ${link.amount_display} — ${link.description}. Status: ${link.status}.`,
           link,
@@ -109,7 +144,7 @@ export function registerLinkTools(server: McpServer, ctx: Ctx): void {
           delivery_note: "WhiteFlow did not send this link to anyone. Share the URL with the customer yourself.",
           settlement_note: conversionNote(price.currency),
           replayed,
-          ...(replayed ? { note: replayNote(replayed, recovered, "link") } : {}),
+          ...(replayed ? { note: replayNote(written, "link") } : {}),
           next_action: `Send ${link.url} to the customer. Later, ask "has it been paid?" (get_payment_link ${data.id}).`,
           data_notice: DATA_NOTICE,
         };
@@ -128,9 +163,9 @@ export function registerLinkTools(server: McpServer, ctx: Ctx): void {
       ctx.reply(async () => {
         const profile = await ctx.require("links", "Payment links");
         if (!LINK_ID.test(link_id)) throw new ToolRefusal("link_id must be a link id like lnk_…; find it in the create_payment_link result.");
-        const { data } = await ctx.client.getLink(link_id);
-        const detail = data as LinkDetail;
-        const payments = (detail.paid_checkouts ?? []).map((p) => ({
+        const { data: detail } = await ctx.client.getLink(link_id);
+        if (detail.id !== link_id) throw new ToolRefusal("WhiteFlow returned a different link than the one asked for; check it in the dashboard.");
+        const payments = detail.paid_checkouts.map((p) => ({
           id: p.payment_id ?? p.session_id,
           amount: decimal(fromApi(p.amount, "USDT"), "USDT"),
           currency: "USDT",
@@ -138,7 +173,7 @@ export function registerLinkTools(server: McpServer, ctx: Ctx): void {
           paid_at: p.paid_at,
           evidence: p.tx_hash ? `${EXPLORER_TX}${p.tx_hash}` : ctx.mode === "sandbox" ? `sandbox payment ${p.session_id}` : null,
         }));
-        const link = linkOut(ctx, detail, profile);
+        const link = linkOut(detail, readUrl(ctx, detail.url), profile);
         return {
           summary: `Link ${detail.id} (${link.amount_display}, ${link.description}) is ${detail.status}${payments.length ? ` with ${payments.length} verified payment(s)` : ", with no payment yet"}.`,
           link,
