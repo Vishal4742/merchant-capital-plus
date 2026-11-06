@@ -1,6 +1,9 @@
 // Shared helpers for the gateway API routes (batch 007): JSON errors, the signed-in merchant, input validation.
 // Route handlers stay framework-free (they read the Request), so tests call them directly.
 import { randomBytes, randomInt } from "node:crypto";
+// next/navigation's server export of it: "next/navigation.js" is the browser module (it breaks route bundles), and the
+// bare "next/navigation" doesn't resolve under Node's test runner. ponytail: an internal path; recheck on a Next upgrade.
+import { unstable_rethrow } from "next/dist/client/components/unstable-rethrow.js";
 import type { Address } from "viem";
 import { SESSION_COOKIE, authSecret, cookieFrom, readSession } from "../auth.ts";
 import { merchantConfig } from "../config.ts";
@@ -26,11 +29,14 @@ export class HttpError extends Error {
 export const fail = (status: number, error: string) => Response.json({ error }, { status, headers: NO_STORE });
 export const ok = (body: unknown, status = 200) => Response.json(body, { status, headers: NO_STORE });
 
-/** Runs a route body: HttpError → its status; anything else → a 500 that names no internals (NFR-8). */
+/** Runs a route body: HttpError → its status; anything else → a 500 that names no internals (NFR-8). Next's own
+ *  errors go back to Next first: at build it prerenders each GET route and stops one that reads the Request by
+ *  throwing, which this catch would otherwise log and answer as a 500 (batch 038). */
 export async function handle(run: () => Promise<Response>): Promise<Response> {
   try {
     return await run();
   } catch (err) {
+    unstable_rethrow(err);
     if (err instanceof HttpError) return fail(err.status, err.message);
     if (err instanceof DbUnavailable) return fail(503, "The gateway isn't set up on this server yet.");
     console.error("gateway api error:", err instanceof Error ? err.name : typeof err); // never the message: it can hold SQL or URLs
