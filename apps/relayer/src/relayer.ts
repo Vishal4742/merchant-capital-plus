@@ -48,7 +48,8 @@ const UINT_DECIMAL = /^\d{1,78}$/;
 const BYTES32_HEX = /^0x[0-9a-fA-F]{64}$/;
 const SIG65_HEX = /^0x[0-9a-fA-F]{130}$/;
 
-// The allowlist (FR-REL-2): exactly these two functions on this one contract. refund is the merchant's own tx.
+// The allowlist (FR-REL-2): exactly three calls: MerchantPay.paySale and .payInvoice here, and
+// CapitalMarket.fundWithAuthorization below. refund is the merchant's own tx.
 const MERCHANT_PAY = getAddress(addresses.merchantPay);
 // Investor funding (human 08:20): CapitalMarket.fundWithAuthorization. No relay fee, so funding below 1 USDT is refused.
 const CAPITAL_MARKET = getAddress(addresses.capitalMarket);
@@ -109,15 +110,23 @@ const EXPIRED = reject(422, 'expired', 'validBefore must leave at least 30 s');
 const tooLate = (p: Payment) => p.validBefore < nowSeconds() + MIN_REMAINING_S;
 
 const balances = new Map<Address, { wei: bigint; at: number }>();
+const balanceReads = new Map<Address, Promise<bigint>>(); // single-flight: a /health burst shares one RPC read
 let sendCount = 0; // a balance read that overlaps a send is returned but not cached
 async function wbtBalance(client: RelayerClient, fresh = false): Promise<bigint> {
   const address = client.account.address;
   const hit = balances.get(address);
   if (!fresh && hit && Date.now() - hit.at < BALANCE_TTL_MS) return hit.wei;
+  const pending = balanceReads.get(address);
+  if (!fresh && pending) return pending;
   const sendsBefore = sendCount;
-  const wei = await client.getBalance({ address });
-  if (sendCount === sendsBefore) balances.set(address, { wei, at: Date.now() });
-  return wei;
+  const read = client.getBalance({ address }).then((wei) => {
+    if (sendCount === sendsBefore) balances.set(address, { wei, at: Date.now() });
+    return wei;
+  });
+  balanceReads.set(address, read);
+  const clear = () => { if (balanceReads.get(address) === read) balanceReads.delete(address); };
+  read.then(clear, clear);
+  return read;
 }
 
 /** Re-reads the WBT balance every `everyMs` until stopped; never keeps the process alive on its own. */
@@ -446,12 +455,14 @@ async function send(client: RelayerClient, p: Payment, clock: Stopwatch): Promis
   } finally {
     sendCount += 1; // gas was (probably) spent: drop the cached balance and any read in flight
     balances.delete(client.account.address);
+    balanceReads.delete(client.account.address); // so the next /health starts a post-send read instead of joining one
   }
 }
 
 /**
  * POST /relay: parse → free checks → one RPC pre-check round → send lock (re-simulate, sign, sync send).
- * Every rejection happens before a transaction exists (AT-10), and only MerchantPay paySale/payInvoice are called (FR-REL-2).
+ * Every rejection happens before a transaction exists (AT-10), and only MerchantPay.paySale / .payInvoice and
+ * CapitalMarket.fundWithAuthorization are called (FR-REL-2).
  */
 export async function relay(body: string, client: RelayerClient): Promise<Response> {
   const clock = stopwatch();
