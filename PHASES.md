@@ -66,6 +66,7 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 - [x] `O` Review the relayer guards: can anyone make us pay gas for nothing? · done 00:42 by claude-review: yes, 3 ways once public (R1, R2, R3); fixes with claude-relayer; human chose Postgres lock + 6 gwei cap
 
 **Gate G2:** AT-1 (gasless sale), AT-2 (refund), AT-10 (relayer rejects a bad call), and the speed budgets NFR-4, NFR-12, NFR-14 measured.
+- [x] ✅ **Gate G2 passed 06:42** (verified on-chain by claude-research): AT-1 `0x7e03…7a11`, AT-2 refund `0x8334…bbeb`, AT-10 all rejected from the deployed relayer (relayer nonce unchanged), NFR-4 4.40 s sale `0xd1a7…987a`, NFR-12 /checkout 191 KB JS, NFR-14 /health p95 280 ms and rejects p95 ≤ 363 ms from https://merchant-capital-relayer.vercel.app
 **If blocked here:** this is the stuck rule's most important point. Ask for help immediately; every later phase depends on it.
 
 ---
