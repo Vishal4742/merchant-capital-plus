@@ -291,7 +291,7 @@ This route sends the investor's address and the counterparty to our server and o
 
 Proposed extra response field: `error` (the decoded error name, e.g. `"ERC7943CannotReceive"`), which is the dry-run evidence for AT-8.
 
-### 3.5 `GET /api/v1/capital/merchant` (cookie)
+### 3.5 `GET /api/v1/merchant/capital` (cookie)
 
 **Agreed response:** `{advance: {claim_id, outstanding, cap, holdback_pct} | null, offers: [...]}` (FR-ARK-2 "my live offers").
 
@@ -304,7 +304,7 @@ Proposed extra response field: `error` (the decoded error name, e.g. `"ERC7943Ca
 - `listable_invoices: [{invoice_id, amount, due_date}]`: Open, `paid == 0`, `claimOfInvoice == 0`.
   - Build it from a multicall of `invoices(1..invoiceCount)` filtered by merchant (`MerchantPay.sol:57,116`), plus `claimOfInvoice` for each. `ponytail:` O(invoiceCount) (1 today, chain).
   - Don't use `merchantInvoices` (`lib/onchain.ts:161-189`): it takes ids from Blockscout's log index, so an invoice created a moment earlier may not be listed yet.
-  - The Invoices create-success view can also link straight to `/capital/merchant?invoice=<id>` with the id from the `createInvoice` receipt (`lib/merchant-wallet.ts:148-155`).
+  - The Invoices create-success view can also link straight to `/merchant/capital?invoice=<id>` with the id from the `createInvoice` receipt (`lib/merchant-wallet.ts:148-155`).
 - Each entry in `offers[]` gets `arkiv_status: "on_arkiv" | "not_on_arkiv"`, the voucher pattern (`lib/server/vouchers.ts:90`).
 
 ### 3.6 `POST /api/v1/capital/fund` (no cookie; the signature is the authority)
@@ -345,7 +345,7 @@ Proposed extra response field: `error` (the decoded error name, e.g. `"ERC7943Ca
 | G7 | Eligibility before signing (I0) | **No route.** Add `isEligible(investor)`, USDT `balanceOf`, `holdersOf(claim)` and `balanceOf(investor, claim)` to the book's browser multicall. | claude-frontend |
 | G8 | Investor sign-in: none exists (no role in `mc_session`, `lib/auth.ts:8-10`) | **None needed.** The fund signature authorizes the payment; holdings are public chain reads by address. | none |
 | G9 | `relay()` is private, typed `"paySale" \| "payInvoice"` (`lib/relay.ts:60`), drops the relayer's `code` (`RelayResult`, `:27-31`), maps 422 `insufficient_funds` to customer copy (`:81`) and folds every other 422 into one sentence (`:83`). The relayer sends `{error, code}` (`relayer.ts:105`). | Widen the action type; add `code` (and the HTTP status) to the failure branch of `RelayResult`; make the 422 mapping per action, or return the code and let the fund route map it (§3.6 step 4). `export const relayFund = (f) => relay(f, "fund", { claimId: f.claimId.toString(), investor: f.from, units: f.units.toString() })` (target values are strings, `:60`). `relay()` always adds `from` and `amount` (`:61`) and `Signed.amount` is a required bigint (`:11`), so pass `amount` = the quote; the relayer's fund parser ignores both (`relayer.ts:283-298`). `relayAuth` and `redirect: "manual"` stay as they are (`:52-58,69`). | One owner by CLAIM (§8 Q21) |
-| G10 | `/capital` has no CSP (`next.config.ts:35-63`) | Add `{ source: "/capital/:path*", headers: merchantCsp }` (`merchantCsp` `:29-34` carries the Nym hosts, `'wasm-unsafe-eval' blob:` and `worker-src blob:`). Don't copy the strict pay-page policy (`:7-18`) as `/merchant/developers` does (`:60`): the Nym worker would not boot and AT-9's meter would show only plain reads. Add a test that `headers()` gives `/capital` and `/capital/merchant` the merchant policy. Ask claude-research to update the README CSP line (`README.md:39`, "on `/merchant` pages"). | claude-frontend |
+| G10 | `/capital` has no CSP (`next.config.ts:35-63`) | Add `{ source: "/capital/:path*", headers: merchantCsp }` (`merchantCsp` `:29-34` carries the Nym hosts, `'wasm-unsafe-eval' blob:` and `worker-src blob:`). Don't copy the strict pay-page policy (`:7-18`) as `/merchant/developers` does (`:60`): the Nym worker would not boot and AT-9's meter would show only plain reads. Add a test that `headers()` gives `/capital` and `/merchant/capital` the merchant policy. Ask claude-research to update the README CSP line (`README.md:39`, "on `/merchant` pages"). | claude-frontend |
 | G11 | Investor-facing outcome copy | Funding variants of `UNKNOWN` / `NOT_FUNDED`: "We couldn't confirm this yet. Don't fund again; check Holdings in a few minutes." and "This wallet doesn't hold enough test USDT for this." (no faucet, CON-8) | with G9 |
 | G12 | Arkiv is on the Buy path of AT-3 and AT-6, not only AT-9 | GET /offers uses a short Arkiv timeout (about 5 s, against the 30 s client default, `lib/arkiv.ts:8`) and serves the last good entity list when Arkiv is slow. Safe because an entity's terms never change on chain once listed, and liveness comes from the chain join. `ponytail:` per-instance memory. | claude-relayer |
 
@@ -356,9 +356,9 @@ Proposed extra response field: `error` (the decoded error name, e.g. `"ERC7943Ca
 **Proposed routes (claude-frontend):**
 - `/capital`: offer book with a fund panel per offer (investor, public)
 - `/capital/holdings`: holdings and transfer check (investor)
-- `/capital/merchant`: M1, M2 and M3 (merchant cookie; shop wallet only, as `app/merchant/page.tsx:192,276`)
+- `/merchant/capital`: M1, M2 and M3 (merchant cookie; shop wallet only, as `app/merchant/page.tsx:192,276`)
 
-Point Nav's capital item at `/capital/merchant` (`Nav.tsx:21,58-62`). Pages link with plain `<a>` (`Nav.tsx:1-2`).
+Point Nav's capital item at `/merchant/capital` (`Nav.tsx:21,58-62`). Pages link with plain `<a>` (`Nav.tsx:1-2`).
 
 **Every screen has five states:** empty, loading, error, pending, done.
 
@@ -392,7 +392,7 @@ Point Nav's capital item at `/capital/merchant` (`Nav.tsx:21,58-62`). Pages link
 | Money and format | `formatUsdt`, `parseUsdt`, `plainUsdt`, `EXPLORER` (`lib/usdt.ts:7,24-36`); `formatWbt` (`lib/dashboard.ts:108-116`) |
 | Loading text | Suspense fallback pattern (`app/merchant/settlements/page.tsx:34-40`) |
 
-### Merchant (`/capital/merchant`)
+### Merchant (`/merchant/capital`)
 
 **M1 Cash advance** (FR-ADV-1, 2, 6)
 
@@ -638,7 +638,7 @@ The amounts below are the ÷100 SRS values (`docs/SRS.md:6,253-259`).
 ### AT-3: investor funds a 10 USDT advance (cap 11, holdback 20%)
 
 **UI steps:**
-1. Merchant signs in and opens `/capital/merchant` → Cash advance. Enters principal 10, cap 11, holdback 20, term 30 days, deadline tomorrow.
+1. Merchant signs in and opens `/merchant/capital` → Cash advance. Enters principal 10, cap 11, holdback 20, term 30 days, deadline tomorrow.
 2. The page shows "When investors fund it, you get 10.00 USDT. You repay 11.00 USDT (cost 1.00 USDT)…". Merchant confirms in the wallet.
 3. The receipt arrives and the offer is published to Arkiv.
 4. Investor A opens `/capital` and connects. The advance row shows Buy.
@@ -688,7 +688,7 @@ The amounts below are the ÷100 SRS values (`docs/SRS.md:6,253-259`).
 
 **UI steps:**
 1. Merchant creates a 100 USDT invoice due 60 days from today in the existing invoices UI and sends its `/pay` link to the payer. The UI invoice names no customer (`lib/merchant-wallet.ts:150`; the customer box is a private note, `Invoices.tsx:169`), so anyone with the link can pay it.
-2. From the create-success view, the merchant opens `/capital/merchant?invoice=<id>` → Get paid today, enters APR 12, and sees price 98.065556, 60 days, 12.00% APR. Sets the deadline to tomorrow, lists, and publishes.
+2. From the create-success view, the merchant opens `/merchant/capital?invoice=<id>` → Get paid today, enters APR 12, and sees price 98.065556, 60 days, 12.00% APR. Sets the deadline to tomorrow, lists, and publishes.
 3. Investor A buys 60 (cost 58.839334 from `quote`) and signs.
 4. Investor B buys 40 (cost 39.226223) and signs.
 
@@ -819,7 +819,7 @@ The repo uses plain `node:test` `.mjs` files in `apps/web/test`, testing pure lo
 6. `minUnitsForOneUsdt(price, face)`: the smallest units with `quoteUnits ≥ 1000000` (1019726n for 98065556n / 100000000n; 1099999n for 10000000n / 11000000n).
 7. `heldClaims(balanceOfBatchResult, ids, fundedIds, settled)`: keeps non-zero balances, plus funded ids that settled ("Repaid in full").
 8. `REASON_COPY` has a sentence for every §3.4 code, and none mention gas, WBT or signatures.
-9. CSP: `headers()` gives `/capital` and `/capital/merchant` the merchant policy (`next.config.ts:29-34`).
+9. CSP: `headers()` gives `/capital` and `/merchant/capital` the merchant policy (`next.config.ts:29-34`).
 10. Screens, after the logic: `npx tsc --noEmit`, `npm run lint`, `npm run build`, and a screenshot per state (AGENTS.md "Done means verified").
 
 ### claude-contracts (review lane)
