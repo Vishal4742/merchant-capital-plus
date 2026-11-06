@@ -1,6 +1,7 @@
 // Browser-only. Every chain read the app makes in the browser goes through Anon-RPC (FR-PRIV-1).
 import { createPublicClient, http } from "viem";
 import { mainnet, whitechainSepolia } from "viem/chains";
+import { countRead } from "./read-meter.ts";
 
 type RpcProvider = { request(args: { method: string; params?: unknown[] }): Promise<unknown> };
 
@@ -43,7 +44,15 @@ async function connect() {
   const bootstrap = createPublicClient({ chain: mainnet, transport: http(BOOTSTRAP_RPC) });
   const worker = new AnonRpcWorker({
     address: NYM_SPECIFIER,
-    preExisting: { rpcProvider: pinWorkerHash({ request: (args) => bootstrap.request(args as never) }) },
+    // each bootstrap lookup counts as "setup" on the privacy meter (FR-PRIV-3, FR-PRIV-4)
+    preExisting: {
+      rpcProvider: pinWorkerHash({
+        request(args) {
+          countRead("setup");
+          return bootstrap.request(args as never);
+        },
+      }),
+    },
   });
   // A failed or stalled boot must not stay cached. close() removes the iframe if it exists; with harness
   // 0.4.0 it can't stop a boot whose bundle arrives after the deadline (an orphan worker; report upstream).
