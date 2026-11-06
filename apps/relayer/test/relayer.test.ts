@@ -614,7 +614,7 @@ test('a receipt poll that errors until the deadline answers 502 rpc_error with t
 });
 
 // Batch 022 (security 018 F4): a sale queued behind a hung one never signs after the web has given up.
-test('a sale that waited too long for the send lock is refused before signing: 502 rpc_error, no txHash, nothing sent', async () => {
+test('a sale that waited too long for the send lock is refused before signing: 503 busy (retry-safe), no txHash, nothing sent', async () => {
   const saved = TIMING.maxRequestAgeMs;
   TIMING.maxRequestAgeMs = 60;
   try {
@@ -622,8 +622,8 @@ test('a sale that waited too long for the send lock is refused before signing: 5
     const [a, b] = await Promise.all([signedSale(), signedSale()]);
     const [first, second] = await Promise.all([post(a.body, node), post(b.body, node)]);
     assert.equal(first.status, 200, JSON.stringify(first.out));
-    assert.equal(second.status, 502, JSON.stringify(second.out));
-    assert.equal(second.out.code, 'rpc_error');
+    assert.equal(second.status, 503, JSON.stringify(second.out)); // the web shows 503 as "Nothing was charged; try again" (security 022 L1)
+    assert.equal(second.out.code, 'busy');
     assert.equal(second.out.txHash, undefined, 'nothing was sent, so the web may re-POST it');
     assert.equal(node.sent.length, 1);
   } finally {
