@@ -310,3 +310,29 @@ test("batch 008: a shop's setup script registers and lists webhooks with its sec
   await revokeKey(MERCHANT, sk.record.id);
   assert.equal((await list(req("GET", "/api/v1/webhooks", { headers: bearer(sk.key) }))).status, 401, "a revoked key can't");
 });
+
+test("batch 021 (F2): a given event id is used as is, so a re-enqueue of the same event carries the same id", async () => {
+  await newHook();
+  await enqueueEvent(MERCHANT, "payment.succeeded", { id: "ses_1" }, Date.now(), "evt_stable_for_ses_1_00000");
+  await enqueueEvent(MERCHANT, "payment.succeeded", { id: "ses_1" }, Date.now(), "evt_stable_for_ses_1_00000"); // the retry
+  const ids = calls.map((c) => JSON.parse(c.init.body).id);
+  assert.deepEqual(ids, ["evt_stable_for_ses_1_00000", "evt_stable_for_ses_1_00000"], "the receiver can dedupe the second");
+  await enqueueEvent(MERCHANT, "payment.succeeded", { id: "ses_2" });
+  assert.match(JSON.parse(calls.at(-1).init.body).id, /^evt_/, "no id given: a fresh one");
+});
+
+test("batch 021: deliveredEvents tells a delivered test event from a delivered real payment, per merchant", async () => {
+  const { deliveredEvents, sendTestEvent, TIMEOUT_MS } = await import("../lib/server/webhooks.ts");
+  assert.equal(TIMEOUT_MS, 5_000);
+  const h = await newHook();
+  assert.deepEqual(await deliveredEvents(MERCHANT), { test: false, payment: false });
+  reply = async () => new Response("nope", { status: 500 });
+  await sendTestEvent(MERCHANT, h.id);
+  assert.deepEqual(await deliveredEvents(MERCHANT), { test: false, payment: false }, "a 500 isn't 'answered'");
+  reply = async () => new Response("ok", { status: 200 });
+  await sendTestEvent(MERCHANT, h.id);
+  assert.deepEqual(await deliveredEvents(MERCHANT), { test: true, payment: false });
+  await enqueueEvent(MERCHANT, "payment.succeeded", { id: "ses_real", amount: "25.00" });
+  assert.deepEqual(await deliveredEvents(MERCHANT), { test: true, payment: true });
+  assert.deepEqual(await deliveredEvents(OTHER_MERCHANT), { test: false, payment: false }, "scoped to the merchant");
+});

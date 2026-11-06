@@ -18,7 +18,7 @@ export const signWebhook = (body: string, secret: string, t = Math.floor(Date.no
 
 export type EventType = "payment.succeeded" | "payment.refunded";
 const MAX_ENDPOINTS = 5;
-const TIMEOUT_MS = 5_000;
+export const TIMEOUT_MS = 5_000; // the Developers screen's "Answer within 5 s" (claude-frontend lib/gateway-dev.ts)
 const RETRY_DELAYS_MS = [60_000, 5 * 60_000, 30 * 60_000]; // after attempts 1, 2, 3; a 4th failure is final
 const LEASE_MS = 60_000; // a delivery being attempted is hidden from dispatch this long (no double sends)
 const DISPATCH_LIMIT = 50;
@@ -98,6 +98,18 @@ export async function listWebhooks(merchant: Address) {
   return hooks.map((h) => ({ id: h.id, url: h.url, created_at: iso(h.created_at), deliveries: deliveries.filter((d) => d.webhook_id === h.id).map(deliveryJson) }));
 }
 
+/** Whether a test event and a real payment.succeeded have each been answered with 2xx by one of the merchant's
+ *  endpoints (claude-frontend's Developers setup checklist). A test event is the one sendTestEvent writes: data {test: true}. */
+export async function deliveredEvents(merchant: Address): Promise<{ test: boolean; payment: boolean }> {
+  const delivered = "FROM app_gw_deliveries WHERE merchant = $1 AND event = 'payment.succeeded' AND status = 'succeeded'";
+  const isTest = "(body::jsonb #>> '{data,test}') = 'true'";
+  const [row] = await query<{ test: boolean; payment: boolean }>(
+    `SELECT EXISTS (SELECT 1 ${delivered} AND ${isTest}) AS test, EXISTS (SELECT 1 ${delivered} AND (${isTest}) IS NOT TRUE) AS payment`,
+    [merchant.toLowerCase()],
+  );
+  return { test: row?.test === true, payment: row?.payment === true };
+}
+
 /** True if the merchant had this endpoint (its deliveries go with it). */
 export async function deleteWebhook(merchant: Address, id: string): Promise<boolean> {
   return (await query("DELETE FROM app_gw_webhooks WHERE id = $1 AND merchant = $2 RETURNING id", [id, merchant.toLowerCase()])).length === 1;
@@ -142,9 +154,8 @@ export async function attemptDelivery(id: string, now = Date.now()): Promise<Del
 }
 
 type Endpoint = { id: string; merchant: string };
-async function deliver(endpoints: Endpoint[], type: EventType, data: object, now: number) {
+async function deliver(endpoints: Endpoint[], type: EventType, data: object, now: number, eventId = newId("evt")) {
   if (endpoints.length === 0) return [];
-  const eventId = newId("evt");
   const body = JSON.stringify({ id: eventId, type, created: Math.floor(now / 1000), data });
   const ids: string[] = [];
   for (const e of endpoints) {
@@ -155,13 +166,16 @@ async function deliver(endpoints: Endpoint[], type: EventType, data: object, now
     );
     ids.push(id);
   }
-  return Promise.all(ids.map((id) => attemptDelivery(id, now)));
+  // the rows are recorded: an inline attempt that throws (a DB blip on its status UPDATE) leaves its delivery pending for
+  // dispatch instead of failing the enqueue, which would make the caller re-enqueue (claude-frontend F2)
+  return Promise.all(ids.map((id) => attemptDelivery(id, now).catch(() => null)));
 }
 
-/** Records the event for every endpoint of the merchant and makes the first attempt inline. */
-export async function enqueueEvent(merchant: Address | string, type: EventType, data: object, now = Date.now()) {
+/** Records the event for every endpoint of the merchant and makes the first attempt inline. `eventId` (events.ts derives
+ *  it from the event's key) stays the same across a retried enqueue, so receivers can dedupe on it. */
+export async function enqueueEvent(merchant: Address | string, type: EventType, data: object, now = Date.now(), eventId?: string) {
   const endpoints = await query<Endpoint>("SELECT id, merchant FROM app_gw_webhooks WHERE merchant = $1", [merchant.toLowerCase()]);
-  return deliver(endpoints, type, data, now);
+  return deliver(endpoints, type, data, now, eventId);
 }
 
 /** A payment.succeeded test event with data {test: true}, to one of the merchant's endpoints (404 otherwise). */
