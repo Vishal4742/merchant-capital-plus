@@ -133,6 +133,14 @@ contract SeedEdgesForkTest is Test {
         vm.expectRevert(Seed.CustomerRequired.selector); // batch 009 (Q5): UI runs pay from the browser guest
         seed.fund();
 
+        // batch 009 review L1: the guest must be its own wallet: the team's would skip it, a script wallet is reclaimed
+        vm.setEnv("CUSTOMER", vm.toString(team));
+        vm.expectRevert(Seed.CustomerIsAScriptWallet.selector);
+        seed.fund();
+        vm.setEnv("CUSTOMER", vm.toString(payer));
+        vm.expectRevert(Seed.CustomerIsAScriptWallet.selector);
+        seed.fund();
+
         vm.setEnv("CUSTOMER", vm.toString(customer));
         seed.fund();
         assertEq(USDT.balanceOf(merchant), 1e6);

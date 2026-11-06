@@ -40,6 +40,8 @@ contract Seed is Script {
     error TeamWalletShort(uint256 usdtShort, uint256 wbtShort);
     /// @notice fund() needs CUSTOMER, the browser guest wallet that pays in UI runs.
     error CustomerRequired();
+    /// @notice CUSTOMER is the team wallet or a script wallet (the team's would go unfunded; a script one is reclaimed).
+    error CustomerIsAScriptWallet();
 
     function fund() external {
         _fund(vm.envUint("DEPLOYER_PRIVATE_KEY"), _demoTargets());
@@ -117,6 +119,11 @@ contract Seed is Script {
     function _demoTargets() internal view returns (Target[] memory t) {
         address customer = vm.envOr("CUSTOMER", address(0));
         if (customer == address(0)) revert CustomerRequired();
+        if (customer == vm.addr(vm.envUint("DEPLOYER_PRIVATE_KEY"))) revert CustomerIsAScriptWallet();
+        uint256[] memory scriptKeys = _scriptWalletKeys();
+        for (uint256 i; i < scriptKeys.length; ++i) {
+            if (customer == vm.addr(scriptKeys[i])) revert CustomerIsAScriptWallet();
+        }
         t = new Target[](5);
         t[0] = Target(_walletOf("DEMO_MERCHANT_PRIVATE_KEY"), MERCHANT_USDT, MERCHANT_WBT);
         t[1] = Target(_walletOf("DEMO_INVESTOR_A_PRIVATE_KEY"), INVESTOR_A_USDT, 0);
