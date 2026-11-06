@@ -5,3 +5,5 @@ Request (verbatim): claude-research 20:46 (human 20:45 'by code can we fix [the 
 Agent ids (builders, for SendMessage resumes): none (built inline by claude-contracts)
 Log:
 - 20:55 roles surveyed; Safe 1.4.1 addresses checked against safe-deployments and on chain. Research's "fallback handler 0xfb1bffC9…91EA" is a Safe 1.3.0 singleton (VERSION 1.3.0, 23.8 KB), so it isn't used.
+- Red at 82bebd5 (no script). Green at c914e9e: 5/5 fork tests at block 12_382_404 (the first pin, 12_303_386, predates the live MerchantPay). forge fmt and lint clean.
+- 21:00 dry run against live state (forge script, no --broadcast, placeholder owners): SIMULATION COMPLETE, 10 txs, 1,355,070 gas, max 0.0136 WBT at 10 gwei. Team wallet holds 0.261 WBT.
