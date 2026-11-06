@@ -7,7 +7,7 @@
 // hydration can't put them in a URL (security review 005 F6).
 import { useRouter } from "next/navigation";
 import { useRef, useState, useSyncExternalStore, type FormEvent } from "react";
-import type { Address } from "viem";
+import { getAddress, isAddress, zeroAddress, type Address } from "viem";
 import { Button } from "@/components/Button";
 import { DebtorAck } from "@/components/DebtorAck";
 import { QrActions } from "@/components/gateway/Share";
@@ -155,6 +155,7 @@ function NewInvoice({ merchant, merchantPay, today, feeText, notesKey: key }: Om
   const [created, setCreated] = useState<string | null>(null);
   const customerRef = useRef<HTMLInputElement>(null);
   const labelRef = useRef<HTMLInputElement>(null);
+  const walletRef = useRef<HTMLInputElement>(null); // no form name either: read from the ref, never put in a URL
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -171,11 +172,16 @@ function NewInvoice({ merchant, merchantPay, today, feeText, notesKey: key }: Om
     const due = String(data.get("due") ?? "");
     const dueMs = /^\d{4}-\d{2}-\d{2}$/.test(due) ? Date.parse(`${due}T23:59:59+05:30`) : NaN; // the end of that day in IST
     if (!(dueMs > Date.now() + 60_000)) return setError("Pick a due date from today on.");
+    // batch 047 (security H1): a named customer wallet goes on chain, and only it can then acknowledge the invoice
+    const wallet = walletRef.current?.value.trim() ?? "";
+    if (wallet && !isAddress(wallet)) return setError("Enter your customer's wallet address (0x and 40 characters), or leave it empty.");
+    if (wallet && wallet.toLowerCase() === merchant.toLowerCase()) return setError("That's your own wallet. Enter your customer's, or leave it empty.");
+    const customer: Address = wallet ? getAddress(wallet) : zeroAddress;
     const note = { customer: customerRef.current?.value.trim().slice(0, 60) || undefined, label: labelRef.current?.value.trim().slice(0, 60) || undefined };
     setBusy(true);
     try {
       const w = await connectMerchant(window.ethereum, merchant, merchantPay);
-      const id = (await createInvoice(w, amount, BigInt(Math.floor(dueMs / 1000)))).toString();
+      const id = (await createInvoice(w, amount, BigInt(Math.floor(dueMs / 1000)), customer)).toString();
       if (note.customer || note.label) saveNote(key, id, note);
       setCreated(id);
       form.reset();
@@ -191,7 +197,7 @@ function NewInvoice({ merchant, merchantPay, today, feeText, notesKey: key }: Om
   return (
     <div className="grid gap-4">
       {/* a stale error goes as soon as anything changes (UX review 005 F6) */}
-      <form onSubmit={submit} onChange={() => setError(null)} className="grid items-end gap-4 md:grid-cols-[1fr_1fr_1.5fr_1.5fr_auto]">
+      <form onSubmit={submit} onChange={() => setError(null)} className="grid items-end gap-4 md:grid-cols-3 xl:grid-cols-[1fr_1fr_1.5fr_1.5fr_1.5fr_auto]">
         <label className="grid gap-1 text-sm">
           <span className="text-ink-muted">Amount, 1.00 to 1,000.00 USDT</span>
           <input name="amount" inputMode="decimal" autoComplete="off" placeholder="25.00" required className={field} />
@@ -208,6 +214,10 @@ function NewInvoice({ merchant, merchantPay, today, feeText, notesKey: key }: Om
           <span className="text-ink-muted">Label (only you see it)</span>
           <input ref={labelRef} maxLength={60} autoComplete="off" placeholder="Office catering, March" className={field} />
         </label>
+        <label className="grid gap-1 text-sm">
+          <span className="text-ink-muted">Customer wallet (optional)</span>
+          <input ref={walletRef} maxLength={42} autoComplete="off" spellCheck={false} placeholder="0x…" className={`${field} data`} />
+        </label>
         <Button type="submit" aria-disabled={busy}>
           {busy ? "Waiting for your wallet…" : "Create invoice"}
         </Button>
@@ -215,6 +225,9 @@ function NewInvoice({ merchant, merchantPay, today, feeText, notesKey: key }: Om
       <p className="text-xs text-ink-muted">
         Your wallet sends the invoice and pays a small WBT fee. Your customer adds {feeText ? `a ${feeText} USDT` : "a small"} payment fee on top, so you get the invoice amount in full. The customer and label stay in
         this browser and are never sent anywhere.
+        <span className="block">
+          A customer wallet, if you add one, goes on chain with the invoice: only that wallet can then acknowledge it, and investors see &quot;Debtor acknowledged&quot;.
+        </span>
       </p>
       {error && (
         <p role="alert" className="text-sm text-critical">
