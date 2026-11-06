@@ -29,3 +29,7 @@ shape gains `debtor_acknowledged: false, debtor_ack: null`.
 
 Not run: the pages in a browser. A local `next start` can't render /pay or the offer book without the Neon database
 and chain reads (the env file is off limits to agents); the check moves to the PR's Vercel preview.
+
+Security review fixes (H1, M1, L1), red at 55fd9f6 → f150be1, a273e0f, c4d6682: `npm run typecheck` exit 0 ·
+`npm run lint` exit 0 · `npm test` tests 724, pass 722, fail 0, skipped 2 · `npm run build` exit 0 (`✓ Compiled
+successfully`; the same two pre-existing `shop key check: Error` prerender lines).

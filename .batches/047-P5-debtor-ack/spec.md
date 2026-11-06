@@ -32,6 +32,17 @@
   one path the offers route, the merchant route and the merchant Capital page share); a failed read logs and shows
   "Not acknowledged yet".
 
+## Security review round 1 (CHANGES), fixed on the same branch
+- H1: an invoice whose on-chain `customer` is set takes that wallet's ack only (403 otherwise), and only then is it
+  `debtor_acknowledged` / "Debtor acknowledged ✓". With no customer named, every view says "Acknowledged by a pay-link
+  holder · 0x… (identity not checked)", and the offer book has one line explaining the two. MerchantPay.createInvoice
+  already takes a customer address, so the merchant's form gets an optional "Customer wallet" (no contract change).
+- M1: the table is keyed by (merchant_pay, invoice_id, debtor): every key keeps its own first ack. The pay page compares
+  the stored short debtors with this browser's key: "You acknowledged" vs "Acknowledged by another key (0x…)", with the
+  count, and this key can still add its own.
+- L1: rows store merchant, amount and due_date; the book joins only our shop's offers whose face and maturity equal
+  them; the typed data adds `address merchantPay`.
+
 ## Acceptance criteria (each must be checkable)
 - [ ] test/invoice-ack.test.mjs (PGlite, chain reads faked): valid ack 200 + stored; wrong signer, tampered amount,
       wrong chain → 400 and nothing stored; same debtor twice → one row, same time; another debtor → 409; the
@@ -50,6 +61,8 @@
 - apps/web/lib/sign-sale.ts (signAck; Payer signs any typed data), apps/web/lib/payer-wallet.ts (the wallet's
   signTypedData takes that generic typed data)
 - apps/web/components/capital/merchant/terms.ts (MerchantOffer carries debtor_ack)
+- security fixes: apps/web/lib/onchain.ts (readInvoice returns customer), apps/web/lib/merchant-wallet.ts
+  (createInvoice's optional customer), apps/web/test/merchant-wallet.test.mjs, apps/web/test/onchain-invoices.test.mjs
 - apps/web/components/InvoiceAck.tsx (new), apps/web/components/DebtorAck.tsx (new)
 - apps/web/components/InvoicePay.tsx, apps/web/app/pay/[invoiceId]/page.tsx, apps/web/components/WalletPay.tsx
   (export the connect step without the funds check)

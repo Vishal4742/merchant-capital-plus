@@ -12,3 +12,6 @@ Log:
 - Red at 5d84af6 (test/invoice-ack.test.mjs), server green at d9ac96c, pay page e14102d, views f2d6295.
 - ci PASS: typecheck 0, lint 0, tests 719 (717 pass, 0 fail, 2 skipped), build 0. New table app_gw_invoice_acks
   (db/051_invoice_acks.sql): run `node --env-file=../../.env db/migrate.mjs` from apps/web before the merge deploys.
+- Security review round 1: CHANGES (H1 overstated claim, M1 squatting, L1 join). Fixed on the branch: red 55fd9f6,
+  server f150be1, labels + pay page a273e0f, customer wallet field c4d6682. 051 rewritten while unapplied (key now
+  (merchant_pay, invoice_id, debtor) + merchant, amount, due_date, customer_bound). ci PASS: tests 724 (722 pass).
