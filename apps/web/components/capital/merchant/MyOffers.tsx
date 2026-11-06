@@ -9,13 +9,12 @@ import { Button } from "@/components/Button";
 import { CopyButton } from "@/components/CopyButton";
 import { card } from "@/components/gateway/Frame";
 import { CancelOffer, short } from "./Listing";
-import { offerLabel, publishOffer, soldUnits, type MerchantOffer } from "./terms";
+import { offerLabel, publishOffer, soldUnits, type OfferRow } from "./terms";
 
-const ist = (iso: string) => new Date(iso).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short", hour12: false, timeZone: "Asia/Kolkata" });
 const head = "label sm:table-cell sm:px-4 sm:py-3";
 const cell = "sm:table-cell sm:px-4 sm:py-3 sm:align-middle";
 
-export function MyOffers({ merchant, offers }: { merchant: Address; offers: MerchantOffer[] }) {
+export function MyOffers({ merchant, offers }: { merchant: Address; offers: OfferRow[] }) {
   const live = offers.filter((o) => o.status === "open" || o.status === "funded");
   return (
     <section aria-labelledby="my-offers" className={card}>
@@ -43,7 +42,7 @@ export function MyOffers({ merchant, offers }: { merchant: Address; offers: Merc
   );
 }
 
-function Row({ merchant, offer: o }: { merchant: Address; offer: MerchantOffer }) {
+function Row({ merchant, offer: o }: { merchant: Address; offer: OfferRow }) {
   const advance = o.kind === "advance";
   const unfunded = o.status === "open" && soldUnits(o) === 0n;
   return (
@@ -53,8 +52,8 @@ function Row({ merchant, offer: o }: { merchant: Address; offer: MerchantOffer }
         <span className="data text-ink-muted">Offer {o.id}</span>
       </span>
       <span className={`${cell} tabular-nums`}>
-        {advance ? `${o.price} USDT now, repay ${o.face} at ${o.holdback_pct}% of sales` : `${o.price} USDT now for ${o.face} at maturity`}
-        <span className="block text-xs text-ink-muted">Open to investors until {ist(o.offer_deadline)} IST</span>
+        {advance ? `${o.price} USDT now, repay ${o.face} USDT at ${o.holdback_pct}% of sales` : `${o.price} USDT now for ${o.face} USDT at maturity`}
+        <span className="block text-xs text-ink-muted">Open to investors until {o.deadlineText} IST</span>
       </span>
       <span className={cell}>
         <span className={`inline-flex rounded-pill border border-current px-3 py-0.5 text-xs font-medium ${o.status === "funded" ? "text-positive" : "text-accent"}`}>{offerLabel(o)}</span>

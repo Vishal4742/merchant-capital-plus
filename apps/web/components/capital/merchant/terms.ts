@@ -150,6 +150,8 @@ export const invoicePriceLine = (price: bigint, face: bigint, days: number, aprB
 
 export type MerchantAdvance = Awaited<ReturnType<typeof merchantAdvance>>;
 export type MerchantOffer = Pick<OfferJson, "id" | "kind" | "face" | "price" | "units_left" | "status" | "holdback_pct" | "offer_deadline" | "maturity" | "arkiv">;
+/** An offer as the page hands it to the browser: dates formatted once on the server, so hydration sees one string. */
+export type OfferRow = MerchantOffer & { deadlineText: string };
 
 /** Units investors have bought: face − units_left (both 1 unit = 0.000001 USDT). */
 export const soldUnits = (o: Pick<MerchantOffer, "face" | "units_left">) => parseUsdt(o.face) - BigInt(o.units_left);

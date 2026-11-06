@@ -26,6 +26,8 @@ const header = (
 
 const one = (v: string | string[] | undefined) => (typeof v === "string" && /^\d{1,20}$/.test(v) ? v : null);
 const nowSeconds = () => Math.floor(Date.now() / 1000);
+const istTime = (ms: number) => new Date(ms).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short", hour12: false, timeZone: "Asia/Kolkata" });
+const istDay = (ms: number) => new Date(ms).toLocaleDateString("en-IN", { dateStyle: "medium", timeZone: "Asia/Kolkata" });
 
 export default function CapitalPage({ searchParams }: PageProps<"/merchant/capital">) {
   return (
@@ -45,7 +47,8 @@ export default function CapitalPage({ searchParams }: PageProps<"/merchant/capit
 /** GET /api/v1/capital/merchant's body: the running advance and this merchant's offers in the book. */
 async function merchantCapital(merchant: Address) {
   const [advance, book] = await Promise.all([merchantAdvance(merchant), offerBook()]);
-  return { advance, offers: book.filter((o) => o.merchant.toLowerCase() === merchant.toLowerCase()) };
+  const mine = book.filter((o) => o.merchant.toLowerCase() === merchant.toLowerCase());
+  return { advance, offers: mine.map((o) => ({ ...o, deadlineText: istTime(Date.parse(o.offer_deadline)) })) };
 }
 
 /** Open invoices nothing is paid on yet: the ones CapitalMarket may list (an already-listed one is refused by the dry run). */
@@ -54,7 +57,7 @@ async function listable(merchant: Address): Promise<{ invoices: ListableInvoice[
   if (!pay) return { invoices: null, unavailable: "Invoices aren't switched on for this server yet." };
   try {
     const all = await merchantInvoices(pay.merchantPay, merchant);
-    return { invoices: all.filter((i) => i.status === "open" && i.paid === 0n).map((i) => ({ id: i.id.toString(), amount: i.amount.toString(), dueDate: Number(i.dueDate) })) };
+    return { invoices: all.filter((i) => i.status === "open" && i.paid === 0n).map((i) => ({ id: i.id.toString(), amount: i.amount.toString(), dueDate: Number(i.dueDate), dueText: istDay(Number(i.dueDate) * 1000) })) };
   } catch (error) {
     logFailure("capital: invoice list", error);
     return { invoices: null };

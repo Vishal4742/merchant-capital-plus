@@ -5,7 +5,7 @@
 import { useState, type FormEvent } from "react";
 import type { Address } from "viem";
 import { Button } from "@/components/Button";
-import { card, field, textLink } from "@/components/gateway/Frame";
+import { card, field } from "@/components/gateway/Frame";
 import { WBT_HINT } from "@/lib/dashboard";
 import { formatUsdt } from "@/lib/usdt";
 import { DEADLINES, DEFAULT_DEADLINE, ListingStatus, busy, useListing } from "./Listing";
@@ -17,6 +17,7 @@ export interface ListableInvoice {
   id: string;
   amount: string;
   dueDate: number;
+  dueText: string;
 }
 
 interface InvoicePanelProps {
@@ -30,7 +31,6 @@ interface InvoicePanelProps {
   now: number;
 }
 
-const istDay = (unix: number) => new Date(unix * 1000).toLocaleDateString("en-IN", { dateStyle: "medium", timeZone: "Asia/Kolkata" });
 
 export function InvoicePanel({ merchant, invoices, unavailable, preselect, now }: InvoicePanelProps) {
   return (
@@ -48,7 +48,7 @@ export function InvoicePanel({ merchant, invoices, unavailable, preselect, now }
       ) : invoices.length === 0 ? (
         <p className="text-sm text-ink-muted">
           Create an invoice first: only an open, unpaid invoice can be listed.{" "}
-          <a href="/merchant#invoices" className={textLink}>
+          <a href="/merchant#invoices" className="text-accent underline underline-offset-4">
             Go to invoices
           </a>
         </p>
@@ -89,7 +89,7 @@ function InvoiceForm({ merchant, invoices, preselect, now }: Omit<InvoicePanelPr
           <select value={form.invoice} onChange={set("invoice")} className={field}>
             {invoices.map((i) => (
               <option key={i.id} value={i.id}>
-                {`Invoice ${i.id} · ${formatUsdt(BigInt(i.amount))} USDT · due ${istDay(i.dueDate)}`}
+                {`Invoice ${i.id} · ${formatUsdt(BigInt(i.amount))} USDT · due ${i.dueText}`}
               </option>
             ))}
           </select>

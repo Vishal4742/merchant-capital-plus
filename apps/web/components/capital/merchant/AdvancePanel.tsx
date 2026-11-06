@@ -9,15 +9,14 @@ import { card, field } from "@/components/gateway/Frame";
 import { WBT_HINT } from "@/lib/dashboard";
 import { formatUsdt } from "@/lib/usdt";
 import { CancelOffer, DEADLINES, DEFAULT_DEADLINE, ListingStatus, busy, useListing } from "./Listing";
-import { advanceCostLine, advanceState, advanceTerms, type MerchantAdvance, type MerchantOffer } from "./terms";
+import { advanceCostLine, advanceState, advanceTerms, type MerchantAdvance, type OfferRow } from "./terms";
 import { listAdvance } from "./wallet";
 
-const ist = (iso: string) => new Date(iso).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short", hour12: false, timeZone: "Asia/Kolkata" });
 
 interface AdvancePanelProps {
   merchant: Address;
   advance: MerchantAdvance;
-  offers: MerchantOffer[];
+  offers: OfferRow[];
 }
 
 export function AdvancePanel({ merchant, advance, offers }: AdvancePanelProps) {
@@ -37,7 +36,7 @@ export function AdvancePanel({ merchant, advance, offers }: AdvancePanelProps) {
           <p>
             <span className="font-medium">Offer {state.claimId}</span>{" "}
             {state.kind === "open" ? (
-              <>is listed and waiting for investors{state.offer && <> until {ist(state.offer.offer_deadline)} IST</>}.</>
+              <>is listed and waiting for investors{state.offer && <> until {offers.find((o) => o.id === state.claimId)?.deadlineText} IST</>}.</>
             ) : (
               <>wasn&apos;t funded before its deadline. Cancel it to list a new one.</>
             )}
