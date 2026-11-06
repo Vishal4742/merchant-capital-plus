@@ -6,9 +6,9 @@ const SECTIONS = [
     title: null,
     items: [
       { key: "home", label: "Home", href: "/merchant" },
-      { key: "payments", label: "Payments", href: "/merchant#payments" },
-      { key: "links", label: "Links" },
-      { key: "pages", label: "Pages" },
+      { key: "payments", label: "Payments", href: "/merchant/payments" },
+      { key: "links", label: "Links", href: "/merchant/links" },
+      { key: "pages", label: "Pages", href: "/merchant/pages" },
       { key: "invoices", label: "Invoices", href: "/merchant#invoices" },
       { key: "vouchers", label: "Vouchers" },
     ],
