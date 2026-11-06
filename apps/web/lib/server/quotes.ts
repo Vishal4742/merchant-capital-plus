@@ -16,13 +16,14 @@ const MAX_RATE_AGE_DAYS = 7;
 const CENT = 10_000n; // USDT units in one cent
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** Units of the currency per 1 USD that we accept (claude-frontend's bands, the same numbers in both lanes). */
+/** Units of the currency per 1 USD that we accept: ±15% of the 06 Nov 2026 rates (human 06:18; a flipped EUR, GBP or
+ *  SGD rate passed the old 0.5–2× band), AED at its 3.6725 peg ± 1%. The same numbers as claude-frontend (ARCHITECTURE §4b). */
 export const BANDS: Record<(typeof QUOTED)[number], [number, number]> = {
-  EUR: [0.5, 2],
-  GBP: [0.4, 1.6667],
-  SGD: [0.6667, 2.5],
-  INR: [33.33, 200],
-  AED: [3.635775, 3.709225], // the 3.6725 peg ± 1%
+  EUR: [0.7555, 1.0221], // 0.88875
+  GBP: [0.6309, 0.8536], // 0.74225
+  SGD: [1.0858, 1.469], // 1.2774
+  INR: [80.33, 108.68], // 94.5
+  AED: [3.635775, 3.709225],
 };
 
 /** Units of the currency per 1 USD, as an exact fraction (num / den), with how to show it. */
@@ -55,12 +56,17 @@ function fraction(decimal: string): { num: bigint; den: bigint } {
 
 const utcDate = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
-/** A source row we trust: a real date at most 7 days old (and not after tomorrow), a plain decimal inside the band. */
+/** A real YYYY-MM-DD at most 7 days before `now`'s UTC day and not after tomorrow. */
+function freshDate(date: string, now: number): boolean {
+  const at = /^\d{4}-\d{2}-\d{2}$/.test(date) ? Date.parse(`${date}T00:00:00Z`) : NaN;
+  if (!Number.isFinite(at) || utcDate(at) !== date) return false; // e.g. 2026-02-30
+  return at >= Date.parse(`${utcDate(now)}T00:00:00Z`) - MAX_RATE_AGE_DAYS * DAY_MS && at <= now + DAY_MS;
+}
+
+/** A source row we trust: a fresh date, a plain decimal inside the band. */
 function checked(currency: (typeof QUOTED)[number], row: { date?: unknown; rate?: unknown }, now: number, fetchedAt: number): Rate | null {
-  const date = typeof row.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? row.date : "";
-  const at = date ? Date.parse(`${date}T00:00:00Z`) : NaN;
-  if (!Number.isFinite(at) || utcDate(at) !== date) return null; // e.g. 2026-02-30
-  if (at < Date.parse(`${utcDate(now)}T00:00:00Z`) - MAX_RATE_AGE_DAYS * DAY_MS || at > now + DAY_MS) return null;
+  const date = typeof row.date === "string" ? row.date : "";
+  if (!freshDate(date, now)) return null;
   const text = typeof row.rate === "number" ? String(row.rate) : "";
   if (!/^\d+(\.\d{1,12})?$/.test(text)) return null;
   const [low, high] = BANDS[currency];
@@ -97,7 +103,8 @@ async function fetchRates(now: number): Promise<Map<string, Rate>> {
 export async function usdRate(currency: Currency, now = Date.now()): Promise<Rate> {
   if (currency === "USD" || currency === "USDT") return { num: 1n, den: 1n, rate: "1", rateAt: utcDate(now), source: "USD = USDT 1:1", fetchedAt: now };
   const rate = (await fetchRates(now)).get(currency);
-  if (!rate) throw new HttpError(503, `Prices in ${currency} are unavailable right now. Try again in a minute.`);
+  // re-checked here, not only at fetch time: during an outage the cache keeps serving, and it must not age past 7 days (S3)
+  if (!rate || !freshDate(rate.rateAt, now)) throw new HttpError(503, `Prices in ${currency} are unavailable right now. Try again in a minute.`);
   return rate;
 }
 

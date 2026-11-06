@@ -65,6 +65,9 @@ test("AED comes from the same fetch and must sit within 1% of the 3.6725 peg", a
 test("a rate outside its band, AED off its peg, or a stale or future date makes that currency unavailable (503)", async () => {
   const cases = [
     [{ EUR: 5 }, "EUR"],
+    [{ EUR: 1.1251 }, "EUR"], // a flipped rate (USD per EUR read as EUR per USD): passed the old 0.5–2 band (human 06:18)
+    [{ GBP: 1.3459 }, "GBP"], // flipped GBP
+    [{ SGD: 0.783 }, "SGD"], // flipped SGD
     [{ INR: 10 }, "INR"],
     [{ AED: 3.8 }, "AED"],
   ];
@@ -76,7 +79,8 @@ test("a rate outside its band, AED off its peg, or a stale or future date makes 
     const err = await usdRate(currency).catch((e) => e);
     assert.equal(err.status, 503, `${currency} ${JSON.stringify(over)}`);
     assert.match(err.message, new RegExp(`Prices in ${currency} are unavailable`));
-    assert.equal((await usdRate("GBP")).rate, "0.74225", "the other currencies still work");
+    const control = currency === "GBP" ? "INR" : "GBP";
+    assert.equal((await usdRate(control)).rate, String(RATES[control]), "the other currencies still work");
   }
   for (const date of [daysAgo(8), daysAgo(-2), "2026-02-30", "garbage"]) {
     mock.restoreAll();
@@ -111,6 +115,22 @@ test("the source being down: 503 without a cached rate, the checked cached rate 
   mock.restoreAll();
   mock.method(globalThis, "fetch", async () => new Response("down", { status: 502 }));
   assert.equal((await usdRate("SGD", t + 16 * 60_000)).rate, "1.2774");
+});
+
+test("S3: during an outage a cached rate still obeys the 7-day rule", async () => {
+  (await import("../lib/server/quotes.ts")).resetRateCache();
+  const t = Date.now();
+  v2({}, daysAgo(7)); // accepted today: exactly 7 days old
+  assert.equal((await usdRate("EUR", t)).rateAt, daysAgo(7));
+  mock.restoreAll();
+  mock.method(globalThis, "fetch", async () => new Response("down", { status: 502 }));
+  const err = await usdRate("EUR", t + 86_400_000 + 16 * 60_000).catch((e) => e); // a day later: now 8 days old
+  assert.equal(err.status, 503);
+});
+
+test("the bands are ±15% of the 06 Nov rates (AED: peg ± 1%), the same numbers claude-frontend uses", async () => {
+  const { BANDS } = await import("../lib/server/quotes.ts");
+  assert.deepEqual(BANDS, { EUR: [0.7555, 1.0221], GBP: [0.6309, 0.8536], SGD: [1.0858, 1.469], INR: [80.33, 108.68], AED: [3.635775, 3.709225] });
 });
 
 test("bad input is refused; the public route is rate-limited per IP", async () => {
