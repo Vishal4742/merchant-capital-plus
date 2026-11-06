@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Hex } from "viem";
 import { Confirming } from "@/components/Confirming";
 import { HoldButton } from "@/components/HoldButton";
-import { FAILED, outcome, type PayAnswer } from "@/lib/outcome";
+import { FAILED, NOT_FUNDED, outcome, type PayAnswer } from "@/lib/outcome";
 import type { InvoicePayTerms } from "@/lib/sign-sale";
 import { EXPLORER } from "@/lib/usdt";
 
@@ -151,7 +151,7 @@ export function InvoicePay({ invoiceId, merchantName, dueText, invoiceText, paid
         </p>
       ) : terms ? (
         <div className="grid gap-3">
-          <HoldButton label={`Hold to pay ${totalText}`} busyLabel="Paying" doneLabel="Paid" onConfirm={pay} aria-describedby="pay-hint" className="w-full" />
+          <HoldButton label={`Hold to pay ${totalText} USDT`} busyLabel="Paying" doneLabel="Paid" onConfirm={pay} aria-describedby="pay-hint" className="w-full" />
           <p id="pay-hint" className="text-center text-sm text-ink-muted">
             You pay {totalText} USDT: the {owedText} due plus a {feeText} USDT payment fee.
             <span className="block">Press and hold the button, or press Enter, to pay.</span>
@@ -163,7 +163,8 @@ export function InvoicePay({ invoiceId, merchantName, dueText, invoiceText, paid
         </p>
       )}
       {error && (
-        <p role="alert" className="text-sm text-critical">
+        // the demo message explains a limit, it isn't a failure: the warning tone, not red (UX review 005 N3)
+        <p role="alert" className={`text-sm ${error === NOT_FUNDED ? "text-warning" : "text-critical"}`}>
           {error}
         </p>
       )}

@@ -47,7 +47,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const [invoice, fee, balance] = await Promise.all([
     readInvoice(pay.merchantPay, invoiceId, { tries: READ_TRIES }).catch(logged(`invoice ${id}: chain read`)),
     readRelayFee(pay.merchantPay, { tries: READ_TRIES }).catch(logged(`invoice ${id}: fee read`)),
-    readUsdtBalance(payer).catch(() => null),
+    readUsdtBalance(payer, { tries: READ_TRIES }).catch(() => null),
   ]);
   if (!invoice || fee === null) return fail(503, NOT_READ);
   if (!isShopInvoice(invoice, merchantConfig()?.merchant)) return fail(404, NOT_FOUND); // only our shop's invoices

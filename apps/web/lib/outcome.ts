@@ -5,6 +5,10 @@ import type { Hex } from "viem";
 /** When we can't know whether the payment went out, never say "Nothing was charged". */
 export const UNCONFIRMED = "We couldn't confirm this payment yet. Don't pay again; check this page again in a few minutes.";
 export const FAILED = "The payment didn't go through. Nothing was charged.";
+/** The human's gate decision (batch 004, 01:45): an unfunded guest is a demo limit, so say so plainly. The pay routes
+ *  send it after their own balance read; the relayer's insufficient_funds maps to it too. The sheets show it in the
+ *  warning tone, not as an error (UX review 005 N3). */
+export const NOT_FUNDED = "This is a demo: paying needs test USDT, and this browser doesn't have enough yet. Nothing was charged.";
 
 export type Outcome =
   | { kind: "paid"; receiptId: string | null; txHash: Hex | null }

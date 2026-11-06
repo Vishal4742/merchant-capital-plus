@@ -17,11 +17,12 @@ export interface SaleTerms {
   amount: string; // USDT units as a decimal string (from the server)
 }
 
-/** Signs the sale with the guest key and returns the body for POST /api/v1/sessions/:id/pay. */
-export async function signSale(sale: SaleTerms) {
+/** Signs the sale with the guest key and returns the body for POST /api/v1/sessions/:id/pay. The approval ends when
+ *  the checkout does, if that is sooner (ARCHITECTURE §4b), so nothing can settle after the sheet says "expired". */
+export async function signSale(sale: SaleTerms, checkoutExpiresAt: number) {
   const account = getGuestAccount();
   const salt = freshSalt();
-  const validBefore = BigInt(Math.floor(Date.now() / 1000) + SIGNATURE_WINDOW_S);
+  const validBefore = BigInt(Math.min(Math.floor(Date.now() / 1000) + SIGNATURE_WINDOW_S, Math.floor(checkoutExpiresAt / 1000)));
   const signature = await account.signTypedData(saleAuthorization({ ...sale, amount: BigInt(sale.amount) }, account.address, salt, validBefore));
   return { from: account.address, salt, validBefore: validBefore.toString(), signature };
 }

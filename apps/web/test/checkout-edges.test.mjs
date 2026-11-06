@@ -13,7 +13,9 @@ process.env.AUTH_SECRET = "test-auth-secret-0123456789abcdef0123";
 const MERCHANT_PAY = "0x2222222222222222222222222222222222222222";
 
 let settled = async () => null;
-mock.module("../lib/onchain.ts", { namedExports: { saleSettled: (...args) => settled(...args), readUsdtBalance: async () => 1_000_000_000n } });
+mock.module("../lib/onchain.ts", {
+  namedExports: { saleSettled: (...args) => settled(...args), readUsdtBalance: async () => 1_000_000_000n, readPayment: async () => ({ merchant: process.env.MERCHANT_ADDRESS, gross: 1n, payer: process.env.MERCHANT_ADDRESS, refunded: 0n }) },
+});
 
 const { POST: createSession } = await import("../app/api/v1/sessions/route.ts");
 const { POST: pay } = await import("../app/api/v1/sessions/[id]/pay/route.ts");
@@ -61,14 +63,14 @@ const timeout = async () => {
   throw new DOMException("timed out", "TimeoutError");
 };
 
-test("create: 1.00 and 10,000.00 are accepted; 10,000.01 is not; the reply is {id, url, amount, expiresAt} with a 30 min expiry", async () => {
+test("create: 1.00 and 10,000.00 are accepted; 10,000.01 is not; the reply is {id, url, amount, currency, expiresAt} with a 30 min expiry", async () => {
   assert.equal((await create({ amount: "1.00" })).res.status, 201);
   assert.equal((await create({ amount: "10000.00" })).res.status, 201);
   assert.equal((await create({ amount: "10000.01" })).res.status, 400);
   assert.equal((await create({ amount: 25 })).res.status, 400, "a number, not a string");
   const before = Date.now();
   const { data } = await create({ amount: "25.00" });
-  assert.deepEqual(Object.keys(data).sort(), ["amount", "expiresAt", "id", "url"]);
+  assert.deepEqual(Object.keys(data).sort(), ["amount", "currency", "expiresAt", "id", "url"]);
   const ttl = Date.parse(data.expiresAt) - before;
   assert.ok(ttl >= SESSION_TTL_MS - 1000 && ttl <= SESSION_TTL_MS + 1000, `expiry ${ttl} ms`);
   assert.equal(SESSION_TTL_MS, 30 * 60 * 1000);

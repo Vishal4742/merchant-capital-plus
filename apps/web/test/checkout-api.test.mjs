@@ -19,13 +19,16 @@ const settledCalls = [];
 // the guest's test USDT, read on the server before a payment is locked or relayed (default: plenty)
 let balance = 1_000_000_000n;
 let balanceReadFails = false;
+const balanceReads = [];
 mock.module("../lib/onchain.ts", {
   namedExports: {
     saleSettled: (...args) => (settledCalls.push(args), settled(...args)),
-    readUsdtBalance: async () => {
+    readUsdtBalance: async (...args) => {
+      balanceReads.push(args);
       if (balanceReadFails) throw new Error("rpc down");
       return balance;
     },
+    readPayment: async () => ({ merchant: process.env.MERCHANT_ADDRESS, gross: 25_000_000n, payer: customer.address, refunded: 0n }),
   },
 });
 
@@ -46,6 +49,7 @@ globalThis.fetch = async (url, init) => {
 };
 
 beforeEach(() => {
+  balanceReads.length = 0;
   balance = 1_000_000_000n;
   balanceReadFails = false;
   relayCalls.length = 0;
@@ -62,10 +66,9 @@ async function newSession(body = { amount: "25.00", reference: "A-1042", items: 
   const res = await createSession(new Request("http://shop.test/api/v1/sessions", { method: "POST", headers: auth, body: JSON.stringify(body) }));
   return { res, data: await res.json() };
 }
-async function signedBody(id, { amount, account = customer } = {}) {
+async function signedBody(id, { amount, account = customer, validBefore = BigInt(Math.floor(Date.now() / 1000) + 600) } = {}) {
   const s = getSession(id);
   const salt = toHex(crypto.getRandomValues(new Uint8Array(32)));
-  const validBefore = BigInt(Math.floor(Date.now() / 1000) + 600);
   const sale = { merchantPay: MERCHANT_PAY, merchant: s.merchant, orderRef: s.orderRef, amount: amount ?? s.amount };
   const signature = await account.signTypedData(saleAuthorization(sale, account.address, salt, validBefore));
   return { from: account.address, salt, validBefore: validBefore.toString(), signature };
@@ -311,7 +314,7 @@ test("the shop polls a checkout with its key: open, then paid with MerchantPay's
   const { data } = await newSession();
   assert.equal((await poll(data.id, {})).status, 401);
   assert.equal((await poll("00000000-0000-0000-0000-000000000000")).status, 404);
-  assert.deepEqual(await (await poll(data.id)).json(), { id: data.id, status: "open", amount: "25.00", reference: "A-1042", paymentId: null, txHash: null });
+  assert.deepEqual(await (await poll(data.id)).json(), { id: data.id, status: "open", amount: "25.00", currency: "USDT", reference: "A-1042", paymentId: null, txHash: null, refunded: "0.00" });
   assert.equal((await callPay(data.id, await signedBody(data.id))).status, 200);
   const paid = await (await poll(data.id)).json();
   assert.deepEqual([paid.status, paid.paymentId, paid.txHash], ["paid", "1", `0x${"ab".repeat(32)}`]);
@@ -379,4 +382,41 @@ test("a failed balance read still relays the checkout (the relayer checks the ba
   balanceReadFails = true;
   assert.equal((await callPay(data.id, await signedBody(data.id))).status, 200);
   assert.equal(relayCalls.length, 1);
+});
+
+// Batch 005 round 2, code R2-F1 / security F-N1: the balance check must not hide a landed earlier attempt. A stale
+// second tab posts after the first tab's unknown outcome landed and spent the guest's whole balance.
+test("a stale second tab after a pending payment landed gets the receipt, not the demo message (R2-F1)", async () => {
+  const { data } = await newSession();
+  relayReply = timeout;
+  await callPay(data.id, await signedBody(data.id));
+  assert.ok(getSession(data.id).pending, "the first attempt's outcome is unknown");
+  balance = 0n; // it landed: the guest's 25.00 is spent
+  settled = async () => "1";
+  const res = await callPay(data.id, await signedBody(data.id));
+  assert.equal(res.status, 409);
+  assert.equal((await res.json()).receiptId, data.id);
+  assert.equal(getSession(data.id).payment.paymentId, "1");
+});
+
+test("the balance read asks about the payer (from), with retries (security F-N3, code R2-F3)", async () => {
+  const { data } = await newSession();
+  const body = await signedBody(data.id);
+  await callPay(data.id, body);
+  assert.equal(balanceReads.length, 1);
+  assert.equal(balanceReads[0][0], body.from);
+  assert.ok(balanceReads[0][1]?.tries >= 2, "retried at the same block like the other reads");
+});
+
+// ARCHITECTURE §4b: the approval's validBefore never outlives the checkout, so nothing can settle after "expired".
+test("an approval valid past the checkout's expiry is refused before the relayer; one ending at it is accepted", async () => {
+  const { data } = await newSession();
+  const session = getSession(data.id);
+  session.expiresAt = Date.now() + 120_000; // 2 minutes left
+  const late = await callPay(data.id, await signedBody(data.id)); // signedBody signs for now + 600 s
+  assert.equal(late.status, 400);
+  assert.match((await late.json()).error, /expires sooner. Nothing was charged/);
+  assert.equal(relayCalls.length, 0);
+  const atExpiry = BigInt(Math.floor(session.expiresAt / 1000));
+  assert.equal((await callPay(data.id, await signedBody(data.id, { validBefore: atExpiry }))).status, 200);
 });
