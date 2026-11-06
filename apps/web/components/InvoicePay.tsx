@@ -9,8 +9,8 @@ import { useRef, useState } from "react";
 import type { Hex } from "viem";
 import { Confirming } from "@/components/Confirming";
 import { HoldButton } from "@/components/HoldButton";
-import { GuestShort, WALLET_SHORT, WalletOption, loadSigner, useGuestFunds, walletPayer } from "@/components/WalletPay";
-import { FAILED, NOT_FUNDED, outcome, type PayAnswer } from "@/lib/outcome";
+import { GuestShort, WalletOption, loadSigner, useGuestFunds, walletPayer } from "@/components/WalletPay";
+import { FAILED, errorTone, outcome, type PayAnswer } from "@/lib/outcome";
 import type { InvoicePayTerms } from "@/lib/sign-sale";
 import { EXPLORER } from "@/lib/usdt";
 
@@ -155,9 +155,12 @@ export function InvoicePay({ invoiceId, merchantName, dueText, invoiceText, paid
         </p>
       ) : terms ? (
         <div className="grid gap-3">
-          {/* short: said before the hold, never after it; a hold already under way stays */}
+          {/* short: said before the hold, never after it (a hold already under way stays), and the wallet leads */}
+          {/* submit() already shows its error; the rejection only matters to the hold button */}
           {guest.funds === "short" && guest.address && paying !== "hold" ? (
-            <GuestShort amountText={totalText} address={guest.address} onRecheck={guest.recheck} />
+            <GuestShort amountText={totalText} address={guest.address} onRecheck={guest.recheck}>
+              <WalletOption primary busy={paying === "wallet"} disabled={paying !== null} onPay={() => void pay("wallet").catch(() => undefined)} />
+            </GuestShort>
           ) : (
             <>
               <HoldButton label={`Hold to pay ${totalText} USDT`} busyLabel="Paying" doneLabel="Paid" onConfirm={() => pay("hold")} aria-describedby="pay-hint" className="w-full" />
@@ -165,10 +168,9 @@ export function InvoicePay({ invoiceId, merchantName, dueText, invoiceText, paid
                 You pay {totalText} USDT: the {owedText} due plus a {feeText} USDT payment fee.
                 <span className="block">Press and hold the button, or press Enter, to pay.</span>
               </p>
+              <WalletOption busy={paying === "wallet"} disabled={paying !== null} onPay={() => void pay("wallet").catch(() => undefined)} />
             </>
           )}
-          {/* submit() already shows its error; the rejection only matters to the hold button */}
-          <WalletOption busy={paying === "wallet"} disabled={paying !== null} onPay={() => void pay("wallet").catch(() => undefined)} />
         </div>
       ) : (
         <p role="status" className="text-sm text-ink-muted">
@@ -176,8 +178,8 @@ export function InvoicePay({ invoiceId, merchantName, dueText, invoiceText, paid
         </p>
       )}
       {error && (
-        // the demo message explains a limit, it isn't a failure: the warning tone, not red (UX review 005 N3)
-        <p role="alert" className={`text-sm ${error === NOT_FUNDED || error === WALLET_SHORT ? "text-warning" : "text-critical"}`}>
+        // a demo limit is amber and a cancel plain ink, not red (UX review 005 N3, 032 L3); centred under the hint (032 L4)
+        <p role="alert" className={`text-center text-sm ${errorTone(error)}`}>
           {error}
         </p>
       )}

@@ -6,6 +6,7 @@
 import { BaseError, createWalletClient, custom, type EIP1193Provider } from "viem";
 import { whitechainSepolia } from "viem/chains";
 import { WHITECHAIN_TESTNET } from "./onboarding.ts";
+import { WALLET_CANCELLED as CANCELLED } from "./outcome.ts";
 import type { Payer } from "./sign-sale.ts";
 
 const USER_REJECTED = 4001; // EIP-1193
@@ -14,7 +15,6 @@ const REQUEST_PENDING = -32002; // MetaMask: a request of this kind is already o
 
 export const NO_WALLET = "No wallet in this browser. Install MetaMask, then reload this page.";
 const NO_ACCOUNT = "Your wallet didn't share an account. Unlock it, pick an account, then try again.";
-const CANCELLED = "You cancelled in your wallet. Nothing was charged.";
 const PENDING = "Your wallet already has a request open. Open the wallet, finish or close it, then try again.";
 const WRONG_NETWORK = "Switch your wallet to Whitechain Testnet (chain 1874), then try again. Nothing was charged.";
 const FAILED = "Your wallet couldn't do this. Nothing was charged. Try again.";

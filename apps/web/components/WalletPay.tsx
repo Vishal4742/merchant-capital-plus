@@ -1,14 +1,16 @@
 "use client";
 
 // FR-PAY-16 on the checkout and invoice sheets. (1) Before the hold, our server says whether this browser's guest holds
-// enough USDT (FR-PRIV-1: no browser chain read); if not, the sheet says so with the guest's address to send test USDT
-// to, instead of failing after the hold. (2) "Pay with your wallet": the customer's own injected wallet approves the same
-// payment (lib/payer-wallet.ts), one message and no network fee. FR-PAY-7 still holds for the default path: only the
-// wallet option, marked data-pay-option="wallet", says "wallet".
-import { useEffect, useState, useSyncExternalStore } from "react";
+// enough USDT (FR-PRIV-1: no browser chain read); if not, the sheet says so in one line and leads with "Pay with your
+// wallet", the path that can pay (UX review 032 M1), with funding this browser folded under a quiet disclosure, so the
+// default view shows no address (NFR-6, UX review 032 M2). (2) "Pay with your wallet": the customer's own injected wallet
+// approves the same payment (lib/payer-wallet.ts), one message and no network fee. FR-PAY-7 still holds for the default
+// path: only the wallet option, marked data-pay-option="wallet", says "wallet".
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { Address } from "viem";
-import { Button } from "@/components/Button";
+import { Button, buttonClasses } from "@/components/Button";
 import { CopyButton } from "@/components/CopyButton";
+import { WALLET_SHORT } from "@/lib/outcome";
 import type { Payer } from "@/lib/sign-sale";
 // window.ethereum is typed by the global in components/merchant/SignIn.tsx
 
@@ -32,8 +34,6 @@ async function checkFunds(fundsUrl: string, payer: Address): Promise<Funds> {
     return "unknown";
   }
 }
-
-export const WALLET_SHORT = "This wallet doesn't have enough test USDT for this payment. Nothing was charged.";
 
 /** The customer's own wallet, connected and on chain 1874, and checked by our server to hold enough USDT before the
  *  wallet asks for anything to approve (no prompt for a payment that would fail). Throws plain copy. */
@@ -72,20 +72,37 @@ export function useGuestFunds(fundsUrl: string | null, amountKey: string) {
   return { ...state, recheck: () => setRound((n) => n + 1) };
 }
 
-/** The default path when this browser's guest is short: said before the hold, with the address to send test USDT to.
- *  FR-PAY-7 words only (the wallet option below is the one that says "wallet"). */
-export function GuestShort({ amountText, address, onRecheck }: { amountText: string; address: Address; onRecheck: () => void }) {
+const shortAddress = (a: Address) => `${a.slice(0, 6)}…${a.slice(-4)}`;
+
+/** The default path when this browser's guest is short, said before the hold: one line, then `children` (the wallet
+ *  option, as the primary action), then funding this browser under a quiet disclosure. FR-PAY-7 words only here (the
+ *  wallet option is the one that says "wallet"); the address shows only once the disclosure is opened. */
+export function GuestShort({ amountText, address, onRecheck, children }: { amountText: string; address: Address; onRecheck: () => void; children: ReactNode }) {
   return (
-    <div role="status" className="grid gap-2 rounded-sm border border-hairline p-4 text-sm">
-      <p className="text-warning">This browser doesn&apos;t have {amountText} test USDT yet, so it can&apos;t pay here.</p>
-      <p className="text-ink-muted">Send test USDT to this browser&apos;s address, then check again. Or use the option below.</p>
-      <p className="data break-all">{address}</p>
-      <div className="flex flex-wrap items-center gap-2">
-        <CopyButton text={address} name="this browser's address" />
-        <Button variant="quiet" className="text-sm" onClick={onRecheck}>
-          Check again
-        </Button>
-      </div>
+    <div className="grid gap-3">
+      <p role="status" className="text-center text-sm text-warning">
+        This browser doesn&apos;t have {amountText} test USDT yet, so it can&apos;t pay here.
+      </p>
+      {children}
+      <details className="group text-sm">
+        <summary className="inline-flex min-h-11 cursor-pointer list-none items-center gap-1 text-ink-muted underline underline-offset-4 hover:text-ink [&::-webkit-details-marker]:hidden">
+          Add test USDT to this browser instead
+          <span aria-hidden="true" className="transition-transform group-open:rotate-180">▾</span>
+        </summary>
+        <div className="grid gap-1 pt-1">
+          <p className="text-ink-muted">Send test USDT to this browser&apos;s address, then check again.</p>
+          <div className="flex flex-wrap items-center gap-x-2">
+            <span className="data" title={address}>
+              {shortAddress(address)}
+            </span>
+            {/* copies the full address; the screen shows it shortened (UX review 032 L5) */}
+            <CopyButton text={address} name="this browser's address" />
+            <Button variant="quiet" className="text-sm" onClick={onRecheck}>
+              Check again
+            </Button>
+          </div>
+        </div>
+      </details>
     </div>
   );
 }
@@ -105,15 +122,18 @@ const useHasWallet = () =>
 
 const outline = "h-12 w-full cursor-pointer rounded-pill border border-current text-base font-medium text-accent hover:bg-accent-soft aria-disabled:cursor-not-allowed aria-disabled:opacity-45";
 
-/** "Pay with your wallet", or where to get one. */
-export function WalletOption({ busy, disabled, onPay }: { busy: boolean; disabled: boolean; onPay: () => void }) {
+/** "Pay with your wallet", or where to get one. `primary`: the guest is short, so this is the way to pay: the filled
+ *  button "Hold to pay" has when funded, and no "or" above it. */
+export function WalletOption({ busy, disabled, onPay, primary = false }: { busy: boolean; disabled: boolean; onPay: () => void; primary?: boolean }) {
   const found = useHasWallet();
   const off = disabled || !found;
   return (
     <div data-pay-option="wallet" className="grid gap-2">
-      <p aria-hidden="true" className="text-center text-xs text-ink-muted">
-        or
-      </p>
+      {!primary && (
+        <p aria-hidden="true" className="text-center text-xs text-ink-muted">
+          or
+        </p>
+      )}
       {found === false ? (
         <p className="text-center text-sm text-ink-muted">
           Have your own wallet with test USDT?{" "}
@@ -124,7 +144,7 @@ export function WalletOption({ busy, disabled, onPay }: { busy: boolean; disable
         </p>
       ) : (
         <>
-          <button type="button" className={outline} aria-disabled={off} aria-describedby="wallet-hint" onClick={off ? undefined : onPay}>
+          <button type="button" className={primary ? buttonClasses("primary", "w-full") : outline} aria-disabled={off} aria-describedby="wallet-hint" onClick={off ? undefined : onPay}>
             {busy ? "Check your wallet…" : "Pay with your wallet"}
           </button>
           <p id="wallet-hint" className="text-center text-sm text-ink-muted">
