@@ -91,6 +91,32 @@ test("the routes: nonce cookie, then a verified sign-in sets the session cookie"
   assert.equal(replay.status, 401, "replayed sign-in");
 });
 
+test("wallet A can never obtain wallet B's session through the routes (batch 057 negative test)", async () => {
+  const walletA = privateKeyToAccount(generatePrivateKey());
+  const walletB = merchant;
+  const signIn = async (message, signer, extra = {}) => {
+    const nonceRes = await nonceRoute(new Request("http://shop.test/api/auth/nonce"));
+    const cookie = nonceRes.headers.get("set-cookie").split(";")[0];
+    const { nonce } = await nonceRes.json();
+    const text = message(nonce);
+    const body = JSON.stringify({ message: text, signature: await signer.signMessage({ message: text }), ...extra });
+    return verifyRoute(new Request("http://shop.test/api/auth/verify", { method: "POST", headers: { cookie }, body }));
+  };
+  const sessionOf = (res) => {
+    const c = res.headers.getSetCookie().find((x) => x.startsWith("mc_session="));
+    return c ? auth.readSession(decodeURIComponent(c.split(";")[0].slice("mc_session=".length)), SECRET) : undefined;
+  };
+  // A signs a message that names B: refused, and no session cookie at all
+  const claimB = await signIn((nonce) => siwe({ nonce, address: walletB.address }), walletA);
+  assert.equal(claimB.status, 401, "A's signature over B's address");
+  assert.equal(sessionOf(claimB), undefined, "no session issued");
+  // A signs its own message but asks for B in the body: the body is ignored, the session names A only
+  const override = await signIn((nonce) => siwe({ nonce, address: walletA.address }), walletA, { address: walletB.address, wallet: walletB.address });
+  assert.equal(override.status, 200);
+  assert.equal(sessionOf(override), walletA.address, "session is bound to the recovered signer");
+  assert.notEqual(sessionOf(override), walletB.address);
+});
+
 test("without the nonce cookie, sign-in is refused", async () => {
   const message = siwe();
   const signature = await merchant.signMessage({ message });
