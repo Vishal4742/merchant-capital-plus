@@ -55,6 +55,7 @@ beforeEach(async () => {
   arkiv.fail = null;
   process.env.VOUCHER_HASH_SECRET = HASH_SECRET;
   process.env.ARKIV_ACCESS_KEY = ACCESS_KEY;
+  process.env.ARKIV_PRIVATE_KEY = "not-a-key-arkivClients-is-mocked"; // arkivConfigProblem checks presence only
 });
 
 test("voucher routes need the dashboard cookie", async () => {
@@ -584,7 +585,7 @@ test("a failed mirror is stored with a secret-free reason and shows as not_on_ar
   assert.deepEqual([listed.arkiv_status, listed.arkiv_error], ["not_on_arkiv", data.arkiv_error], "visible in the list too");
 });
 
-test("without VOUCHER_HASH_SECRET the stored reason says so", async () => {
+test("a missing setting is shown on every read (server state, not stored), and clears once the setting is back", async () => {
   delete process.env.VOUCHER_HASH_SECRET;
   const spy = mock.method(console, "error", () => {});
   let data;
@@ -594,6 +595,15 @@ test("without VOUCHER_HASH_SECRET the stored reason says so", async () => {
     spy.mock.restore();
   }
   assert.equal(data.arkiv_error, "VOUCHER_HASH_SECRET isn't set on this server.");
+  const { query } = await import("../lib/server/db.ts");
+  assert.equal((await query("SELECT arkiv_error FROM app_gw_vouchers WHERE id = $1", [data.id]))[0].arkiv_error, null, "not written to the row");
+  delete process.env.ARKIV_PRIVATE_KEY;
+  process.env.VOUCHER_HASH_SECRET = HASH_SECRET;
+  const listed = (await (await list(req("GET", "/api/v1/vouchers", { headers: signedIn() }))).json()).vouchers[0];
+  assert.equal(listed.arkiv_error, "ARKIV_PRIVATE_KEY isn't set on this server.", "the read names what is missing now");
+  process.env.ARKIV_PRIVATE_KEY = "not-a-key-arkivClients-is-mocked";
+  const fixed = (await (await list(req("GET", "/api/v1/vouchers", { headers: signedIn() }))).json()).vouchers[0];
+  assert.deepEqual([fixed.arkiv_status, fixed.arkiv_error], ["not_on_arkiv", null], "configured again: publish will mirror it");
 });
 
 test("publish retries a failed mirror and records the entity key and the create tx", async () => {

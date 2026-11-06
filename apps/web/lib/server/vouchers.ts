@@ -90,7 +90,7 @@ export const voucherJson = (v: Voucher) => ({
   arkiv_status: v.arkivEntityKey ? ("on_arkiv" as const) : ("not_on_arkiv" as const),
   arkiv_entity_key: v.arkivEntityKey,
   arkiv_tx_hash: v.arkivTxHash,
-  arkiv_error: v.arkivEntityKey ? null : v.arkivError,
+  arkiv_error: v.arkivEntityKey ? null : (arkivConfigProblem() ?? v.arkivError), // a server-wide setting problem first
   created_at: new Date(v.createdAt).toISOString(),
 });
 
@@ -135,18 +135,30 @@ export function voucherInput(body: Record<string, unknown>, now = Date.now()) {
   return { code, kind: kind as VoucherKind, value, expiresAt, maxRedemptions, minAmount };
 }
 
-type Mirror = { entityKey: string; txHash: string | null } | { error: string };
+type Mirror = { entityKey: string; txHash: string | null } | { error: string; config?: boolean };
 const MAX_REASON = 200;
+
+/** Why this server can't mirror vouchers to Arkiv at all, or null: checks only that the settings exist (names, never
+ *  values). Shown on every read of a voucher that isn't on Arkiv, so a misconfigured server is visible at once. */
+export function arkivConfigProblem(env: Record<string, string | undefined> = process.env): string | null {
+  if (!env.VOUCHER_HASH_SECRET?.trim()) return "VOUCHER_HASH_SECRET isn't set on this server.";
+  if (!env.ARKIV_ACCESS_KEY?.trim()) return "ARKIV_ACCESS_KEY isn't set on this server.";
+  if (!env.ARKIV_PRIVATE_KEY?.trim()) return "ARKIV_PRIVATE_KEY isn't set on this server.";
+  return null;
+}
 
 /** Writes the Arkiv mirror and returns the outcome; a failure's reason is a fixed string or the redacted SDK error. */
 async function mirrorToArkiv(v: Voucher): Promise<Mirror> {
-  const secret = process.env.VOUCHER_HASH_SECRET;
-  if (!secret) return { error: "VOUCHER_HASH_SECRET isn't set on this server." };
+  const problem = arkivConfigProblem();
+  if (problem) return { error: problem, config: true };
+  const secret = process.env.VOUCHER_HASH_SECRET as string;
   let writer;
   try {
     writer = arkivClients().writer;
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "Arkiv isn't configured on this server." }; // arkivClients' own messages name no value
+    // arkivClients' own messages name no value; redacted and capped anyway (batch 018 review L2)
+    const reason = err instanceof Error ? err.message : "Arkiv isn't configured on this server.";
+    return { error: redactArkivError(reason, process.env.ARKIV_ACCESS_KEY).slice(0, MAX_REASON), config: true };
   }
   try {
     const values = { type: VOUCHER_TYPE, merchant: v.merchant, code_hash: codeHash(v.merchant, v.code, secret), kind: v.kind, value: formatValue(v.kind, v.value), expires_at: u64(BigInt(Math.floor(v.expiresAt / 1000))) }; // unix s, like the chain
@@ -161,6 +173,8 @@ async function mirrorToArkiv(v: Voucher): Promise<Mirror> {
 async function recordMirror(v: Voucher, mirror: Mirror, now: number): Promise<Voucher> {
   if ("error" in mirror) {
     console.error(`voucher ${v.id} not mirrored to Arkiv: ${mirror.error}`);
+    // a missing setting is the server's state, not this voucher's: shown on every read (arkivConfigProblem), not stored
+    if (mirror.config) return { ...v, arkivError: mirror.error };
     await query("UPDATE app_gw_vouchers SET arkiv_error = $2, arkiv_attempted_at = $3 WHERE id = $1", [v.id, mirror.error, now]);
     return { ...v, arkivError: mirror.error };
   }
