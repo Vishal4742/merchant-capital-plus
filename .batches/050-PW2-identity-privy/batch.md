@@ -1,5 +1,5 @@
 # 050-PW2-identity-privy
-Phase: W2 (owner's Stage 3)   Round: build   Owner lane: whiteflow-f3
+Phase: W2 (owner's Stage 3)   Round: 2   Owner lane: whiteflow-f3 (round 1); whiteflow-ef (round 2, takeover, tracker D16)
 Mode: phase
 Money: yes
 Request (verbatim, owner 2026-11-06): "build the mco, use privy for signins on whitechain … do not assume any implementation"; AskUserQuestion answers: Privy login = "Email + external wallet (Recommended)"; MCP = "Remote OAuth MCP (Recommended)"; pacing = "Stacked PRs, keep going (Recommended)".
@@ -11,3 +11,4 @@ Log:
 - CLAIM (assigned by lead whiteflow-ef): UI lane — app/sign-in/page.tsx, components/workspace/PrivySignIn.tsx, components/workspace/WorkspaceSettings.tsx, app/merchant/settings/page.tsx (mount only), next.config.ts (/sign-in CSP only; listed under NEEDS THE USER). Conditions: Privy only on /sign-in with a test proving no other route's CSP allows auth.privy.io; existing components/tokens; keyboard/focus/360 px; expired-session, permission-denied, setup-incomplete states; Operator/Viewer see disabled actions with a reason; no fixtures at runtime; hands off app/api/v1/**, lib/server/keys.ts, lib/server/http.ts (ef's 051).
 - Fixed (lead finding, low): businesses.ts held raw control bytes inside a regex (git treated the file as binary); now a char-code check, no control bytes in the source.
 - round-1/test.md (tester, browser walk at 375/1440/360 with seeded sessions on wf_s2_web): VERDICT PASS; finding 1 (last Owner offered self-demotion) fixed: the role select and Remove are disabled for the last Owner with the reason shown. Acceptance 18 with a real Privy login stays NEEDS THE USER (Privy dashboard key).
+- 2026-11-07: whiteflow-f3's session ended with round 2 unstarted (worktree clean at d8a99ef). The Stage 3 lead whiteflow-ef takes over round 2 in this worktree (tracker D16). Findings: round-2/findings.md (ef's independent PR #44 review + the matching batch-051 review patterns). Independent re-review by a non-author reviewer afterwards.
