@@ -57,7 +57,11 @@ test("R2-1: every cut-over handler admits exactly the roles in the spec table (s
   for (const r of ROUTES) {
     for (const [role, m] of Object.entries(members)) {
       const { status, text } = await hit(r, m.headers);
-      if (allows(r[4], role)) assert.ok(![401, 403, 409].includes(status), `${r[0]} as ${role}: ${status} ${text}`);
+      // allowed = reached the service: not refused (401/403/409) and not crashed (500); 4xx/502/503 come from the service.
+      // Known exception, outside this batch: the capital services (capital.ts, capital-arkiv.ts) answer 500, not 502,
+      // when the RPC/Arkiv is unreachable, and the network is off here (follow-up for those files' owner).
+      const crashed = status === 500 && !["capital publish POST", "capital/merchant GET"].includes(r[0]);
+      if (allows(r[4], role)) assert.ok(![401, 403, 409].includes(status) && !crashed, `${r[0]} as ${role}: ${status} ${text}`);
       else assert.equal(status, 403, `${r[0]} as ${role}: ${status} ${text}`);
     }
   }
@@ -115,6 +119,10 @@ test("keys: a linked sk_ key manages its own workspace's webhooks; unlinked sk_ 
   const loose = await createKey(OTHER_MERCHANT, "Old server", "sk"); // a key of a wallet nobody linked
   const refused = await hooks.GET(req("GET", "/api/v1/webhooks", { headers: bearer(loose.key) }));
   assert.equal(refused.status, 409);
+  // a key whose merchant isn't the wallet its workspace linked (rows edited by hand) acts for nobody
+  const odd = await createKey(OTHER_MERCHANT, "Odd server", "sk");
+  await pg.query("UPDATE app_gw_keys SET business_id = $2 WHERE id = $1", [odd.record.id, owner.businessId]);
+  assert.equal((await hooks.GET(req("GET", "/api/v1/webhooks", { headers: bearer(odd.key) }))).status, 409);
   const pk = await createKey(MERCHANT, "Browser", "pk");
   assert.equal((await hooks.GET(req("GET", "/api/v1/webhooks", { headers: bearer(pk.key) }))).status, 401);
   assert.equal((await hooks.GET(req("GET", "/api/v1/webhooks", { headers: bearer("sk_test_nope") }))).status, 401);
@@ -145,6 +153,36 @@ test("v1 mutations leave an audit row naming the member and role (FR-AUTH-5)", a
   const { id } = JSON.parse(res.text);
   const rows = (await pg.query("SELECT business_id, actor_principal_id, role, source, action, target, outcome FROM wf_audit_events WHERE action LIKE 'v1.%'")).rows;
   assert.deepEqual(rows, [{ business_id: operator.businessId, actor_principal_id: operator.principalId, role: "operator", source: "session", action: "v1.links.create", target: id, outcome: "ok" }]);
+});
+
+test("audit rows for the other mutations that succeed offline; refused or failed calls leave none (FR-AUTH-5)", async () => {
+  const owner = await seedWorkspace(MERCHANT);
+  const call = async (folder, method, url, { body, p, headers = owner.headers } = {}) => {
+    const mod = await route(folder);
+    const res = await mod[method](req(method, url, { body, headers }), p ? params(p) : undefined);
+    return { status: res.status, body: await res.json() };
+  };
+  const key = await call("keys", "POST", "/api/v1/keys", { body: { label: "Server", kind: "sk" } });
+  assert.equal(key.status, 201);
+  assert.equal((await call("keys/[id]", "DELETE", `/api/v1/keys/${key.body.id}`, { p: { id: key.body.id } })).status, 200);
+  const link = await call("links", "POST", "/api/v1/links", { body: { currency: "USDT", description: "Tea", single_use: false, amount: "5" } });
+  assert.equal((await call("links/[id]/cancel", "POST", `/api/v1/links/${link.body.id}/cancel`, { p: { id: link.body.id } })).status, 200);
+  const page = await call("pages", "POST", "/api/v1/pages", { body: { title: "Menu", currency: "USDT", items: [{ name: "Tea", price: "2.00" }] } });
+  assert.equal(page.status, 201, JSON.stringify(page.body));
+  // refused (Viewer) and failed (unknown id) calls write nothing
+  const viewer = await seedMember(MERCHANT, "viewer");
+  assert.equal((await call("links", "POST", "/api/v1/links", { body: { currency: "USDT", description: "x", single_use: false, amount: "5" }, headers: viewer.headers })).status, 403);
+  assert.equal((await call("keys/[id]", "DELETE", "/api/v1/keys/key_nope", { p: { id: "key_nope" } })).status, 404);
+  const rows = (await pg.query("SELECT action, target, role FROM wf_audit_events WHERE action LIKE 'v1.%' ORDER BY at, action")).rows;
+  const expected = [
+    { action: "v1.keys.create", target: key.body.id, role: "owner" },
+    { action: "v1.keys.revoke", target: key.body.id, role: "owner" },
+    { action: "v1.links.create", target: link.body.id, role: "owner" },
+    { action: "v1.links.cancel", target: link.body.id, role: "owner" },
+    { action: "v1.pages.create", target: page.body.id, role: "owner" },
+  ];
+  assert.deepEqual(rows.map((r) => r.action).sort(), expected.map((r) => r.action).sort());
+  for (const e of expected) assert.ok(rows.some((r) => r.action === e.action && r.target === e.target && r.role === e.role), e.action);
 });
 
 test("dashboard pages: the workspace session resolves the linked merchant; the old cookie resolves nothing (spec 7)", async () => {

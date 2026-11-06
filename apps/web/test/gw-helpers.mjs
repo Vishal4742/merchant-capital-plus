@@ -79,15 +79,17 @@ export async function setupDb() {
 export async function resetDb() {
   const { rows } = await pg.query("SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'app_gw_%' OR table_name LIKE 'app_web_%' OR table_name LIKE 'wf_%'");
   if (rows.length) await pg.exec(`TRUNCATE ${rows.map((r) => r.table_name).join(", ")} CASCADE`);
-  seeded.clear(); // the workspaces signedIn() named are written again on the next database call
+  // each test names its own signed-in workspaces: one test's signedIn(X) must not give a later test X's linked workspace
+  wanted.clear();
+  seeded.clear();
   resetRateLimits(); // the in-memory limiter would otherwise carry counts from one test into the next
   resetRateCache(); // and the FX cache would serve one test's mocked rates to the next
 }
 
 // Batch 051: the dashboard cookie is a WhiteFlow session (wf_session) of an Owner whose workspace is linked to the legacy
 // merchant wallet, the only way to reach the v1 gateway after the cutover. signedIn() stays synchronous: it names the
-// merchant, and that workspace (principal, business, Owner membership, session) is written on the next database call,
-// and again after each resetDb(). Files that never call signedIn() get no extra wf_* rows. A file that installs its own
+// merchant, and that workspace (principal, business, Owner membership, session) is written on the next database call.
+// resetDb() forgets them, so each test seeds only what it signs in as. Files that never call signedIn() get no wf_* rows. A file that installs its own
 // setTestDb wrapper (gw-outbox) bypasses this: it uses `await seedWorkspace()` instead.
 const wanted = new Set();
 const seeded = new Set();

@@ -17,13 +17,17 @@ import { AuthError, Forbidden, SECRET_KEY_SCOPES, concurrencyConflict, requireSc
 import { authenticateKey } from "./keys.ts";
 import { readV1Obligations, type ObligationsRead } from "./policies.ts";
 
-export const CLAIM_TTL_MS = 10 * 60 * 1000;
-const CLAIMS_PER_MINUTE = 10; // per principal
+const CLAIM_TTL_MS = 10 * 60 * 1000;
+const CLAIMS_PER_MINUTE = 10; // per principal, for issuing and (separately) for submitting
 const PRUNE_AFTER_MS = 24 * 60 * 60 * 1000;
 const NONCE = /^[A-Za-z0-9]{8,128}$/; // viem's SIWE nonces are 96 characters
 const SIGNATURE = /^0x[0-9a-fA-F]{130}$/;
+// line breaks, NEL, Unicode line/paragraph separators and bidi controls: a quoted name must not reshape the wallet
+// prompt. Code points, so the source holds no invisible characters.
+const PROMPT_UNSAFE: ReadonlySet<number> = new Set([0x0a, 0x0d, 0x85, 0x2028, 0x2029, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069]);
+const promptSafe = (text: string) => Array.from(text, (c) => (PROMPT_UNSAFE.has(c.charCodeAt(0)) ? " " : c)).join("");
 
-export const NOT_LINKED = "This workspace isn't linked to a merchant account yet. An Owner can link it in Settings.";
+const NOT_LINKED = "This workspace isn't linked to a merchant account yet. An Owner can link it in Settings.";
 const EXPIRED = "That link request expired or was already used. Start again.";
 const ALREADY_LINKED = "This workspace is already linked to a merchant account.";
 const TAKEN = "That merchant account is already linked to another workspace.";
@@ -31,12 +35,6 @@ const NOT_SIGNER = "That signature isn't from this wallet. Sign with the merchan
 const BAD_SIGNATURE = "That signature isn't valid.";
 const OBLIGATIONS_DOWN = "We couldn't check this wallet's Capital obligations, so nothing was linked. Try again in a minute.";
 const KEY_NOT_LINKED = "This API key's merchant account isn't linked to a WhiteFlow workspace yet. An Owner can link it in Settings.";
-
-let obligationsRead: ObligationsRead = readV1Obligations;
-/** Tests only: replace the CON-11 chain read (null restores the real one). */
-export function setObligationsRead(read: ObligationsRead | null): void {
-  obligationsRead = read ?? readV1Obligations;
-}
 
 type OwnerContext = AuthContext & { principalId: string; businessId: string };
 function ownerContext(ctx: AuthContext): OwnerContext {
@@ -46,7 +44,7 @@ function ownerContext(ctx: AuthContext): OwnerContext {
 }
 
 /** The legacy merchant wallet a workspace linked, or null. */
-export async function linkedMerchantOf(businessId: string): Promise<Address | null> {
+async function linkedMerchantOf(businessId: string): Promise<Address | null> {
   const [b] = await query<{ legacy_merchant: string | null }>("SELECT legacy_merchant FROM wf_businesses WHERE id = $1", [businessId]);
   return b?.legacy_merchant ? getAddress(b.legacy_merchant) : null;
 }
@@ -94,7 +92,7 @@ export async function issueClaimChallenge(ctx: AuthContext, input: { address: un
   const origin = publicOrigin();
   const nonce = generateSiweNonce();
   const expiresAt = now + CLAIM_TTL_MS;
-  const name = biz.display_name.replace(/[\r\n]/g, " ");
+  const name = promptSafe(biz.display_name);
   const message = createSiweMessage({
     domain: origin.host,
     address: wallet,
@@ -115,11 +113,11 @@ export async function issueClaimChallenge(ctx: AuthContext, input: { address: un
   return { nonce, message, expiresAt, address: wallet };
 }
 
-/** The claim in one statement (exported for the real-Postgres harness). Lock order: the actor's membership (FOR SHARE),
+/** The claim in one statement. Lock order: the actor's membership (FOR SHARE),
  *  then the business row: the same order as every membership change, so no new deadlock pair.
  *  $1 business, $2 principal, $3 nonce, $4 now, $5 wallet (lowercase), $6 V1 obligations, $7 notice id prefix,
  *  $8 audit id, $9 session id, $10 request id. */
-export const SQL_CLAIM = `WITH actor AS (
+const SQL_CLAIM = `WITH actor AS (
     SELECT 1 FROM wf_memberships WHERE business_id = $1 AND principal_id = $2 AND role = 'owner' FOR SHARE
   ), b AS (
     UPDATE wf_businesses SET legacy_merchant = $5, v1_obligations = $6
@@ -172,7 +170,7 @@ async function recoverSigner(message: string, signature: string): Promise<string
 export async function claimLegacyMerchant(
   ctx: AuthContext,
   input: { nonce: unknown; signature: unknown },
-  { now = Date.now(), obligations = obligationsRead }: { now?: number; obligations?: ObligationsRead } = {},
+  { now = Date.now(), obligations = readV1Obligations }: { now?: number; obligations?: ObligationsRead } = {},
 ): Promise<ClaimResult> {
   const owner = ownerContext(ctx);
   const { nonce, signature } = input;
@@ -185,7 +183,20 @@ export async function claimLegacyMerchant(
   if (!c) throw new HttpError(409, EXPIRED); // unknown, or another principal's or workspace's: one answer
   if (c.consumed_at !== null) return replay(owner.businessId, c.address);
   if (Number(c.expires_at) <= now) throw new HttpError(409, EXPIRED);
+  // a refused claim leaves its challenge usable, so each attempt is limited: it costs a signature recovery and a chain read
+  await sharedRateLimit(`legacy-claim-submit:${owner.principalId}`, CLAIMS_PER_MINUTE, 60_000, "closed");
   if ((await recoverSigner(c.message, signature)) !== c.address) throw new Forbidden(NOT_SIGNER); // challenge NOT consumed
+  // cheap refusals before the chain read (the statement below still enforces both under concurrency)
+  const links = await query<{ id: string; legacy_merchant: string | null }>(
+    "SELECT id, legacy_merchant FROM wf_businesses WHERE id = $1 OR legacy_merchant = $2",
+    [owner.businessId, c.address],
+  );
+  const holder = links.find((b) => b.legacy_merchant === c.address);
+  if (holder) {
+    if (holder.id === owner.businessId) return replay(owner.businessId, c.address); // already linked here: same answer
+    throw new HttpError(409, TAKEN);
+  }
+  if (links.some((b) => b.id === owner.businessId && b.legacy_merchant !== null)) throw new HttpError(409, ALREADY_LINKED);
   let v1Obligations: boolean;
   try {
     v1Obligations = await obligations(getAddress(c.address));
@@ -211,7 +222,7 @@ export async function claimLegacyMerchant(
   throw new HttpError(409, ALREADY_LINKED);
 }
 
-export interface LegacyAccess {
+export interface LegacyCaller {
   ctx: AuthContext & { businessId: string };
   merchant: Address;
 }
@@ -221,7 +232,7 @@ const SAFE_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD", "OPTIONS"]);
 /** v1 gateway routes after the cutover (032 R2-1): the caller's workspace role must hold `scope`, and the workspace
  *  must have linked a legacy merchant wallet (409 otherwise). Unsafe methods also require our own origin (CSRF).
  *  `secretKey: true` (webhooks GET/POST only) also takes a live sk_ key whose merchant is linked to a workspace. */
-export async function legacyAccess(request: Request, scope: Scope, { secretKey = false }: { secretKey?: boolean } = {}): Promise<LegacyAccess> {
+export async function legacyAccess(request: Request, scope: Scope, { secretKey = false }: { secretKey?: boolean } = {}): Promise<LegacyCaller> {
   if (secretKey && (request.headers.get("authorization") ?? "").startsWith("Bearer ")) return keyAccess(request, scope);
   // CSRF only matters when the browser sends the session cookie; without one the caller is simply not signed in (401)
   const csrf = !SAFE_METHODS.has(request.method.toUpperCase()) && cookieFrom(request, WF_SESSION_COOKIE) !== undefined;
@@ -232,7 +243,7 @@ export async function legacyAccess(request: Request, scope: Scope, { secretKey =
   return { ctx, merchant };
 }
 
-async function keyAccess(request: Request, scope: Scope): Promise<LegacyAccess> {
+async function keyAccess(request: Request, scope: Scope): Promise<LegacyCaller> {
   const key = await authenticateKey(request);
   if (!key || key.kind !== "sk") throw new AuthError("Sign in to your WhiteFlow workspace, or send your secret API key.");
   if (!SECRET_KEY_SCOPES.has(scope)) throw new Forbidden("API keys can't do that.");
@@ -268,7 +279,7 @@ export async function dashboardWorkspace(token: string | undefined): Promise<Das
 
 /** FR-AUTH-5 for a v1 mutation, written after it succeeded (a separate statement: the Stage 4 services make it atomic).
  *  A failed audit write is logged, never turned into an error for a write that already happened. */
-export async function auditV1(access: LegacyAccess, action: string, target: string | null, now = Date.now()): Promise<void> {
+export async function auditV1(access: LegacyCaller, action: string, target: string | null, now = Date.now()): Promise<void> {
   const { ctx } = access;
   try {
     await query(

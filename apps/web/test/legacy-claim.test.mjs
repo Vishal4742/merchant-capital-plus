@@ -1,9 +1,13 @@
 // Batch 051 (Stage 3): claiming a legacy merchant wallet for a WhiteFlow workspace through the real v2 route handlers on
 // PGlite, with real wallet signatures (viem). Spec acceptance 1, 2, 4, 5, 12 (3 = real-Postgres races,
 // tools/stage3/legacy-neon.mjs).
-import { test, beforeEach } from "node:test";
+import { test, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
+
+// CON-11: the V1 CapitalMarket obligations read (an RPC call in production), steered per test
+let obligations = async () => false;
+mock.module("../lib/server/policies.ts", { namedExports: { readV1Obligations: (address) => obligations(address) } });
 
 const { setupDb, resetDb, req, seedWorkspace, seedMember, ORIGIN } = await import("./gw-helpers.mjs");
 const pg = await setupDb();
@@ -15,9 +19,6 @@ const { createKey } = await import("../lib/server/keys.ts");
 
 const UNLINKED = "0x00000000000000000000000000000000000000a1"; // the workspace's tag (it starts with no legacy link)
 const OTHER_WS = "0x00000000000000000000000000000000000000b2";
-
-let obligations = async () => false;
-legacy.setObligationsRead((address) => obligations(address));
 
 let ip = 0;
 const call = async (handler, method, path, { headers = {}, body, origin } = {}) => {
@@ -182,6 +183,55 @@ test("only an Owner on our own site can claim (spec 5, AT-28)", async () => {
   assert.equal((await status(viewer.headers)).body.workspace.role, "viewer");
   assert.equal((await status({})).status, 401);
   assert.equal((await challenge(owner.headers, "0x1234")).status, 400);
+});
+
+test("refused claims are limited per principal: a usable challenge can't be replayed into endless chain reads (review S-M1)", async () => {
+  const wallet = privateKeyToAccount(generatePrivateKey());
+  const stranger = privateKeyToAccount(generatePrivateKey());
+  const owner = await seedWorkspace(UNLINKED, { linked: false });
+  let reads = 0;
+  obligations = async () => {
+    reads += 1;
+    throw new Error("rpc down");
+  };
+  const c = await challenge(owner.headers, wallet.address);
+  const good = await wallet.signMessage({ message: c.body.message });
+  const bad = await stranger.signMessage({ message: c.body.message });
+  const seen = [];
+  for (let i = 0; i < 12; i++) seen.push((await claim(owner.headers, { nonce: c.body.nonce, signature: i % 2 ? good : bad })).status);
+  assert.deepEqual(seen, [403, 503, 403, 503, 403, 503, 403, 503, 403, 503, 429, 429]);
+  assert.equal(reads, 5, "one chain read per attempt that got past the signature check, none after the limit");
+  assert.equal(await consumed(c.body.nonce), null);
+});
+
+test("a wallet linked elsewhere is refused before the chain read; one already linked here answers as linked (review S-M1)", async () => {
+  const wallet = privateKeyToAccount(generatePrivateKey());
+  const a = await seedWorkspace(UNLINKED, { linked: false });
+  const b = await seedWorkspace(OTHER_WS, { linked: false });
+  const cb = await challenge(b.headers, wallet.address);
+  const ca2 = await challenge(a.headers, wallet.address); // a second challenge of a's, issued before a links
+  assert.equal((await link(a.headers, wallet)).r.status, 200);
+  let reads = 0;
+  obligations = async () => {
+    reads += 1;
+    return false;
+  };
+  assert.equal((await claim(b.headers, { nonce: cb.body.nonce, signature: await wallet.signMessage({ message: cb.body.message }) })).status, 409);
+  const again = await claim(a.headers, { nonce: ca2.body.nonce, signature: await wallet.signMessage({ message: ca2.body.message }) });
+  assert.deepEqual(again, { status: 200, body: { merchant: wallet.address, v1Obligations: false } });
+  assert.equal(reads, 0, "neither refusal nor the already-linked answer reads the chain");
+});
+
+const ch = (code) => String.fromCharCode(code);
+test("the workspace name can't reshape the signed message: line and bidi controls become spaces (review S-L2)", async () => {
+  const wallet = privateKeyToAccount(generatePrivateKey());
+  const owner = await seedWorkspace(UNLINKED, { linked: false });
+  await pg.query("UPDATE wf_businesses SET display_name = $2 WHERE id = $1", [owner.businessId, `Acme${ch(0x2028)}Chain ID: 1${ch(0x202e)}evil${ch(0x2066)}x${ch(0x85)}y`]);
+  const c = await challenge(owner.headers, wallet.address);
+  assert.equal(c.status, 200);
+  for (const code of [0x85, 0x2028, 0x2029, 0x202a, 0x202e, 0x2066, 0x2069]) assert.ok(!c.body.message.includes(ch(code)), code.toString(16));
+  assert.ok(c.body.message.includes('"Acme Chain ID: 1 evil x y"'));
+  assert.equal(c.body.message.match(/^Chain ID: /gm).length, 1, "only the real Chain ID line");
 });
 
 test("a signed-in principal without a workspace sees workspace: null", async () => {

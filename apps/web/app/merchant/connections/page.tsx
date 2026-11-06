@@ -80,7 +80,8 @@ async function ConnectionsLoader() {
   return (
     <Shell active="connections" privateReads={false} account={<Account merchant={merchant} />}>
       {header}
-      <div className="grid gap-8 px-4 py-6 md:px-8 md:py-8">
+      {/* minmax(0,1fr): the MCP <pre> scrolls inside its box instead of widening the page (468 px at 360 before batch 051) */}
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-8 px-4 py-6 md:px-8 md:py-8">
         {/* Model Context Protocol (MCP) Section */}
         <section aria-labelledby="mcp-heading" className="grid gap-4 rounded-[16px] border border-hairline bg-surface p-5 md:p-6 shadow-card">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-hairline pb-4">
