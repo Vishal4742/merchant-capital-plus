@@ -65,6 +65,23 @@ export function percentToBps(text: string): number | null {
 /** 2000 → "20", 1250 → "12.5", 1225 → "12.25". */
 const percent = (bps: number) => (bps / 100).toString();
 
+const TOO_PRECISE = /^\s*\d+\.\d{3,}\s*$/;
+const CENT = 10_000n; // 0.01 USDT in base units
+
+/** USDT amounts that share one line, in one decimal style (UX 036 F1, F2): the dashboard's "1,234.56" when every one is
+ *  whole cents, else all six decimals, since an on-chain price like 98.065556 must not be rounded. */
+export function usdtAmounts(...units: bigint[]): string[] {
+  const cents = units.every((u) => u % CENT === 0n);
+  return units.map((u) => {
+    if (cents) return formatUsdt(u);
+    const [whole, frac] = formatUsdt(u).split(".");
+    return `${whole}.${frac.padEnd(6, "0")}`;
+  });
+}
+
+/** An API amount ("1234.56", plainUsdt) as the dashboard shows it ("1,234.56"). */
+export const usdtText = (plain: string) => formatUsdt(parseUsdt(plain));
+
 export interface AdvanceForm {
   principal: string;
   cap: string;
@@ -84,6 +101,7 @@ export interface AdvanceTerms {
 /** listAdvance's arguments, or the first rule they break: BadTerms (principal 0, cap < principal, holdback 0 or over
  *  30%, term 0, deadline not ahead) plus the offer book's limits. */
 export function advanceTerms(f: AdvanceForm, now: number): Result<AdvanceTerms> {
+  if (TOO_PRECISE.test(f.principal) || TOO_PRECISE.test(f.cap)) return no("Use at most 2 decimals, like 10.50.");
   const principal = usdt(f.principal);
   if (principal === null) return no("Enter the principal as an amount like 10.00.");
   if (principal < MIN_USDT || principal > MAX_USDT) return no("The principal must be from 1.00 to 1,000.00 USDT.");
@@ -101,8 +119,10 @@ export function advanceTerms(f: AdvanceForm, now: number): Result<AdvanceTerms> 
 }
 
 /** FR-ADV-6: what the advance costs, shown before the wallet opens. Listing moves no USDT; investors' USDT does. */
-export const advanceCostLine = (principal: bigint, cap: bigint, holdbackBps: number) =>
-  `When investors fund it, you get ${formatUsdt(principal)} USDT. You repay ${formatUsdt(cap)} USDT (cost ${formatUsdt(cap - principal)} USDT) from ${percent(holdbackBps)}% of each sale until it's repaid.`;
+export function advanceCostLine(principal: bigint, cap: bigint, holdbackBps: number): string {
+  const [get, repay, cost] = usdtAmounts(principal, cap, cap - principal);
+  return `When investors fund it, you get ${get} USDT. You repay ${repay} USDT (cost ${cost} USDT) from ${percent(holdbackBps)}% of each sale until it's repaid.`;
+}
 
 /** CAPITAL-TAB G3: floor(face × 31,536,000 × 10,000 / (31,536,000 × 10,000 + aprBps × days × 86,400)), here with
  *  86,400 cancelled out of both sides (same quotient). Simple interest on a 365-day year. */
@@ -130,6 +150,7 @@ export interface InvoiceTerms {
  *  LOCK_WINDOW before the due date (CapitalMarket.sol:136-141), due date within the offer book's 180 days. */
 export function invoiceTerms(f: InvoiceForm, now: number): Result<InvoiceTerms> {
   const aprBps = percentToBps(f.apr);
+  if (TOO_PRECISE.test(f.apr)) return no("Use at most 2 decimals for the APR, like 12.5.");
   if (aprBps === null && Number(f.apr) > 100) return no("The APR must be at most 100%.");
   if (!aprBps) return no("Enter a target APR above 0%, like 12.");
   if (f.dueDate > now + MAX_OFFER_DAYS * DAY_S) return no(`This invoice is due more than ${MAX_OFFER_DAYS} days from now, too far out for the offer book.`);
@@ -145,8 +166,10 @@ export function invoiceTerms(f: InvoiceForm, now: number): Result<InvoiceTerms> 
 const aprText = (bps: number) => `${Math.floor(bps / 100)}.${String(bps % 100).padStart(2, "0")}%`;
 
 /** FR-INV-2: the price and the APR it came from, side by side. */
-export const invoicePriceLine = (price: bigint, face: bigint, days: number, aprBps: number) =>
-  `Investors pay ${formatUsdt(price)} USDT now for ${formatUsdt(face)} USDT due in ${days} ${days === 1 ? "day" : "days"} (${aprText(aprBps)} APR).`;
+export function invoicePriceLine(price: bigint, face: bigint, days: number, aprBps: number): string {
+  const [pay, worth] = usdtAmounts(price, face);
+  return `Investors pay ${pay} USDT now for ${worth} USDT due in ${days} ${days === 1 ? "day" : "days"} (${aprText(aprBps)} APR).`;
+}
 
 export type MerchantAdvance = Awaited<ReturnType<typeof merchantAdvance>>;
 export type MerchantOffer = Pick<OfferJson, "id" | "kind" | "face" | "price" | "units_left" | "status" | "holdback_pct" | "offer_deadline" | "maturity" | "arkiv">;
@@ -185,8 +208,10 @@ export function offerLabel(o: MerchantOffer): string {
   return sold === 0n || face === 0n ? "Open" : `Open · ${(sold * 100n) / face}% funded`;
 }
 
-const PUBLISH_TIMEOUT_MS = 30_000; // an Arkiv write
-const NOT_PUBLISHED = "It's listed on chain, but it isn't in the offer book yet. Use Publish again below.";
+// longer than the Arkiv SDK's 180 s receipt wait, which a publish can sit in (= vouchers, lib/gateway-money.ts): giving
+// up sooner would offer Publish again while the first write may still land, and make a second entity (UX 036 F5)
+export const PUBLISH_TIMEOUT_MS = 200_000;
+const NOT_PUBLISHED = "The offer book didn't answer."; // the reason only: the screen says "isn't in the offer book yet"
 
 /** POST /api/v1/capital/offers/{id}/publish (dashboard cookie): writes the offer's chain terms to Arkiv (FR-ARK-1).
  *  Returns the entity key; throws the server's own sentence, never a transport's text (it can name hosts). */
