@@ -133,6 +133,42 @@ test("only our shop's open invoices, and never by the shop itself", async () => 
   assert.equal((await rows()).length, 0);
 });
 
+// The browser side (lib/sign-sale.ts signAck) against the route: this browser's guest key, and a wallet's provider.
+const textTerms = () => ({ invoiceId: ID, merchant: invoice.merchant, amount: invoice.amount.toString(), dueDate: invoice.dueDate.toString() });
+
+test("the guest key's acknowledgement (the default way in) is accepted by the route", async () => {
+  const store = new Map();
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, String(v)) } });
+  const { signAck, guestAddress } = await import("../lib/sign-sale.ts");
+  const body = await signAck(textTerms());
+  assert.equal(body.debtor, guestAddress());
+  assert.equal((await call(body)).status, 200);
+});
+
+test("a wallet acknowledges with one eth_signTypedData_v4 and no transaction method", async () => {
+  const { connectPayer } = await import("../lib/payer-wallet.ts");
+  const { signAck } = await import("../lib/sign-sale.ts");
+  const calls = [];
+  const provider = {
+    async request({ method, params }) {
+      calls.push(method);
+      if (method === "eth_requestAccounts" || method === "eth_accounts") return [debtor.address.toLowerCase()];
+      if (method === "eth_chainId") return "0x752"; // 1874
+      if (method !== "eth_signTypedData_v4") throw Object.assign(new Error(`unsupported ${method}`), { code: 4200 });
+      const { domain, types: { EIP712Domain, ...types }, primaryType, message: m } = JSON.parse(params[1]);
+      assert.ok(EIP712Domain);
+      return debtor.signTypedData({ domain, types, primaryType, message: { ...m, invoiceId: BigInt(m.invoiceId), amount: BigInt(m.amount), dueDate: BigInt(m.dueDate) } });
+    },
+    on() {},
+    removeListener() {},
+  };
+  const body = await signAck(textTerms(), await connectPayer(provider));
+  assert.equal(body.debtor.toLowerCase(), debtor.address.toLowerCase());
+  assert.equal((await call(body)).status, 200);
+  assert.equal(calls.filter((m) => m === "eth_signTypedData_v4").length, 1);
+  assert.ok(!calls.some((m) => /sendTransaction|signTransaction|sendCalls/.test(m)), calls.join(","));
+});
+
 test("a part-paid invoice can still be acknowledged: the debtor signs the whole invoice amount", async () => {
   invoice = { ...invoice, paid: 5_000_000n };
   assert.equal((await call(await signed())).status, 200);
@@ -208,7 +244,7 @@ test("pay page: the action shows only for an open invoice with no ack; plain cop
   assert.match(sheet, /\{payable && terms && <InvoiceAck terms=\{ackTerms\} ack=\{ack\} \/>\}/, "only while the invoice can be paid");
   const ack = source("components/InvoiceAck.tsx");
   assert.match(ack, /You confirm you owe this invoice\. This doesn&apos;t pay it and moves no money\./);
-  assert.match(ack, /if \(acked\) return/, "acknowledged: no button, the time instead");
+  assert.match(ack, /if \(acked\) \{\s*return \(\s*<p role="status"[^>]*>\s*Acknowledged ✓/, "acknowledged: no button, the time instead");
   assert.match(ack, />\s*\{busy === "guest" \? "Acknowledging…" : "Acknowledge this invoice"\}/, "the default way: this browser's key");
   assert.match(ack, /data-pay-option="wallet"/, "only the wallet block says wallet (FR-PAY-7)");
   assert.match(ack, /connectVia\(via\)/, "the same connect as paying (browser wallet or Privy)");

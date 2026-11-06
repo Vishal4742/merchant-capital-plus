@@ -9,9 +9,10 @@ import { useRef, useState } from "react";
 import type { Hex } from "viem";
 import { Confirming } from "@/components/Confirming";
 import { HoldButton } from "@/components/HoldButton";
+import { InvoiceAck } from "@/components/InvoiceAck";
 import { GuestShort, WalletOption, endWalletSession, loadSigner, useGuestFunds, walletPayer, type WalletVia } from "@/components/WalletPay";
 import { FAILED, errorTone, outcome, type PayAnswer } from "@/lib/outcome";
-import type { InvoicePayTerms } from "@/lib/sign-sale";
+import type { AckTermsText, InvoicePayTerms } from "@/lib/sign-sale";
 import { EXPLORER } from "@/lib/usdt";
 
 export interface InvoicePayProps {
@@ -30,6 +31,10 @@ export interface InvoicePayProps {
   terms: InvoicePayTerms | null;
   /** The payment id of a paid invoice, when our server knows it. */
   receiptId: string | null;
+  /** What the debtor acknowledges (batch 047, FR-INV-8): the invoice as our server read it on chain. */
+  ackTerms: AckTermsText;
+  /** When this invoice was acknowledged (ISO), or null. */
+  ack: string | null;
 }
 
 type Paid = { receiptId: string | null; txHash: Hex | null };
@@ -58,7 +63,7 @@ function Row({ term, children }: { term: string; children: React.ReactNode }) {
   );
 }
 
-export function InvoicePay({ invoiceId, merchantName, dueText, invoiceText, paidSoFarText, owedText, feeText, totalText, state, terms, receiptId }: InvoicePayProps) {
+export function InvoicePay({ invoiceId, merchantName, dueText, invoiceText, paidSoFarText, owedText, feeText, totalText, state, terms, receiptId, ackTerms, ack }: InvoicePayProps) {
   const [paid, setPaid] = useState<Paid | null>(state === "paid" ? { receiptId, txHash: null } : null);
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>(state === "pending" ? "confirming" : state === "cancelled" ? "cancelled" : "ready");
@@ -184,6 +189,8 @@ export function InvoicePay({ invoiceId, merchantName, dueText, invoiceText, paid
           {error}
         </p>
       )}
+      {/* the debtor confirms it owes this invoice, for investors (batch 047): a message, no money moves */}
+      {payable && terms && <InvoiceAck terms={ackTerms} ack={ack} />}
     </section>
   );
 }

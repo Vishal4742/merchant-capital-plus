@@ -7,6 +7,7 @@ import { InvoicePay } from "@/components/InvoicePay";
 import { StaticScene } from "@/components/StaticScene";
 import { merchantConfig, payConfig } from "@/lib/config";
 import { readInvoice, readRelayFee, type Invoice } from "@/lib/onchain";
+import { acksFor } from "@/lib/server/invoice-acks";
 import { invoiceAttempt, invoiceLock } from "@/lib/sessions";
 import { invoiceState, isShopInvoice, pageState } from "@/lib/settle";
 import { formatUsdt } from "@/lib/usdt";
@@ -50,10 +51,19 @@ async function InvoiceLoader({ params }: Pick<PageProps<"/pay/[invoiceId]">, "pa
   // only the shop's own invoices are served here (human, 2026-11-06 02:3x); anything else is "not found"
   const shop = merchantConfig();
   if (!shop || !isShopInvoice(invoice, shop.merchant)) notFound();
-  const read = await attemptOf(invoiceId, invoice.status).catch((error: unknown) => {
-    console.error(`invoice ${invoiceId}: attempt not read: ${error instanceof Error ? error.name : "error"}`); // the store is the database
-    return null;
-  });
+  const [read, ack] = await Promise.all([
+    attemptOf(invoiceId, invoice.status).catch((error: unknown) => {
+      console.error(`invoice ${invoiceId}: attempt not read: ${error instanceof Error ? error.name : "error"}`); // the store is the database
+      return null;
+    }),
+    // the debtor's acknowledgement (batch 047); unreadable, the button shows and the route keeps the first one anyway
+    acksFor(pay.merchantPay, [BigInt(invoiceId)])
+      .then((acks) => acks.get(invoiceId) ?? null)
+      .catch((error: unknown) => {
+        console.error(`invoice ${invoiceId}: ack not read: ${error instanceof Error ? error.name : "error"}`);
+        return null;
+      }),
+  ]);
   if (!read) return <Notice title="We can't open this invoice right now">Nothing was charged. Try again in a minute.</Notice>;
   if (read.state === "missing") notFound();
   const { state } = read;
@@ -71,6 +81,8 @@ async function InvoiceLoader({ params }: Pick<PageProps<"/pay/[invoiceId]">, "pa
       state={state}
       terms={{ merchantPay: pay.merchantPay, invoiceId, amount: owed.toString(), fee: fee.toString() }}
       receiptId={read.receiptId}
+      ackTerms={{ invoiceId, merchant: invoice.merchant, amount: invoice.amount.toString(), dueDate: invoice.dueDate.toString() }}
+      ack={ack ? new Date(ack.signedAt).toISOString() : null}
     />
   );
 }
