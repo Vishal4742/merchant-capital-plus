@@ -69,7 +69,7 @@ async function SettlementsLoader({ searchParams }: Pick<PageProps<"/merchant/set
       <div className="grid gap-6 px-4 py-6 md:px-8 md:py-8">
         <Withdraw merchant={merchant} balance={balance} />
         <RangeForm action="/merchant/settlements" value={range.ok ? range.value : typed} error={range.ok ? undefined : range.error} />
-        {result && ("error" in result ? <Problem>{result.error}</Problem> : <SettlementsView data={result.data} merchant={merchant} fees={await coveredFees(result.data)} />)}
+        {result && ("error" in result ? <Problem>{result.error}</Problem> : <SettlementsView data={result.data} fees={await coveredFees(result.data)} />)}
       </div>
     </Shell>
   );
