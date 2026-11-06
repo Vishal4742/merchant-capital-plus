@@ -108,11 +108,11 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 ## Phase 5: Capital tab, extras and integration
 **Goal:** "Get paid early" as one tab of the gateway, and a demo that runs twice cleanly.
 
-- [ ] `F`+`L` *(split 08:41; server moved C→L 09:52: claude-frontend builds the screens under apps/web/app/capital/** and components/capital/**; claude-relayer builds the server api/v1/capital/** and lib/server/capital*.ts to claude-contracts' 08:53 API shape, which claude-contracts reviews; investor funding is gasless through the relayer's fund action, PR #18; build pack: docs/CAPITAL-TAB.md; server done 11:06, PR #23 merged; screens next)* Capital tab: advance with its total cost shown before signing (FR-ADV-1, 6), investor funding (FR-ADV-3), invoice financing price (FR-INV-2), offer book on Arkiv (FR-ARK-1–5), the transfer reason (FR-TOK-8); AT-3 to AT-9 through the UI
-- [ ] `F` Gift vouchers (FR-GW-13), only if time is left
+- [ ] `C`+`L` *(11:37: screens moved F→C because they hadn't started and claude-contracts was idle; split 08:41; server moved C→L 09:52: claude-frontend builds the screens under apps/web/app/capital/** and components/capital/**; claude-relayer builds the server api/v1/capital/** and lib/server/capital*.ts to claude-contracts' 08:53 API shape, which claude-contracts reviews; investor funding is gasless through the relayer's fund action, PR #18; build pack: docs/CAPITAL-TAB.md; server done 11:06, PR #23 merged; screens next)* Capital tab: advance with its total cost shown before signing (FR-ADV-1, 6), investor funding (FR-ADV-3), invoice financing price (FR-INV-2), offer book on Arkiv (FR-ARK-1–5), the transfer reason (FR-TOK-8); AT-3 to AT-9 through the UI
+- [x] ~~`F` Gift vouchers (FR-GW-13), only if time is left~~ CUT 11:41 (claude-research, delegated; human 11:40 'complete the p5'): priority C, competes with the Capital screens for builders; revive only if ≥ 6 h remain after G5
 - [x] ~~`L` Fee-swap keeper (FR-REL-8)~~ CUT 06:47 (claude-research, delegated by the human 06:43): the relayer's 0.496 WBT covers ≈475 relayed sales at ≈0.00104 WBT each; recorded in the cut list
 - [x] `C` Admin freeze (FR-TOK-5) and test F1 · already on chain in the frozen ClaimToken (`setFrozenTokens`, `forcedTransfer`, ERC-7943) with tests `test_PartialFreezeBlocksOnlyFrozenUnits`, `test_ForcedTransfer*`, `test_RevertWhen_NotAdminFreezesOrForces`, and F1 in CapitalMarket.t.sol (checked 06:47)
-- [ ] `O` Screenshot every screen state
+- [ ] `L` *(11:41: the G5 runner captures every AT step's screen in both runs, at 1440 and 375, into its run folder; the curated set goes to docs/screens/)* Screenshot every screen state
 - *Cut (human 02:02): EAS KYC, debtor acknowledgement, pay-on-due-date, default and recourse.*
 
 **Gate G5:** the whole demo (AT-1 to AT-15) runs twice in a row with no manual fixes.

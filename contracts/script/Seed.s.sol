@@ -12,7 +12,8 @@ import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/Messa
 ///         need WBT (CON-4). Keys come from .env and are never logged.
 ///         fund:    forge script script/Seed.s.sol --sig "fund()"    --rpc-url whitechain [--broadcast]
 ///         reclaim: forge script script/Seed.s.sol --sig "reclaim()" --rpc-url whitechain [--broadcast]
-///         Optional CUSTOMER=<browser guest wallet> for fund(); it is never reclaimed (its key lives in the browser).
+///         CUSTOMER=<browser guest wallet> is required for fund(): in UI runs it pays AT-1/AT-4/AT-5/AT-7 (batch 009, Q5).
+///         It is never reclaimed (its key lives in the browser).
 contract Seed is Script {
     IERC20 constant USDT = IERC20(0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7);
     bytes32 constant TRANSFER_TYPEHASH = keccak256(
@@ -25,8 +26,10 @@ contract Seed is Script {
     uint256 public constant MERCHANT_WBT = 0.02 ether; // its own txs: createInvoice, listAdvance, approve, refund
     uint256 public constant INVESTOR_A_USDT = 69e6; // AT-3 advance 10 + AT-6 share of 60 face (≈ 58.84)
     uint256 public constant INVESTOR_B_USDT = 40e6; // AT-6 share of 40 face (≈ 39.23)
-    uint256 public constant DEBTOR_USDT = 100e6; // AT-7 pays the 100 invoice
-    uint256 public constant CUSTOMER_USDT = 56e6; // AT-1 25 (refunded in AT-2), then AT-4 5 + AT-5 ≈ 50 + 1
+    uint256 public constant DEBTOR_USDT = 0; // batch 009 (Q5): /pay signs with the browser guest, so the guest pays AT-7
+    // AT-4 5 + AT-5 ≈ 50 + 1, then AT-7's 100 invoice + 0.10 fee; AT-1's 25 is refunded in AT-2.
+    // INVESTOR_A_USDT stays 69: the pack's 58 needs the advance to repay 11 before AT-6 (a 0.16 margin).
+    uint256 public constant CUSTOMER_USDT = 156_100_000;
 
     struct Target {
         address wallet;
@@ -35,6 +38,10 @@ contract Seed is Script {
     }
 
     error TeamWalletShort(uint256 usdtShort, uint256 wbtShort);
+    /// @notice fund() needs CUSTOMER, the browser guest wallet that pays in UI runs.
+    error CustomerRequired();
+    /// @notice CUSTOMER is the team wallet or a script wallet (the team's would go unfunded; a script one is reclaimed).
+    error CustomerIsAScriptWallet();
 
     function fund() external {
         _fund(vm.envUint("DEPLOYER_PRIVATE_KEY"), _demoTargets());
@@ -111,12 +118,18 @@ contract Seed is Script {
 
     function _demoTargets() internal view returns (Target[] memory t) {
         address customer = vm.envOr("CUSTOMER", address(0));
-        t = new Target[](customer == address(0) ? 4 : 5);
+        if (customer == address(0)) revert CustomerRequired();
+        if (customer == vm.addr(vm.envUint("DEPLOYER_PRIVATE_KEY"))) revert CustomerIsAScriptWallet();
+        uint256[] memory scriptKeys = _scriptWalletKeys();
+        for (uint256 i; i < scriptKeys.length; ++i) {
+            if (customer == vm.addr(scriptKeys[i])) revert CustomerIsAScriptWallet();
+        }
+        t = new Target[](5);
         t[0] = Target(_walletOf("DEMO_MERCHANT_PRIVATE_KEY"), MERCHANT_USDT, MERCHANT_WBT);
         t[1] = Target(_walletOf("DEMO_INVESTOR_A_PRIVATE_KEY"), INVESTOR_A_USDT, 0);
         t[2] = Target(_walletOf("DEMO_INVESTOR_B_PRIVATE_KEY"), INVESTOR_B_USDT, 0);
         t[3] = Target(_walletOf("DEMO_DEBTOR_PRIVATE_KEY"), DEBTOR_USDT, 0);
-        if (customer != address(0)) t[4] = Target(customer, CUSTOMER_USDT, 0);
+        t[4] = Target(customer, CUSTOMER_USDT, 0);
     }
 
     function _scriptWalletKeys() internal view returns (uint256[] memory k) {

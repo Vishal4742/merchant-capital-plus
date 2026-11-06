@@ -47,8 +47,9 @@ interface NodeOptions {
   sendDelayMs?: number;
   gasUsed?: bigint; // receipt override (budget tests)
   quote?: bigint; // CapitalMarket.quote answer (funding tests)
+  estimate?: bigint; // eth_estimateGas answer (default 210k, a 2-holder repayment is ~310k, 3 holders 421,338)
   minedRevert?: boolean; // the sync receipt says status 0 (breaker tests)
-  on?: Record<string, (params: unknown[]) => unknown>; // override one method; simulations are 'eth_call:paySale' / 'eth_call:payInvoice'
+  on?: Record<string, (params: unknown[], next: () => unknown) => unknown>; // override one method (next() = the default answer); simulations are 'eth_call:paySale' / 'eth_call:payInvoice'
 }
 
 type Call = ReturnType<typeof decodeFunctionData<typeof ABI>>;
@@ -75,6 +76,7 @@ function fakeNode(opts: NodeOptions = {}) {
     switch (method) {
       case 'eth_getCode': return opts.code ?? '0x';
       case 'eth_gasPrice': return toHex(opts.gasPrice ?? GAS_PRICE);
+      case 'eth_estimateGas': return toHex(opts.estimate ?? 210_000n);
       case 'eth_getTransactionCount': return toHex(nonce);
       case 'eth_getBalance': return HALF_WBT;
       case 'eth_call': {
@@ -123,7 +125,7 @@ function fakeNode(opts: NodeOptions = {}) {
       const label = name(method, params);
       calls.push(label);
       if (label === 'eth_call:paySale' || label === 'eth_call:payInvoice' || label === 'eth_call:fundWithAuthorization') simulations.push(params[0] as Record<string, unknown>);
-      return opts.on?.[label] ? opts.on[label](params) : answer(method, params);
+      return opts.on?.[label] ? opts.on[label](params, () => answer(method, params)) : answer(method, params);
     },
   }, { retryCount: 0 }); // a real code-3 revert over HTTP isn't retried; a thrown plain Error would be
   const relayer = privateKeyToAccount(generatePrivateKey());
@@ -225,7 +227,7 @@ const expectedArgs = (p: Awaited<ReturnType<typeof signedSale>>) => {
   return [p.sale.merchant, p.sale.orderRef, m.from, m.value, m.validAfter, m.validBefore, p.sale.salt, yParity + 27, r, s];
 };
 // One parallel round before the lock: four reads + the gas-capped simulation.
-const PRECHECKS = ['eth_call:authorizationState', 'eth_call:balanceOf', 'eth_call:paySale', 'eth_gasPrice', 'eth_getCode'];
+const PRECHECKS = ['eth_call:authorizationState', 'eth_call:balanceOf', 'eth_call:paySale', 'eth_estimateGas', 'eth_gasPrice', 'eth_getCode'];
 
 test('the USDT EIP-712 domain hashes to the on-chain DOMAIN_SEPARATOR', () => {
   assert.equal(domainSeparator({ domain: USDT_DOMAIN }), '0xcdcfacb6b15c8238b4e5fbb47bdb83b7f83f50a531d264bf9763d2bd1d3d2a25');
@@ -392,14 +394,16 @@ test('a valid paySale is signed with capped gas and fees, sent once, its own rec
   assert.equal(call.functionName, 'paySale');
   assert.deepEqual(call.args, expectedArgs(sale));
 
-  assert.deepEqual(node.calls.slice(0, 5).sort(), PRECHECKS);
-  assert.deepEqual(node.calls.slice(5, 7).sort(), ['eth_call:paySale', 'eth_getTransactionCount']);
-  assert.equal(node.calls[7], 'eth_sendRawTransaction');
-  assert.ok(node.calls.slice(8).includes('mined'));
+  assert.deepEqual(node.calls.slice(0, 6).sort(), PRECHECKS);
+  assert.deepEqual(node.calls.slice(6, 8).sort(), ['eth_call:paySale', 'eth_getTransactionCount']);
+  assert.equal(node.calls[8], 'eth_sendRawTransaction');
+  assert.ok(node.calls.slice(9).includes('mined'));
   assert.equal(node.calls.at(-1), 'eth_getTransactionReceipt', 'answered after our own receipt');
-  for (const never of ['eth_fillTransaction', 'eth_estimateGas', 'eth_sendRawTransactionSync']) {
+  for (const never of ['eth_fillTransaction', 'eth_sendRawTransactionSync']) {
     assert.ok(!node.calls.includes(never), `called ${never}`);
   }
+  // batch 022: one estimate, in the pre-check round, as a drain guard; the tx itself is still signed with the fixed 400k
+  assert.equal(node.calls.filter((c) => c === 'eth_estimateGas').length, 1);
 });
 
 test('ignores a client-supplied target or calldata: the tx always goes to MerchantPay as paySale', async () => {
@@ -570,6 +574,61 @@ test('concurrent /health calls on a cold cache share one balance read', async ()
   const replies = await Promise.all(Array.from({ length: 10 }, () => health(node.client)));
   assert.ok(replies.every((r) => r.status === 200));
   assert.equal(node.calls.filter((c) => c === 'eth_getBalance').length, 1);
+});
+
+// Batch 022 (claude-contracts Q19): a full repayment of a 3-holder invoice needs 421,338 gas, above the relayer's fixed 400k.
+test('a payment that needs more gas than the 400k limit is refused with 422 too_much_gas and never sent', async () => {
+  const node = fakeNode({ estimate: 421_338n });
+  const { status, out } = await post((await signedInvoice()).body, node);
+  assert.equal(status, 422, JSON.stringify(out));
+  assert.equal(out.code, 'too_much_gas');
+  assert.equal(node.sent.length, 0);
+  assert.ok(!node.calls.includes('eth_getTransactionCount'), 'refused in the pre-check round');
+});
+
+test('exactly 400k estimated still relays; a failed estimate leaves the decision to the gas-capped simulation', async () => {
+  assert.equal((await post((await signedSale()).body, fakeNode({ estimate: 400_000n }))).status, 200);
+  const reverting = fakeNode({ on: { eth_estimateGas: () => { throw rpcError(3, 'execution reverted'); } } });
+  assert.equal((await post((await signedSale()).body, reverting)).status, 200, 'the simulation passed, so the payment goes');
+});
+
+// Batch 022 (security 018 F1b): a 429 or 5xx while polling the receipt must not turn a sale that gets mined into a 502.
+test('transient RPC errors while polling the receipt do not fail a sale that is mined', async () => {
+  let failures = 2;
+  const node = fakeNode({ sendDelayMs: 20, on: { eth_getTransactionReceipt: (_params, next) => {
+    if (failures-- > 0) throw rpcError(-32005, 'limit exceeded');
+    return next();
+  } } });
+  const { status, out } = await post((await signedSale()).body, node);
+  assert.equal(status, 200, JSON.stringify(out));
+  assert.equal(node.sent.length, 1);
+  assert.ok(node.calls.filter((c) => c === 'eth_getTransactionReceipt').length >= 3, 'polled past the errors');
+});
+
+test('a receipt poll that errors until the deadline answers 502 rpc_error with the txHash (it may still be mined)', async () => {
+  const node = fakeNode({ on: { eth_getTransactionReceipt: () => { throw rpcError(-32005, 'limit exceeded'); } } });
+  const { status, out } = await post((await signedSale()).body, node);
+  assert.equal(status, 502);
+  assert.equal(out.code, 'rpc_error');
+  assert.equal(out.txHash, keccak256(node.sent[0]));
+});
+
+// Batch 022 (security 018 F4): a sale queued behind a hung one never signs after the web has given up.
+test('a sale that waited too long for the send lock is refused before signing: 503 busy (retry-safe), no txHash, nothing sent', async () => {
+  const saved = TIMING.maxRequestAgeMs;
+  TIMING.maxRequestAgeMs = 60;
+  try {
+    const node = fakeNode({ sendDelayMs: 100 }); // the first sale holds the lock while its receipt is polled
+    const [a, b] = await Promise.all([signedSale(), signedSale()]);
+    const [first, second] = await Promise.all([post(a.body, node), post(b.body, node)]);
+    assert.equal(first.status, 200, JSON.stringify(first.out));
+    assert.equal(second.status, 503, JSON.stringify(second.out)); // the web shows 503 as "Nothing was charged; try again" (security 022 L1)
+    assert.equal(second.out.code, 'busy');
+    assert.equal(second.out.txHash, undefined, 'nothing was sent, so the web may re-POST it');
+    assert.equal(node.sent.length, 1);
+  } finally {
+    TIMING.maxRequestAgeMs = saved;
+  }
 });
 
 // Human 23:27: NFR-14 /health ≤ 300 ms p95 via a balance at most 5 s old, re-read after every send.

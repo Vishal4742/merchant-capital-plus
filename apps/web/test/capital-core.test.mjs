@@ -116,6 +116,16 @@ test("the transfer check follows ClaimToken's own order and names the first rule
   assert.equal((await check({ holders: { 1: Array.from({ length: 8 }, (_, n) => `0x${String(n + 1).repeat(40)}`) }, balances: { [`${ALICE}:1`]: 10n, [`${BOB}:1`]: 1n } })).allowed, true);
 });
 
+test("an invoice claim takes no 3rd investor by transfer either: the 2-investor cap (security 022 M1)", async () => {
+  const two = [ALICE, "0x5555555555555555555555555555555555555555"];
+  const opts = { offers: { 1: invoice() }, balances: { [`${ALICE}:1`]: 10n }, holders: { 1: two } };
+  const out = await capital.transferCheck({ from: ALICE, to: BOB, claimId: 1n, amount: 5n }, chain(opts));
+  assert.equal(out.allowed, false);
+  assert.match(out.reason, /2 investors/);
+  assert.equal((await capital.transferCheck({ from: ALICE, to: BOB, claimId: 1n, amount: 10n }, chain(opts))).allowed, true, "moving everything keeps it at 2");
+  assert.equal((await capital.transferCheck({ from: ALICE, to: BOB, claimId: 1n, amount: 5n }, chain({ ...opts, offers: { 1: advance() } }))).allowed, true, "advances keep the contract's own cap");
+});
+
 test("the transfer check reads the lock against the server clock", async () => {
   const later = await capital.transferCheck({ from: ALICE, to: BOB, claimId: 1n, amount: 1n }, { ...chain({ state: { 1: [BigInt(Math.floor(Date.now() / 1000) + 3600), false] }, balances: { [`${ALICE}:1`]: 1n } }) });
   assert.equal(later.allowed, true, "the lock starts in an hour: still movable");
