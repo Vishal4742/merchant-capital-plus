@@ -140,10 +140,10 @@ test("AT-17: a wallet on chain 1874 is asked for one message, no transaction, an
 });
 
 test("the wallet signs exactly the typed data the guest signs for the same checkout, salt and time", async (t) => {
-  t.mock.method(Date, "now", () => 1_900_000_000_000);
-  t.mock.method(globalThis.crypto, "getRandomValues", (bytes) => bytes.fill(7));
   const { sale } = await newCheckout();
-  const expiresAt = 1_900_000_000_000 + 30 * 60_000;
+  // a checkout ending in 2 minutes: both approvals end with it (validBefore = its end), and the salt is pinned
+  const expiresAt = Date.now() + 120_000;
+  t.mock.method(globalThis.crypto, "getRandomValues", (bytes) => bytes.fill(7));
 
   const guestBody = await signSale(sale, expiresAt); // the default: this browser's guest key
   assert.equal(guestBody.from, guestAddress());
