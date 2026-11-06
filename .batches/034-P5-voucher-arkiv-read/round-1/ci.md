@@ -1,5 +1,11 @@
 VERDICT: PASS
 
+Re-run after the security F2 fix (2864ac7), apps/web: `npm run typecheck` exit 0, `npm run lint` exit 0, `npm test` exit 0
+(tests 595, pass 593, fail 0, cancelled 0, skipped 2), `npm run build` exit 0 ("✓ Compiled successfully in 913ms").
+Voucher suites (voucher-arkiv-read, gw-vouchers, gw-tester-vouchers, voucher-pay, gw-single-use, gw-vouchers-paid-race):
+97/97 pass. The F2 test failed before the SQL change and passes after it.
+
+First run (3dc6499) for the record:
 Run in the batch worktree (branch p5-voucher-arkiv-read, HEAD 3dc6499, up to date with origin/main), apps/web, node v26.10.0.
 
 - `npm run typecheck` exit 0 ("✓ Types generated successfully", `tsc --noEmit` clean)
