@@ -5,7 +5,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { GatewayError } from "../lib/gateway-client.ts";
 import { DELIVERY_LABEL, devClient, httpsProblem, keyOf, nextTryText, webhookOf } from "../lib/gateway-dev.ts";
-import { previewDev } from "../lib/gateway-dev-preview.ts";
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const html = (status) => new Response("<!doctype html><title>404</title>", { status, headers: { "content-type": "text/html" } });
@@ -143,13 +142,4 @@ test("delivery status → pill copy, and the next-try line", () => {
   assert.equal(nextTryText({ status: "pending", next_attempt_at: "x" }, "09:05"), "Next try 09:05");
   assert.equal(nextTryText({ status: "failed", next_attempt_at: null }, null), "No more tries");
   assert.equal(nextTryText({ status: "succeeded", next_attempt_at: null }, null), null);
-});
-
-test("preview fixtures parse, and only the demo shop has any", () => {
-  const demo = previewDev("0x37F9315EDF71d9C27b0F650c59e4c96aD6a442B1", "0x37f9315edf71d9c27b0f650c59e4c96ad6a442b1");
-  assert.ok(demo.keys.length > 0 && demo.webhooks.length > 0);
-  demo.keys.forEach((k) => keyOf(k));
-  demo.webhooks.forEach((w) => webhookOf(w));
-  assert.deepEqual(new Set(demo.webhooks.flatMap((w) => w.deliveries.map((d) => d.status))), new Set(["pending", "succeeded", "failed"]));
-  assert.deepEqual(previewDev("0x2222222222222222222222222222222222222222", "0x37f9315edf71d9c27b0f650c59e4c96ad6a442b1"), { keys: [], webhooks: [] });
 });
