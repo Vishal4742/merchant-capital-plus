@@ -32,8 +32,6 @@ export const MAX_BODY_BYTES = 4096;
 
 // Drain guard (ARCHITECTURE §3 points 4–6; limits approved by the human 2026-11-05 22:53).
 const FEES = {
-  // ≥ 335k: a sale that repays an advance used 278k (claude-review 01:07). Many-holder routings above 400k are refused.
-  gas: 400_000n,
   maxFeePerGas: 6_000_000_000n, // 6 gwei: break-even ≈6.2 gwei at 217k gas and the 0.10 USDT fee (human 00:45, drain review R5)
   // ponytail: constant tip = the node's own suggestion (0.001 gwei). Upgrade: read eth_maxPriorityFeePerGas, capped, if the testnet gets busy.
   maxPriorityFeePerGas: 1_000_000n,
@@ -42,7 +40,21 @@ const MAX_WINDOW_S = 900n; // validBefore ≤ now + 15 min
 const MIN_REMAINING_S = 30n; // validBefore ≥ now + 30 s, so it can't expire before it is mined
 // Limits (human 03:09) and the breaker (human 02:44, ARCHITECTURE §3 points 8 and 12).
 const DAILY_BUDGET_WEI = 100_000_000_000_000_000n; // 0.1 WBT per UTC day
-const CAP_FEE_WEI = FEES.gas * FEES.maxFeePerGas; // the most one send can cost: 0.0024 WBT
+// Gas limits. Sales and funding: a fixed 400k (≥ 335k: a sale that repays an advance used 278k, claude-review 01:07).
+// Invoices (batch 045, claude-contracts M3): ceil(estimate × 1.2) within 400k–600k, since a half-sold invoice repaid
+// while an advance runs needs 406,587–504,115 (forge, all holders at 0 USDT). Above its kind's maximum a payment is refused.
+const GAS_LIMIT = 400_000n;
+const INVOICE_GAS_MAX = 600_000n;
+const maxGas = (p: Payment) => (p.call.functionName === 'payInvoice' ? INVOICE_GAS_MAX : GAS_LIMIT);
+/** The most one send can cost: its gas limit × 6 gwei (0.0024 WBT; up to 0.0036 for an invoice). */
+const worstFee = (p: Payment) => (p.gas ?? maxGas(p)) * FEES.maxFeePerGas;
+/** The limit the tx is signed with: 400k, or for an invoice ceil(estimate × 1.2) clamped to 400k–600k (600k without an estimate). */
+function gasLimit(p: Payment, estimate: bigint | undefined): bigint {
+  if (p.call.functionName !== 'payInvoice') return GAS_LIMIT;
+  if (estimate === undefined) return INVOICE_GAS_MAX;
+  const padded = (estimate * 12n + 9n) / 10n;
+  return padded < GAS_LIMIT ? GAS_LIMIT : padded > INVOICE_GAS_MAX ? INVOICE_GAS_MAX : padded;
+}
 const PAYER_SENDS_PER_HOUR = 10;
 const MERCHANT_SENDS_PER_HOUR = 200;
 const BREAKER_REVERTS_PER_HOUR = 3;
@@ -75,6 +87,7 @@ interface Payment {
   merchant?: Address; // sales only
   feeOnTop: boolean; // invoices: the payer signs amount + relayFee
   target: Address; // MerchantPay for sales and invoices, CapitalMarket for funding
+  gas?: bigint; // the signed gas limit, set from the pre-check estimate (gasLimit); until then the kind's maximum
 }
 interface Reject { status: number; code: string; error: string; txHash?: Hash }
 interface Sent { txHash: Hash; blockNumber: bigint; paymentId?: bigint; gasUsed: bigint; gasCostWei: bigint }
@@ -148,7 +161,7 @@ async function ledgerChecks(client: RelayerClient, p: Payment): Promise<Reject |
   if (c.sent) return REPLAY;
   if (c.revertsLastHour >= BREAKER_REVERTS_PER_HOUR) return reject(503, 'breaker_open', 'relaying is paused after repeated reverts; retry later');
   if (c.banned) return reject(422, 'payer_banned', 'this payer caused a reverted relay');
-  if (c.spentWei + CAP_FEE_WEI > DAILY_BUDGET_WEI) return reject(503, 'budget_exhausted', "today's relay budget is used up; retry tomorrow");
+  if (c.spentWei + worstFee(p) > DAILY_BUDGET_WEI) return reject(503, 'budget_exhausted', "today's relay budget is used up; retry tomorrow");
   if (c.payerSendsLastHour >= PAYER_SENDS_PER_HOUR || (p.merchant && c.merchantSendsLastHour >= MERCHANT_SENDS_PER_HOUR)) {
     return reject(429, 'rate_limited', 'too many payments in the last hour; retry later');
   }
@@ -321,11 +334,12 @@ async function localChecks(client: RelayerClient, p: Payment): Promise<Reject | 
 }
 
 function simulateCall(client: RelayerClient, p: Payment) {
+  const fees = { ...FEES, gas: p.gas ?? maxGas(p) }; // the limit it will be signed with (before the lock: the kind's maximum)
   switch (p.call.functionName) {
-    case 'paySale': return client.simulateContract({ address: MERCHANT_PAY, abi: merchantPayAbi, functionName: 'paySale', args: p.call.args, ...FEES });
-    case 'payInvoice': return client.simulateContract({ address: MERCHANT_PAY, abi: merchantPayAbi, functionName: 'payInvoice', args: p.call.args, ...FEES });
+    case 'paySale': return client.simulateContract({ address: MERCHANT_PAY, abi: merchantPayAbi, functionName: 'paySale', args: p.call.args, ...fees });
+    case 'payInvoice': return client.simulateContract({ address: MERCHANT_PAY, abi: merchantPayAbi, functionName: 'payInvoice', args: p.call.args, ...fees });
     case 'fundWithAuthorization':
-      return client.simulateContract({ address: CAPITAL_MARKET, abi: capitalMarketAbi, functionName: 'fundWithAuthorization', args: p.call.args, ...FEES });
+      return client.simulateContract({ address: CAPITAL_MARKET, abi: capitalMarketAbi, functionName: 'fundWithAuthorization', args: p.call.args, ...fees });
   }
 }
 const simulate = (client: RelayerClient, p: Payment) => simulateCall(client, p).then(() => undefined, (e: unknown) => e);
@@ -338,8 +352,9 @@ function calldata(p: Payment): Hex {
   }
 }
 
-/** One parallel round of reads, a gas estimate and a gas-capped simulation; throws only if a read fails. */
-async function rpcChecks(client: RelayerClient, p: Payment): Promise<Reject | undefined> {
+/** One parallel round of reads, a gas estimate and a gas-capped simulation; throws only if a read fails. Passing
+ *  payments get the gas limit they will be signed with. */
+async function rpcChecks(client: RelayerClient, p: Payment): Promise<Reject | { gas: bigint }> {
   const value = await signedValue(client, p);
   const [used, code, balance, gasPrice, failedSimulation, gasNeeded] = await Promise.all([
     client.readContract({ address: USDT, abi: USDT_ABI, functionName: 'authorizationState', args: [p.from, p.nonce] }),
@@ -355,8 +370,11 @@ async function rpcChecks(client: RelayerClient, p: Payment): Promise<Reject | un
   if (code !== undefined && code !== '0x') return reject(422, 'payer_has_code', 'the payer must be a plain account (no contract code)');
   if (balance < value) return reject(422, 'insufficient_funds', 'the payer does not hold enough USDT');
   if (gasPrice > FEES.maxFeePerGas) return reject(503, 'gas_price_cap', 'network gas price is above the relayer cap; retry later');
-  if (gasNeeded !== undefined && gasNeeded > FEES.gas) return reject(422, 'too_much_gas', `this payment needs ${gasNeeded} gas, above the relayer's ${FEES.gas} limit`);
+  if (gasNeeded !== undefined && gasNeeded > maxGas(p)) {
+    return reject(422, 'too_much_gas', `this payment needs ${gasNeeded} gas, above the relayer's ${maxGas(p)} limit`);
+  }
   if (failedSimulation) return simulationReject(failedSimulation);
+  return { gas: gasLimit(p, gasNeeded) };
 }
 
 /** Our own receipt, looked up by our hash only (so never a replacement's), polled until TIMING.receiptTimeoutMs.
@@ -455,13 +473,13 @@ async function send(client: RelayerClient, p: Payment, clock: Stopwatch, holder:
   if (tooLate(p)) return EXPIRED; // and so does a slow simulate/nonce step: never sign what could expire unmined
   if (tooOld(clock)) return QUEUED_TOO_LONG; // and the simulate/nonce round may have been slow too
   const signed = await client.account.signTransaction({
-    chainId: whitechainSepolia.id, type: 'eip1559', to: p.target, data: calldata(p), nonce, ...FEES,
+    chainId: whitechainSepolia.id, type: 'eip1559', to: p.target, data: calldata(p), nonce, ...FEES, gas: p.gas ?? maxGas(p),
   });
   const txHash = keccak256(signed);
   // Written before the broadcast with the worst-case fee and never deleted: the tx may still be pending after a failed
   // send, so a re-POST to any instance must not pay twice. A database error here throws: nothing is broadcast.
   const reserved = await store.reserve({
-    relayer: client.account.address, holder, key: authKey(p), payer: p.from, merchant: p.merchant, txHash, feeWei: CAP_FEE_WEI,
+    relayer: client.account.address, holder, key: authKey(p), payer: p.from, merchant: p.merchant, txHash, feeWei: worstFee(p),
   });
   if (reserved === 'lost') return LEASE_LOST;
   if (reserved === 'replay') return REPLAY;
@@ -507,8 +525,11 @@ export async function relay(body: string, client: RelayerClient): Promise<Respon
   let p = parsed.payment;
   try {
     p = await prepareFunding(client, p);
-    const pre = (await localChecks(client, p)) ?? (await rpcChecks(client, p));
-    if (pre) return respond(pre);
+    const local = await localChecks(client, p);
+    if (local) return respond(local);
+    const checked = await rpcChecks(client, p);
+    if ('code' in checked) return respond(checked);
+    p = { ...p, gas: checked.gas };
   } catch (e) {
     return respond(e instanceof store.StoreError ? storageDown(e) : reject(502, 'rpc_error', reason(e)));
   }
