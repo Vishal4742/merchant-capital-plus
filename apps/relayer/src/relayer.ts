@@ -10,8 +10,9 @@ import {
   addresses, KIND_INVOICE, KIND_SALE, merchantPayAbi, MIN_PAYMENT, nonceParams, receiveWithAuthorizationTypes, usdtDomain,
 } from '../../../packages/shared/contracts.ts';
 
-// Whitechain's own op-reth RPC: ~2× faster than Ankr for one pre-check round and a single backend (human 02:44).
-const DEFAULT_RPC = 'https://rpc.testnet.whitechain.io';
+// Ankr: it answers eth_sendRawTransactionSync. Whitechain's own RPC (faster reads, chosen 02:44) refuses it with
+// -32601 "rpc method is not whitelisted", which broke the first G2 sale (06:06). Upgrade: reads on Whitechain, sends via Ankr.
+const DEFAULT_RPC = 'https://rpc.ankr.com/whitechain_testnet';
 // No retries: with viem's default 3, one slow call could hold the send lock for ~33 s. The lock is then held for at most
 // two RPC timeouts (simulate ‖ nonce, then the sync send); a client re-POSTs a 502 that carries no txHash.
 const RPC_TIMEOUT_MS = 8_000;
@@ -32,6 +33,13 @@ const FEES = {
 } as const;
 const MAX_WINDOW_S = 900n; // validBefore ≤ now + 15 min
 const MIN_REMAINING_S = 30n; // validBefore ≥ now + 30 s, so it can't expire before it is mined
+// Limits (human 03:09) and the breaker (human 02:44, ARCHITECTURE §3 points 8 and 12).
+const DAILY_BUDGET_WEI = 100_000_000_000_000_000n; // 0.1 WBT per UTC day
+const CAP_FEE_WEI = FEES.gas * FEES.maxFeePerGas; // the most one send can cost: 0.0024 WBT
+const PAYER_SENDS_PER_HOUR = 10;
+const MERCHANT_SENDS_PER_HOUR = 200;
+const BREAKER_REVERTS_PER_HOUR = 3;
+const HOUR_MS = 3_600_000;
 
 const UINT_DECIMAL = /^\d{1,78}$/;
 const BYTES32_HEX = /^0x[0-9a-fA-F]{64}$/;
@@ -110,6 +118,44 @@ export function startBalanceRefresh(client: RelayerClient, everyMs: number): () 
   return () => clearInterval(timer);
 }
 
+// ponytail: per process, per relayer address. Upgrade: rel_sent + Postgres advisory lock (the plan-reviewed full 006 spec).
+interface Ledger { day: string; spentWei: bigint; reverts: number[]; banned: Set<string>; sends: Map<string, number[]> }
+const ledgers = new Map<Address, Ledger>();
+function ledgerOf(client: RelayerClient): Ledger {
+  const day = new Date().toISOString().slice(0, 10); // UTC
+  const current = ledgers.get(client.account.address);
+  if (current?.day === day) return current;
+  const fresh: Ledger = { day, spentWei: 0n, reverts: current?.reverts ?? [], banned: current?.banned ?? new Set(), sends: current?.sends ?? new Map() };
+  ledgers.set(client.account.address, fresh);
+  return fresh;
+}
+const lastHour = (times: number[] = []) => times.filter((t) => Date.now() - t < HOUR_MS);
+const sendKeys = (p: Payment) => [`payer:${p.from.toLowerCase()}`, ...(p.merchant ? [`merchant:${p.merchant.toLowerCase()}`] : [])];
+
+/** Breaker, ban, budget and rate limits: free, so they run before any RPC and again inside the lock. */
+function ledgerChecks(client: RelayerClient, p: Payment): Reject | undefined {
+  const l = ledgerOf(client);
+  if (lastHour(l.reverts).length >= BREAKER_REVERTS_PER_HOUR) return reject(503, 'breaker_open', 'relaying is paused after repeated reverts; retry later');
+  if (l.banned.has(p.from.toLowerCase())) return reject(422, 'payer_banned', 'this payer caused a reverted relay');
+  if (l.spentWei + CAP_FEE_WEI > DAILY_BUDGET_WEI) return reject(503, 'budget_exhausted', "today's relay budget is used up; retry tomorrow");
+  const [payerKey, merchantKey] = sendKeys(p);
+  if (lastHour(l.sends.get(payerKey)).length >= PAYER_SENDS_PER_HOUR
+    || (merchantKey && lastHour(l.sends.get(merchantKey)).length >= MERCHANT_SENDS_PER_HOUR)) {
+    return reject(429, 'rate_limited', 'too many payments in the last hour; retry later');
+  }
+}
+
+/** After a broadcast attempt: count the spend (worst case when unknown), the send, and a mined revert. */
+function recordSend(client: RelayerClient, p: Payment, feeWei: bigint, minedRevert: boolean, txHash: Hash) {
+  const l = ledgerOf(client);
+  l.spentWei += feeWei;
+  for (const key of sendKeys(p)) l.sends.set(key, [...lastHour(l.sends.get(key)), Date.now()]);
+  if (!minedRevert) return;
+  l.banned.add(p.from.toLowerCase());
+  l.reverts = [...lastHour(l.reverts), Date.now()];
+  process.stderr.write(`ALERT reverted ${txHash} payer ${p.from}\n`);
+}
+
 let feeRead: { at: number; fee: Promise<bigint> } | undefined;
 /** MerchantPay.relayFee(), single-flight and cached for 60 s; a failed read is not cached. */
 function relayFee(client: RelayerClient): Promise<bigint> {
@@ -162,6 +208,7 @@ function simulationReject(e: unknown): Reject {
   if (name === 'OrderPaid' || name === 'InvoiceNotOpen') return reject(422, 'order_paid', 'this order or invoice is already paid');
   if (name === 'WrongAmount') return reject(422, 'wrong_amount', 'the amount does not match what the invoice still owes');
   if (name === 'InvalidOrder') return reject(422, 'bad_merchant', 'this merchant address is not allowed');
+  if (name === 'EnforcedPause') return reject(503, 'paused', 'payments are paused; retry later');
   return reject(422, 'would_revert', reason(e));
 }
 
@@ -200,7 +247,7 @@ export function parsePayment(body: string): { payment: Payment } | { error: stri
   if (input.action === 'paySale') {
     if (typeof args.merchant !== 'string' || !isAddress(args.merchant)) return { error: 'args.merchant must be an address' };
     const orderRef = bytes32(args.orderRef);
-    if (!orderRef) return { error: 'args.orderRef must be 32 bytes of hex' };
+    if (!orderRef || BigInt(orderRef) === 0n) return { error: 'args.orderRef must be 32 non-zero bytes of hex' };
     const merchant = getAddress(args.merchant);
     const nonce = merchantPayNonce(KIND_SALE, BigInt(merchant), orderRef, amount, salt);
     const call: Call = { functionName: 'paySale', args: [merchant, orderRef, from, amount, validAfter, validBefore, salt, v, r, s] };
@@ -232,6 +279,7 @@ async function localChecks(client: RelayerClient, p: Payment): Promise<Reject | 
   // An ECDSA signature never recovers to a contract, so ERC-1271 payers stop here.
   if (!signer || !isAddressEqual(signer, p.from)) return reject(422, 'bad_signature', 'the signature is not from args.from for this payment');
   if (sentAuthorizations.has(sentKey(p))) return REPLAY;
+  return ledgerChecks(client, p);
 }
 
 const simulate = (client: RelayerClient, p: Payment) => (p.call.functionName === 'paySale'
@@ -276,6 +324,8 @@ async function send(client: RelayerClient, p: Payment): Promise<Reject | Sent> {
     return reject(502, 'rpc_error', reason(e));
   }
   if (tooLate(p)) return EXPIRED; // and so does a slow simulate/nonce step: never sign what could expire unmined
+  const ledger = ledgerChecks(client, p); // queued requests: the budget or the breaker may have moved while we waited
+  if (ledger) return ledger;
   const signed = await client.account.signTransaction({
     chainId: whitechainSepolia.id, type: 'eip1559', to: MERCHANT_PAY, data: calldata(p), nonce, ...FEES,
   });
@@ -283,15 +333,21 @@ async function send(client: RelayerClient, p: Payment): Promise<Reject | Sent> {
   sentAuthorizations.add(sentKey(p)); // kept even if the send fails: the tx may still be pending, so a re-POST must not pay twice
   try {
     const receipt = await client.sendRawTransactionSync({ serializedTransaction: signed, timeout: SYNC_SEND_TIMEOUT_MS });
-    if (receipt.transactionHash.toLowerCase() !== txHash) return reject(502, 'receipt_mismatch', 'the node returned a receipt for another transaction', txHash);
-    if (receipt.status !== 'success') return reject(502, 'reverted', 'the transaction was mined and reverted', txHash);
+    if (receipt.transactionHash.toLowerCase() !== txHash) {
+      recordSend(client, p, CAP_FEE_WEI, false, txHash);
+      return reject(502, 'receipt_mismatch', 'the node returned a receipt for another transaction', txHash);
+    }
+    // OP Stack: the L1 data fee is charged on top of gasUsed × price (viem's OP formatter puts it on the receipt).
+    const l1Fee = 'l1Fee' in receipt && typeof receipt.l1Fee === 'bigint' ? receipt.l1Fee : 0n;
+    const gasCostWei = receipt.gasUsed * receipt.effectiveGasPrice + l1Fee;
+    const reverted = receipt.status !== 'success';
+    recordSend(client, p, gasCostWei, reverted, txHash);
+    if (reverted) return reject(502, 'reverted', 'the transaction was mined and reverted', txHash);
     const paid = parseEventLogs({ abi: merchantPayAbi, eventName: 'Paid', logs: receipt.logs })
       .find((log) => isAddressEqual(log.address, MERCHANT_PAY));
-    return {
-      txHash, blockNumber: receipt.blockNumber, paymentId: paid?.args.paymentId,
-      gasUsed: receipt.gasUsed, gasCostWei: receipt.gasUsed * receipt.effectiveGasPrice,
-    };
+    return { txHash, blockNumber: receipt.blockNumber, paymentId: paid?.args.paymentId, gasUsed: receipt.gasUsed, gasCostWei };
   } catch (e) {
+    recordSend(client, p, CAP_FEE_WEI, false, txHash); // outcome unknown: count the worst case
     return reject(502, 'rpc_error', reason(e), txHash);
   } finally {
     sendCount += 1; // gas was (probably) spent: drop the cached balance and any read in flight
@@ -321,13 +377,15 @@ export async function relay(body: string, client: RelayerClient): Promise<Respon
   });
 }
 
-/** GET /health (skeleton): the real WBT balance; spend, budget and fee fields arrive with batch 006's storage. */
+/** GET /health: the WBT balance (≤ 5 s old), today's relay spend and what is left of the 0.1 WBT budget (this process). */
 export async function health(client: RelayerClient): Promise<Response> {
   try {
     const wei = await wbtBalance(client);
+    const { spentWei } = ledgerOf(client);
     return Response.json({
       relayer: client.account.address, wbt: formatEther(wei),
-      gasSpentToday: null, budgetLeft: null, usdtFeesUnswapped: null, paused: false,
+      gasSpentToday: formatEther(spentWei), budgetLeft: formatEther(spentWei < DAILY_BUDGET_WEI ? DAILY_BUDGET_WEI - spentWei : 0n),
+      usdtFeesUnswapped: null, paused: false,
     });
   } catch (e) {
     return Response.json({ error: reason(e), code: 'rpc_error' }, { status: 502 });

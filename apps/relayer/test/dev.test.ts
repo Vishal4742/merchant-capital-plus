@@ -6,12 +6,37 @@ import { connect, createServer, type AddressInfo } from 'node:net';
 import { after, before, test } from 'node:test';
 import { POST } from '../api/relay.ts';
 
-test('api/relay.ts answers 415 to a non-JSON body before touching the key or the chain', async () => {
-  for (const type of ['text/plain', 'application/x-www-form-urlencoded', '']) {
-    const res = await POST(new Request('http://127.0.0.1/relay', { method: 'POST', headers: { 'content-type': type }, body: '{}' }));
-    assert.equal(res.status, 415, `content-type "${type}"`);
-    assert.equal((await res.json()).code, 'unsupported_media_type');
-  }
+const SECRET = 'test-relay-secret-not-a-real-one';
+const req = (headers: Record<string, string>) => new Request('http://127.0.0.1/relay', { method: 'POST', headers, body: '{}' });
+async function withSecret<T>(value: string | undefined, run: () => Promise<T>): Promise<T> {
+  const saved = process.env.RELAY_API_SECRET;
+  if (value === undefined) delete process.env.RELAY_API_SECRET; else process.env.RELAY_API_SECRET = value;
+  try { return await run(); } finally { if (saved === undefined) delete process.env.RELAY_API_SECRET; else process.env.RELAY_API_SECRET = saved; }
+}
+
+test('api/relay.ts: no, wrong or wrong-length x-relay-secret is 401, and an unset RELAY_API_SECRET refuses everything', async () => {
+  const json = { 'content-type': 'application/json' };
+  await withSecret(SECRET, async () => {
+    for (const headers of [json, { ...json, 'x-relay-secret': 'nope' }, { ...json, 'x-relay-secret': `${SECRET}x` }, { ...json, 'x-relay-secret': SECRET.toUpperCase() }]) {
+      const res = await POST(req(headers));
+      assert.equal(res.status, 401, JSON.stringify(headers));
+      assert.equal((await res.json()).code, 'unauthorized');
+    }
+  });
+  await withSecret(undefined, async () => {
+    assert.equal((await POST(req({ ...json, 'x-relay-secret': '' }))).status, 401, 'unset secret: fail closed');
+  });
+});
+
+test('api/relay.ts: with the right secret it checks the media type (415) and then needs the relayer key', async () => {
+  await withSecret(SECRET, async () => {
+    for (const type of ['text/plain', 'application/x-www-form-urlencoded', '']) {
+      const res = await POST(req({ 'content-type': type, 'x-relay-secret': SECRET }));
+      assert.equal(res.status, 415, `content-type "${type}"`);
+      assert.equal((await res.json()).code, 'unsupported_media_type');
+    }
+    await assert.rejects(POST(req({ 'content-type': 'application/json', 'x-relay-secret': SECRET })), /RELAYER_PRIVATE_KEY/, 'auth passed, then the missing key');
+  });
 });
 
 let dev: ChildProcess;
@@ -22,7 +47,7 @@ before(async () => {
   await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
   port = (probe.address() as AddressInfo).port;
   await new Promise((resolve) => probe.close(resolve));
-  dev = spawn(process.execPath, ['dev.ts'], { cwd: new URL('..', import.meta.url), env: { PORT: String(port) }, timeout: 20_000 });
+  dev = spawn(process.execPath, ['dev.ts'], { cwd: new URL('..', import.meta.url), env: { PORT: String(port), RELAY_API_SECRET: SECRET }, timeout: 20_000 });
   await once(dev.stdout!, 'data'); // the "listening" line
 });
 after(() => dev.kill());
@@ -38,15 +63,17 @@ async function raw(request: string): Promise<string> {
   return reply;
 }
 
-test('dev forwards content-type: a JSON POST passes the media-type check (500 here only because no key is loaded)', async () => {
-  const json = await fetch(url('/relay'), { method: 'POST', headers: { 'content-type': 'application/json; charset=utf-8' }, body: '{}' });
+test('dev forwards content-type and x-relay-secret: a JSON POST with the secret passes both checks (500 here only because no key is loaded)', async () => {
+  const json = await fetch(url('/relay'), { method: 'POST', headers: { 'content-type': 'application/json; charset=utf-8', 'x-relay-secret': SECRET }, body: '{}' });
   assert.equal(json.status, 500);
-  const text = await fetch(url('/relay'), { method: 'POST', headers: { 'content-type': 'text/plain' }, body: '{}' });
+  const text = await fetch(url('/relay'), { method: 'POST', headers: { 'content-type': 'text/plain', 'x-relay-secret': SECRET }, body: '{}' });
   assert.equal(text.status, 415);
+  const noSecret = await fetch(url('/relay'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+  assert.equal(noSecret.status, 401);
 });
 
 test('dev stops reading a body past 4 KB with 413 and keeps answering', async () => {
-  const res = await fetch(url('/relay'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: 'x'.repeat(5000) })
+  const res = await fetch(url('/relay'), { method: 'POST', headers: { 'content-type': 'application/json', 'x-relay-secret': SECRET }, body: 'x'.repeat(5000) })
     .then((r) => r.status, (e: Error) => e.message);
   assert.equal(res, 413);
   assert.equal((await fetch(url('/nope'))).status, 404);

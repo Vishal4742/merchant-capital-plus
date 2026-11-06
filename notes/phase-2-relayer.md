@@ -15,6 +15,12 @@ See `.batches/002-P2-drain-guard/` (spec, build report, rounds). Request flow: p
 **Verified:** 42/42, tsc 0, CI green run 42116814002; live rejects (Whitechain RPC) p50 146 / p95 266 ms; relayer nonce 3 unchanged. One round, all five PASS.
 **Follow-ups → batch 006:** `gasCostWei` must add the OP-Stack `receipt.l1Fee` (reviewer-code MEDIUM; the budget uses it); a zero `orderRef` → local 400 instead of `bad_merchant` after a round; `EnforcedPause` → its own 503 code; refuse when `relayFee == 0`; drop the test-only `USDT` / `USDT_DOMAIN` exports.
 
+## Batch 006-P2-neon-limits (LEAN) — closed 2026-11-06 06:22
+**Built:** `x-relay-secret` auth (401, fail closed), per-relayer in-process ledger: breaker (ban after 1 mined revert, 503 after 3/hour), 0.1 WBT/day budget (pre-RPC and inside the lock), 10 sends/h per payer and 200/h per merchant; `gasCostWei` + L1 fee; zero orderRef 400; `EnforcedPause` 503; `/health` spend fields. Hotfix `f67c892`: default RPC back to Ankr (Whitechain's RPC refuses `eth_sendRawTransactionSync`).
+**Verified:** 49/49, CI green (42137270799, 42138995632); live on a throwaway-key server (:8788, 0 WBT): 401s, 400, 422s, /health spend fields.
+**G2 (06:16–06:19):** AT-1 `0x7e03b5d0…7a11` (207,983 gas, L1 fee 5,341 wei) relayed by the batch-007 server; AT-10 every code live, relayer nonce 4 → 4; NFR-14 /health 2 ms, local 6 ms, RPC-round 736 ms (venue). **NFR-4 missed: 10.08 s** — Ankr's sync send waits ~7 s.
+**Lesson:** a live check after any RPC change must include one real send; rejections alone never exercise the send path.
+
 ## Batch 003 draft (Neon ready since 00:58; breaker numbers decided 02:44)
 **SRS:** FR-REL-5 (rate limits per payer / merchant / IP, daily WBT budget, 503 when exhausted), FR-REL-6 (`gasSpentToday`, `budgetLeft` in `/health`), ARCHITECTURE §3 points 7, 8, 10 and "serialized sends (Postgres advisory lock)", NFR-14 (still ≤ 500 ms rejects).
 
@@ -39,3 +45,12 @@ See `.batches/002-P2-drain-guard/` (spec, build report, rounds). Request flow: p
 - spec text: mention the 3 s refresh (human 01:14) in the relayer section the next spec cites.
 - On Vercel every `/relay` instance would also run the refresh; with batch 003's shared storage, one refresher (or none, reading the balance on demand from a warm pool) is enough.
 - Gate live run uses a throwaway in-memory payer funded with exactly 1 USDT (no shared G1 payer, no `.env` change).
+
+## Batch 008 draft — Vercel deploy (research queue item 4; needs the human's go for the project + env vars)
+- `apps/relayer/vercel.json`: rewrites `/relay` → `/api/relay`, `/health` → `/api/health`; function region `iad1` (same as Neon us-east-1, close to the RPC); `maxDuration` ≥ 30 s (two 8 s RPC timeouts + queue).
+- `package.json` `engines.node` → `"26.x"` (type stripping for the `.ts` imports).
+- Unknowns to prove with a **preview deploy that has no secrets** (fails closed: 500 without the key, 401 without the secret): (1) Vercel resolves `../src/relayer.ts` specifiers; (2) it bundles `packages/shared/contracts.ts` from outside the root directory ("include files outside the root directory"). Fallback for (2): a `prebuild` copy of the generated file into `apps/relayer/src/`.
+- Then, with the human's go: env vars `RELAYER_PRIVATE_KEY`, `RELAY_API_SECRET`, `RPC_URL` (production only), promote, give claude-frontend the URL + header; NFR-14 timings from the deployed URL (G2-1).
+- Known limit (human 05:51): in-process ledger and lock are per instance; Postgres version after G2.
+- **D1 (CRITICAL if missed, batch 006 security review):** Vercel CLI 64.3.1 does not read `.gitignore` and does not ignore a plain `.env` — a CLI deploy from `apps/relayer` would upload the relayer key (or ~10 root keys) and could serve them. Add `apps/relayer/.vercelignore` (`.env`, `.env.*`, `node_modules`, `test`) and an empty `public/`, or deploy through Git only; verify `GET <url>/.env` → 404 before adding any secret.
+- D2: `RELAYER_PRIVATE_KEY` + `RELAY_API_SECRET` in **Production only**, marked Sensitive; nothing in Preview. D3: claude-frontend sends `x-relay-secret` (same deploy). D5: `maxDuration` ≥ 35 s.
