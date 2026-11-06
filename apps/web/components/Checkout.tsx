@@ -13,7 +13,7 @@ import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "rea
 import type { Address, Hex } from "viem";
 import { Confirming } from "@/components/Confirming";
 import { HoldButton } from "@/components/HoldButton";
-import { GuestShort, WalletOption, loadSigner, useGuestFunds, walletPayer } from "@/components/WalletPay";
+import { GuestShort, WalletOption, endWalletSession, loadSigner, useGuestFunds, walletPayer, type WalletVia } from "@/components/WalletPay";
 import { FAILED, errorTone, outcome, type PayAnswer } from "@/lib/outcome";
 import { EXPLORER } from "@/lib/usdt";
 
@@ -57,8 +57,8 @@ type Receipt = { receiptId: string; txHash: Hex | null };
 // already have paid, so they must never be sent to a new checkout (security R1 S1), and it never offers the
 // button again (002 security D4).
 type Phase = "ready" | "confirming" | "expired";
-/** Who approves: the guest (hold to pay) or the customer's own wallet. */
-type Via = "hold" | "wallet";
+/** Who approves: the guest (hold to pay) or the customer's own wallet (the browser's, or through Privy). */
+type Via = "hold" | WalletVia;
 
 const pill = "rounded-pill border border-current px-3 py-0.5 text-xs font-medium tracking-wide whitespace-nowrap";
 
@@ -105,6 +105,7 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
     if (!inFlight.current) {
       setPaying(via);
       inFlight.current = submit(via).finally(() => {
+        endWalletSession();
         inFlight.current = null;
         setPaying(null);
       });
@@ -135,7 +136,7 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
       if (!sale) throw new Error("Payments aren't live yet.");
       const { signSale } = await loadSigner();
       // the customer's own wallet: connected, on chain 1874, enough USDT per our server, before it asks to approve
-      const payer = via === "wallet" ? await walletPayer(fundsUrl) : undefined;
+      const payer = via === "hold" ? undefined : await walletPayer(fundsUrl, via);
       // the units on the button; the server charges what it claims and refuses any other (security 009 F1)
       const approval = await signSale({ ...sale, amount: due.amountUnits }, expiresAt, payer);
       let res: Response;
@@ -346,7 +347,7 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
               {/* submit() already shows its error; the rejection only matters to the hold button */}
               {guest.funds === "short" && guest.address && paying !== "hold" ? (
                 <GuestShort amountText={due.amountText} address={guest.address} onRecheck={guest.recheck}>
-                  <WalletOption primary busy={paying === "wallet"} disabled={paying !== null} onPay={() => void pay("wallet").catch(() => undefined)} />
+                  <WalletOption primary busy={paying} disabled={paying !== null} onPay={(via) => void pay(via).catch(() => undefined)} />
                 </GuestShort>
               ) : (
                 <>
@@ -355,7 +356,7 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
                     Pay exactly {due.amountText} USDT, no more and no less. No fees for you.
                     <span className="block">Press and hold the button, or press Enter, to pay.</span>
                   </p>
-                  <WalletOption busy={paying === "wallet"} disabled={paying !== null} onPay={() => void pay("wallet").catch(() => undefined)} />
+                  <WalletOption busy={paying} disabled={paying !== null} onPay={(via) => void pay(via).catch(() => undefined)} />
                 </>
               )}
             </div>

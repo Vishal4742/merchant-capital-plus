@@ -9,7 +9,7 @@ import { useRef, useState } from "react";
 import type { Hex } from "viem";
 import { Confirming } from "@/components/Confirming";
 import { HoldButton } from "@/components/HoldButton";
-import { GuestShort, WalletOption, loadSigner, useGuestFunds, walletPayer } from "@/components/WalletPay";
+import { GuestShort, WalletOption, endWalletSession, loadSigner, useGuestFunds, walletPayer, type WalletVia } from "@/components/WalletPay";
 import { FAILED, errorTone, outcome, type PayAnswer } from "@/lib/outcome";
 import type { InvoicePayTerms } from "@/lib/sign-sale";
 import { EXPLORER } from "@/lib/usdt";
@@ -35,8 +35,8 @@ export interface InvoicePayProps {
 type Paid = { receiptId: string | null; txHash: Hex | null };
 // confirming: an attempt's outcome is unknown, here or on the server; it never offers the button again (002 security D4)
 type Phase = "ready" | "confirming" | "cancelled";
-/** Who approves: the guest (hold to pay) or the customer's own wallet. */
-type Via = "hold" | "wallet";
+/** Who approves: the guest (hold to pay) or the customer's own wallet (the browser's, or through Privy). */
+type Via = "hold" | WalletVia;
 
 /** The sheet already shows what happened (confirming or cancelled): no extra error line. */
 class Shown extends Error {}
@@ -73,6 +73,7 @@ export function InvoicePay({ invoiceId, merchantName, dueText, invoiceText, paid
     if (!inFlight.current) {
       setPaying(via);
       inFlight.current = submit(via).finally(() => {
+        endWalletSession();
         inFlight.current = null;
         setPaying(null);
       });
@@ -86,7 +87,7 @@ export function InvoicePay({ invoiceId, merchantName, dueText, invoiceText, paid
       if (!terms) throw new Error("Payments aren't live yet.");
       const { signInvoice } = await loadSigner();
       // the customer's own wallet: connected, on chain 1874, enough USDT per our server, before it asks to approve
-      const approval = await signInvoice(terms, via === "wallet" ? await walletPayer(fundsUrl) : undefined);
+      const approval = await signInvoice(terms, via === "hold" ? undefined : await walletPayer(fundsUrl, via));
       let res: Response;
       try {
         res = await fetch(`/api/v1/invoices/${invoiceId}/pay`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(approval) });
@@ -159,7 +160,7 @@ export function InvoicePay({ invoiceId, merchantName, dueText, invoiceText, paid
           {/* submit() already shows its error; the rejection only matters to the hold button */}
           {guest.funds === "short" && guest.address && paying !== "hold" ? (
             <GuestShort amountText={totalText} address={guest.address} onRecheck={guest.recheck}>
-              <WalletOption primary busy={paying === "wallet"} disabled={paying !== null} onPay={() => void pay("wallet").catch(() => undefined)} />
+              <WalletOption primary busy={paying} disabled={paying !== null} onPay={(via) => void pay(via).catch(() => undefined)} />
             </GuestShort>
           ) : (
             <>
@@ -168,7 +169,7 @@ export function InvoicePay({ invoiceId, merchantName, dueText, invoiceText, paid
                 You pay {totalText} USDT: the {owedText} due plus a {feeText} USDT payment fee.
                 <span className="block">Press and hold the button, or press Enter, to pay.</span>
               </p>
-              <WalletOption busy={paying === "wallet"} disabled={paying !== null} onPay={() => void pay("wallet").catch(() => undefined)} />
+              <WalletOption busy={paying} disabled={paying !== null} onPay={(via) => void pay(via).catch(() => undefined)} />
             </>
           )}
         </div>
