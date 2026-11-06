@@ -7,17 +7,19 @@ import assert from "node:assert/strict";
 import { MERCHANT, resetDb, setupDb } from "./gw-helpers.mjs";
 
 const sent = [];
+const attemptedIds = [];
 const confirmed = [];
 const confirmedAmounts = [];
 let failNext = false;
 mock.module("../lib/server/webhooks.ts", {
   namedExports: {
-    enqueueEvent: async (merchant, type, data) => {
+    enqueueEvent: async (merchant, type, data, now, eventId) => {
+      attemptedIds.push(eventId);
       if (failNext) {
         failNext = false;
         throw new Error("db down");
       }
-      sent.push({ merchant, type, data });
+      sent.push({ merchant, type, data, eventId });
     },
   },
 });
@@ -102,6 +104,26 @@ test("if queuing the webhook fails, a retry still sends it", async () => {
   assert.equal(sent.length, 0);
   await onSessionPaid(session("sess_3"), 25_000_000n);
   assert.equal(sent.length, 1);
+  // claude-frontend F2: the retry reuses the failed attempt's event id, so a merchant deduping on it never ships twice
+  assert.equal(attemptedIds.at(-2), attemptedIds.at(-1));
+  assert.match(sent[0].eventId, /^evt_[A-Za-z0-9_-]{24}$/);
+});
+
+test("F2: event ids are stable per event (sendOnce key) and differ between events", async () => {
+  await onSessionPaid(session("sess_a"), 25_000_000n);
+  await onSessionPaid(session("sess_b"), 25_000_000n);
+  await onRefund(session("sess_a"), 5_000_000n, 5_000_000n, 25_000_000n);
+  const [paidA, paidB, refundA] = sent.map((e) => e.eventId);
+  assert.equal(new Set([paidA, paidB, refundA]).size, 3);
+  const { eventIdFor } = await import("../lib/server/events.ts");
+  assert.equal(paidA, eventIdFor("paid:sess_a"), "derived from the key, so a re-announce from another instance gets it too");
+});
+
+test("F4: a re-announce of an already-sent payment does no other work (key checked first)", async () => {
+  await onSessionPaid(session("sess_r"), 25_000_000n);
+  const before = attemptedIds.length;
+  await onSessionPaid(session("sess_r"), 25_000_000n);
+  assert.equal(attemptedIds.length, before, "no second enqueue");
 });
 
 test("amounts of 1,000 USDT have no thousands separator in the webhook", async () => {
