@@ -5,12 +5,14 @@ import { after } from "next/server.js"; // the .js path resolves under Node's te
 import { onSessionPaid } from "./server/events.ts";
 import type { Session } from "./sessions.ts";
 
-/** Runs after the response is sent (Next's after()), so the first webhook POST (5 s timeout) never slows the payment
+/** `paidAmount` is the attempt's charged price (security 009 F3): what claimAmountDue returned and was relayed, or the
+ *  session's amount for a shop's own session. The voucher is counted and the webhook reports at exactly that price.
+ *  Runs after the response is sent (Next's after()), so the first webhook POST (5 s timeout) never slows the payment
  *  reply (NFR-4). Outside a request (tests, scripts) after() throws, so it runs at once. A failure is logged by its
  *  name only (a database or network message could carry a URL) and never changes the payment's outcome. */
-export function announcePaid(session: Session, send: (session: Session) => Promise<void> = onSessionPaid): void {
+export function announcePaid(session: Session, paidAmount: bigint, send: (session: Session, paidAmount: bigint) => Promise<void> = onSessionPaid): void {
   const run = () =>
-    send(session).catch((error: unknown) => {
+    send(session, paidAmount).catch((error: unknown) => {
       console.error(`payment.succeeded for ${session.id} not queued: ${error instanceof Error ? error.name : "error"}`);
     });
   try {
