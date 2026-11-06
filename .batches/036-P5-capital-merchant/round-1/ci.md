@@ -34,3 +34,9 @@ Not run here: reviewer-code / reviewer-security / reviewer-ux-ui passes (phase m
 forge (no contract change).
 
 VERDICT: PASS
+
+Re-run after the 5 MEDIUM UX fixes (PR #32 review by claude-frontend: 200 s publish timeout plus a Publish-again guard
+while a publish is in flight or until the book is re-read, dashboard amount format, cents-only inputs and one decimal
+style per line, the deadline line only on open offers, the unpublished message said once) and `git merge origin/main`
+(c78cc07): typecheck exit 0, lint exit 0, `npm test` 644 tests / 642 pass / 0 fail / 2 skipped (batch file 15 pass),
+build exit 0 (`◐ /merchant/capital`), secret scan no match. VERDICT: PASS
