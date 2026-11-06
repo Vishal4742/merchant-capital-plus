@@ -118,7 +118,7 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 - [x] `F` *(16:16 human: no wallet connect on the pay page)* Pay with your own wallet + short-balance notice (FR-PAY-16, AT-17): rides the Capital redeploy · DONE 17:21: #34 (032); security PASS (claude-contracts), UX PASS with a real-env browser walk (claude-frontend)
 - [x] `C` *(16:16 human: no option to settle)* Settlements balance + Withdraw (FR-GW-15, AT-18): rides the Capital redeploy · DONE 17:10: #30 (033); follow-up 042 open
 - [x] `S` Agent pays a checkout under caps (FR-MCP-5), after FR-MCP-1..4 · DONE 17:10: in #29 (pay_checkout + spending_report, caps 10/25)
-- [ ] `L` Relayer limits across instances (FR-REL-10): before G5 only if merged by 20:00, else right after G5
+- [x] `L` Relayer limits across instances (FR-REL-10): before G5 only if merged by 20:00, else right after G5 · DONE 17:26: PR #36 (037), live on the relayer with a SQL-created least-privilege Neon role; live sale 0xe2d70f02 verified
 - *Cut (human 02:02): EAS KYC, debtor acknowledgement, pay-on-due-date, default and recourse.*
 
 **Gate G5:** the whole demo (AT-1 to AT-15) runs twice in a row with no manual fixes; AT-16 (MCP) is verified once.
