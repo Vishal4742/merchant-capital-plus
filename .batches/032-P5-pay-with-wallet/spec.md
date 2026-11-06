@@ -33,7 +33,10 @@
 - apps/web/lib/payer-wallet.ts (new), apps/web/lib/sign-sale.ts (signer parameter, guest address)
 - apps/web/app/api/v1/sessions/[id]/funds/route.ts (new), apps/web/app/api/v1/invoices/[id]/funds/route.ts (new)
 - apps/web/components/WalletPay.tsx (new), apps/web/components/Checkout.tsx, apps/web/components/InvoicePay.tsx
-- apps/web/test/payer-wallet.test.mjs (new), apps/web/test/funds.test.mjs (new)
+- apps/web/test/payer-wallet.test.mjs (new), apps/web/test/funds.test.mjs (new), apps/web/test/voucher-pay.test.mjs
+  (its source pin of the signSale call gains the `payer` argument)
+- .batches/032-P5-pay-with-wallet/round-1/probes/wallet-walk.mjs (the browser walk: FR-PAY-7 scan with the wallet
+  option hidden, CSP, states, screenshots)
 - Not lib/merchant-wallet.ts (another lane's file): payer code reuses the onboarding chain params instead.
 
 ## Ponytail ladder (why this is the smallest change that works)
