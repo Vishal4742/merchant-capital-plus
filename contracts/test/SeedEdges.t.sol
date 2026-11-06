@@ -63,15 +63,15 @@ contract SeedEdgesForkTest is Test {
 
     function test_Fund_TopsUpPartlyFundedWalletsToTheirTarget() public {
         vm.prank(HOLDER);
-        USDT.transfer(debtor, 30e6);
+        USDT.transfer(investorA, 30e6);
         vm.deal(merchant, 0.005 ether);
         Seed.Target[] memory t = _targets();
 
         seed.fundWith(teamKey, t);
 
-        assertEq(USDT.balanceOf(debtor), 100e6, "debtor topped up to its target, not by it");
+        assertEq(USDT.balanceOf(investorA), 69e6, "investor A topped up to its target, not by it");
         assertEq(merchant.balance, 0.02 ether, "merchant WBT topped up to its target, not by it");
-        assertEq(USDT.balanceOf(team), 300e6 - 180e6, "team sends only the missing 1 + 69 + 40 + 70");
+        assertEq(USDT.balanceOf(team), 300e6 - 80e6, "team sends only the missing 1 + 39 + 40 (+ 0 to the debtor)");
         assertEq(team.balance, 1 ether - 0.015 ether, "team sends only the missing 0.015 WBT");
     }
 
@@ -130,25 +130,25 @@ contract SeedEdgesForkTest is Test {
         vm.setEnv("PAYER_PRIVATE_KEY", vm.toString(payerKey));
         vm.setEnv("CUSTOMER", vm.toString(address(0)));
 
-        seed.fund(); // CUSTOMER unset: the four script wallets only
+        vm.expectRevert(Seed.CustomerRequired.selector); // batch 009 (Q5): UI runs pay from the browser guest
+        seed.fund();
+
+        vm.setEnv("CUSTOMER", vm.toString(customer));
+        seed.fund();
         assertEq(USDT.balanceOf(merchant), 1e6);
         assertEq(USDT.balanceOf(investorA), 69e6);
         assertEq(USDT.balanceOf(investorB), 40e6);
-        assertEq(USDT.balanceOf(debtor), 100e6);
+        assertEq(USDT.balanceOf(debtor), 0, "the script debtor no longer pays AT-7");
         assertEq(merchant.balance, 0.02 ether);
-        assertEq(USDT.balanceOf(team), 300e6 - 210e6, "210 without a customer");
-
-        vm.setEnv("CUSTOMER", vm.toString(customer));
-        seed.fund(); // now only the customer is missing anything
-        assertEq(USDT.balanceOf(customer), 56e6);
-        assertEq(USDT.balanceOf(team), 300e6 - 266e6, "266 with a customer");
+        assertEq(USDT.balanceOf(customer), 156_100_000);
+        assertEq(USDT.balanceOf(team), 300e6 - 266_100_000, "266.10 in all");
 
         vm.prank(HOLDER);
         USDT.transfer(payer, 1e6);
         seed.reclaim();
-        assertEq(USDT.balanceOf(team), 300e6 - 56e6 + 1e6, "all five script wallets come back, the customer does not");
+        assertEq(USDT.balanceOf(team), 300e6 - 156_100_000 + 1e6, "all five script wallets come back, the customer does not");
         assertEq(USDT.balanceOf(payer), 0, "PAYER is reclaimed");
-        assertEq(USDT.balanceOf(customer), 56e6, "the browser customer is never reclaimed");
+        assertEq(USDT.balanceOf(customer), 156_100_000, "the browser customer is never reclaimed");
         assertEq(payer.balance + vm.getNonce(payer), 0, "PAYER spends no WBT and sends no tx");
     }
 }

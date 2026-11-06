@@ -68,8 +68,8 @@ contract SeedForkTest is Test {
         assertEq(seed.MERCHANT_WBT(), 0.02 ether);
         assertEq(seed.INVESTOR_A_USDT(), 69e6);
         assertEq(seed.INVESTOR_B_USDT(), 40e6);
-        assertEq(seed.DEBTOR_USDT(), 100e6);
-        assertEq(seed.CUSTOMER_USDT(), 56e6);
+        assertEq(seed.DEBTOR_USDT(), 0, "batch 009 (Q5): the browser guest pays AT-7, not the script debtor");
+        assertEq(seed.CUSTOMER_USDT(), 156_100_000, "AT-4 5 + AT-5 50 + 1 + AT-7 100.10");
     }
 
     function test_Fund_TopsUpEachWalletToItsTarget() public {
@@ -79,9 +79,9 @@ contract SeedForkTest is Test {
         assertEq(USDT.balanceOf(merchant), 1e6);
         assertEq(USDT.balanceOf(investorA), 69e6);
         assertEq(USDT.balanceOf(investorB), 40e6);
-        assertEq(USDT.balanceOf(debtor), 100e6);
-        assertEq(USDT.balanceOf(customer), 56e6);
-        assertEq(USDT.balanceOf(team), teamBefore - 266e6);
+        assertEq(USDT.balanceOf(debtor), 0, "batch 009: the browser guest pays AT-7");
+        assertEq(USDT.balanceOf(customer), 156_100_000);
+        assertEq(USDT.balanceOf(team), teamBefore - 266_100_000);
         assertEq(merchant.balance, 0.02 ether, "merchant gets WBT for its own admin txs");
         assertEq(investorA.balance + investorB.balance + debtor.balance + customer.balance, 0, "payers get no WBT");
     }
@@ -101,9 +101,9 @@ contract SeedForkTest is Test {
 
     function test_Shortfall_SumsOnlyWhatIsMissing() public {
         vm.prank(HOLDER);
-        USDT.transfer(debtor, 30e6);
+        USDT.transfer(investorA, 30e6); // 30 of its 69
         (uint256 usdt, uint256 wbt) = seed.shortfall(_targets());
-        assertEq(usdt, 266e6 - 30e6);
+        assertEq(usdt, 266_100_000 - 30e6);
         assertEq(wbt, 0.02 ether);
     }
 
@@ -114,7 +114,7 @@ contract SeedForkTest is Test {
         vm.deal(poorTeam, 1 ether);
         Seed.Target[] memory targets = _targets(); // its view calls must happen before expectRevert
 
-        vm.expectRevert(abi.encodeWithSelector(Seed.TeamWalletShort.selector, 166e6, 0));
+        vm.expectRevert(abi.encodeWithSelector(Seed.TeamWalletShort.selector, 166_100_000, 0));
         seed.fundWith(poorKey, targets);
         assertEq(USDT.balanceOf(poorTeam), 100e6);
         assertEq(USDT.balanceOf(investorA), 0);
@@ -128,7 +128,7 @@ contract SeedForkTest is Test {
 
         assertEq(USDT.balanceOf(merchant) + USDT.balanceOf(investorA), 0);
         assertEq(USDT.balanceOf(investorB) + USDT.balanceOf(debtor), 0);
-        assertEq(USDT.balanceOf(team), teamBefore + 210e6, "everything but the browser customer comes back");
+        assertEq(USDT.balanceOf(team), teamBefore + 110e6, "everything but the browser customer comes back (1 + 69 + 40)");
         assertEq(merchant.balance, 0.02 ether, "wallets spend no WBT");
         assertEq(vm.getNonce(investorA) + vm.getNonce(debtor), 0, "wallets sent no transaction");
     }
