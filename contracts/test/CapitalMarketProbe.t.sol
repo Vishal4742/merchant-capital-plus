@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.38;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, Vm, console} from "forge-std/Test.sol";
 import {stdError} from "forge-std/StdError.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
@@ -487,5 +487,56 @@ contract CapitalMarketProbeForkTest is Test {
 
         _fund(0, newClaim, FACE);
         _payAndCheckProRata(invoiceId, newClaim, 1, FACE, "p");
+    }
+
+    // ---------- Q19 (batch 009): relayed repayment gas by holder count, against the relayer's fixed 400k limit ----------
+    // Each top-level call is its own transaction (forge test --isolate): cold storage, and gasTotalUsed includes the
+    // 21,000 base and calldata (every refund is exactly gasTotalUsed / 5, EIP-3529's cap on the whole tx). The gas limit
+    // must cover gasTotalUsed, since refunds come only at the end.   forge test --isolate --match-test test_Gas_ -vv
+    uint256 constant RELAYER_GAS_LIMIT = 400_000; // apps/relayer relayer.ts: every tx is simulated and sent with it
+    uint256 constant SAFE_INVOICE_HOLDERS = 2;
+    uint256 constant SAFE_ADVANCE_HOLDERS = 1;
+
+    /// @dev Lists an invoice or an advance, funds it across `n` investors, optionally empties their USDT (paying a
+    ///      wallet at 0 USDT is a 0 -> nonzero write, +17.1k), then repays it in full (`settle`, the last repayment of
+    ///      every claim: holders burned to zero, Settled) or with a small payment (a 5 USDT sale; 10 of an invoice).
+    function _repaymentGas(bool advance, uint256 n, bool emptyHolders, bool settle) internal returns (uint256 used) {
+        uint256 snap = vm.snapshotState();
+        uint256 invoiceId;
+        uint256 claimId;
+        if (advance) claimId = _listAdvance();
+        else (invoiceId, claimId) = _listInvoice(FACE, PRICE);
+        uint256 face = advance ? CAP : FACE;
+        for (uint256 i; i < n; ++i) {
+            _fund(i, claimId, i + 1 < n ? face / n : face - (face / n) * (n - 1));
+        }
+        for (uint256 i; emptyHolders && i < n; ++i) {
+            uint256 held = _bal(inv[i]); // read first: vm.prank applies to the next call, which would be this read
+            vm.prank(inv[i]);
+            USDT.transfer(HOLDER, held);
+        }
+        if (advance) _sale(settle ? uint256(CAP) * 10_000 / HOLDBACK : 5e6, "q19"); // settle: its holdback repays the cap
+        else _payInvoice(invoiceId, settle ? FACE : FACE / 10, "q19");
+        used = vm.lastCallGas().gasTotalUsed;
+        assertEq(claims.holdersOf(claimId).length, settle ? 0 : n, "settle burns every holder to zero");
+        vm.revertToState(snap);
+    }
+
+    function test_Gas_RepaymentByHolderCount() public {
+        vm.startPrank(HOLDER); // as live: the merchant and the fee recipient (the relayer hot wallet) hold USDT
+        USDT.transfer(merchant, 1e6);
+        USDT.transfer(feeRecipient, 1e6);
+        vm.stopPrank();
+        for (uint256 n = 1; n <= 8; ++n) {
+            console.log("%s holders, invoice: full %s, at 0 USDT %s", n, _repaymentGas(false, n, false, true), _repaymentGas(false, n, true, true));
+            console.log("  partial at 0 USDT %s", _repaymentGas(false, n, true, false));
+            console.log("  advance sale: settling %s, at 0 USDT %s", _repaymentGas(true, n, false, true), _repaymentGas(true, n, true, true));
+            console.log("  5 USDT sale at 0 USDT %s", _repaymentGas(true, n, true, false));
+        }
+        // the caps the server and relayer enforce (claude-relayer batch 022): the worst case fits, one more holder doesn't
+        assertLe(_repaymentGas(false, SAFE_INVOICE_HOLDERS, true, true), RELAYER_GAS_LIMIT);
+        assertGt(_repaymentGas(false, SAFE_INVOICE_HOLDERS + 1, true, true), RELAYER_GAS_LIMIT);
+        assertLe(_repaymentGas(true, SAFE_ADVANCE_HOLDERS, true, true), RELAYER_GAS_LIMIT);
+        assertGt(_repaymentGas(true, SAFE_ADVANCE_HOLDERS + 1, true, true), RELAYER_GAS_LIMIT);
     }
 }
