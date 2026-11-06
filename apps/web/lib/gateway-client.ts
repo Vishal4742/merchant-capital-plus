@@ -55,6 +55,8 @@ export interface PublicLink {
   currency: Currency;
   description: string;
   status: LinkStatus;
+  /** ISO time of the paid checkout, only once a single-use link is "paid" (claude-contracts' publicLinkJson). */
+  paid_at?: string | null;
 }
 export interface PublicPage extends PageFields {
   slug: string;
@@ -162,7 +164,7 @@ export const publicPageOf = (v: unknown): PublicPage => {
 function plainError(status: number, data: unknown, what: string): GatewayError {
   const said = data && typeof data === "object" && typeof (data as { error?: unknown }).error === "string" ? (data as { error: string }).error.slice(0, MAX_MESSAGE) : null;
   if (said) return new GatewayError(status, said);
-  // Next's own 404 page, not the gateway's JSON: claude-contracts' routes aren't on this server yet
+  // a 404 without the gateway's JSON sentence: this server has no such route (an older deploy of the gateway)
   if (status === 404) return new GatewayError(503, `${what} aren't available on this server yet.`);
   if (status === 401) return new GatewayError(401, "Sign in to your merchant dashboard first.");
   if (status === 429) return new GatewayError(429, "Too many tries in a minute. Wait a moment and try again.");
