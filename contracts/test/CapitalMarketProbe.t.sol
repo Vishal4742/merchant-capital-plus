@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.38;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, Vm, console} from "forge-std/Test.sol";
 import {stdError} from "forge-std/StdError.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
@@ -487,5 +487,39 @@ contract CapitalMarketProbeForkTest is Test {
 
         _fund(0, newClaim, FACE);
         _payAndCheckProRata(invoiceId, newClaim, 1, FACE, "p");
+    }
+
+    // ---------- Q19 (batch 009): relayed payInvoice gas by holder count, against the relayer's 400k limit ----------
+    // Each call must be its own transaction (cold storage, intrinsic gas), so measure with:
+    //   forge test --isolate --match-test test_Gas_FullRepaymentByHolderCount -vv
+    uint256 constant RELAYER_GAS_LIMIT = 400_000; // apps/relayer relayer.ts sends every tx with this fixed gas limit
+    // isolate mode leaves out the 21,000 base + calldata (the balanceOf probe below shows ~9.8k, not ~31k);
+    // payInvoice's 292 calldata bytes (~130 nonzero) add ~2.7k
+    uint256 constant BASE_GAS = 23_700;
+
+    function test_Gas_FullRepaymentByHolderCount() public {
+        // as live: the merchant and the fee recipient already hold USDT, so their credits aren't 0 -> nonzero writes
+        vm.startPrank(HOLDER);
+        USDT.transfer(merchant, 1e6);
+        USDT.transfer(feeRecipient, 1e6);
+        vm.stopPrank();
+        USDT.balanceOf(address(0xBEEF)); // probe: cold proxy + cold slot only, so no base cost is counted
+        assertLt(vm.lastCallGas().gasTotalUsed, 21_000, "isolate mode excludes the base cost: BASE_GAS is added below");
+        uint8[6] memory counts = [2, 3, 4, 5, 6, 8];
+        for (uint256 c; c < counts.length; ++c) {
+            uint256 snap = vm.snapshotState();
+            uint256 n = counts[c];
+            (uint256 invoiceId, uint256 claimId) = _listInvoice(FACE, PRICE);
+            for (uint256 i; i < n; ++i) {
+                _fund(i, claimId, i + 1 < n ? FACE / n : FACE - (FACE / n) * (n - 1));
+            }
+            _payInvoice(invoiceId, FACE, "q19"); // the full repayment: every holder burned to zero, then Settled
+            Vm.Gas memory g = vm.lastCallGas();
+            uint256 needed = g.gasTotalUsed + BASE_GAS; // the gas limit must cover this (refunds come only at the end)
+            console.log("holders %s: needs %s gas (refund %s at the end)", n, needed, uint256(int256(g.gasRefunded)));
+            assertEq(claims.holdersOf(claimId).length, 0);
+            if (n == 2) assertLt(needed, RELAYER_GAS_LIMIT, "the demo's 2-holder repayment fits the relayer");
+            vm.revertToState(snap);
+        }
     }
 }
