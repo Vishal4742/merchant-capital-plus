@@ -3,7 +3,7 @@
 import { formatUnits, getAddress, type Address } from "viem";
 import { SESSION_TTL_MS, createSession, type LineItem } from "../sessions.ts";
 import { parseUsdt } from "../usdt.ts";
-import { paidCounts, recordCheckout, type CheckoutKind } from "./checkouts.ts";
+import { recordCheckout, type CheckoutKind } from "./checkouts.ts";
 import { query } from "./db.ts";
 import {
   HttpError,
@@ -22,9 +22,9 @@ import {
   usdtField,
   type Currency,
 } from "./http.ts";
-import { QUOTE_TTL_MS, toUsdtUnits, usdRate, type Rate } from "./quotes.ts";
+import { QUOTE_TTL_MS, toUsdtUnits, usdRate } from "./quotes.ts";
 
-const MAX_PRICE = 100_000_000_000_000n; // 100,000,000 of any currency: a sanity cap; the 1..1,000 USDT rule runs at checkout
+const MAX_PRICE = 100_000_000_000_000n; // 100,000,000 of any currency: a sanity cap; the 1..1,000 USDT rule runs at creation and checkout
 export const MAX_LIST = 200; // ponytail: list screens show the newest 200; add a cursor when a merchant has more
 const CHECKOUTS_PER_MINUTE = 20;
 const MAX_FORM_BYTES = 16_384;
@@ -45,10 +45,22 @@ export function priceField(value: unknown, name: string): bigint {
   return units;
 }
 
-/** USDT units for prices in `currency` at the live rate, each rounded up: the merchant never gets less than its price. */
-export async function inUsdt(prices: bigint[], currency: Currency): Promise<{ prices: bigint[]; rate: Rate }> {
-  const rate = await usdRate(currency);
-  return { prices: prices.map((price) => toUsdtUnits(formatUnits(price, 6), rate)), rate };
+/** Refuses stored prices that could never be paid (FR-GW-1/2): at today's rate, one above 1,000 USDT, or under 1 USDT
+ *  when `atLeastOne` (a fixed link's whole price). No prices: no rate needed. Best effort: during an FX outage the
+ *  check is skipped, since creating a link moves no money and the checkout re-checks the bounds at its own rate. */
+export async function payablePrices(prices: bigint[], currency: Currency, atLeastOne = false): Promise<void> {
+  if (prices.length === 0) return;
+  let rate;
+  try {
+    rate = await usdRate(currency);
+  } catch (err) {
+    if (err instanceof HttpError && err.status === 503) return; // FX down: don't block a merchant creating EUR links
+    throw err;
+  }
+  for (const price of prices) {
+    const usdt = toUsdtUnits(formatUnits(price, 6), rate);
+    if (usdt > MAX_PAYMENT || (atLeastOne && usdt < MIN_PAYMENT)) throw new HttpError(400, "That price is outside 1 to 1,000 USDT at today's rate.");
+  }
 }
 
 /** Public checkouts: at most 20 a minute per IP (links and pages together). */
@@ -62,23 +74,24 @@ export async function readCheckoutBody(request: Request): Promise<Record<string,
   return Object.fromEntries(new URLSearchParams(text));
 }
 
-/** Opens a checkout session for line items priced in `currency`: converts them to USDT at one rate, records where the
+/** Opens a checkout session for line items priced in `currency`: converts their total to USDT once at the live rate
+ *  (rounded up to the cent, so it equals a quote for that total; USD and USDT exactly: H1, FR-GW-11), records where the
  *  session came from and the rate (the checkout shows it, AT-13), and sends the payer there:
  *  303 to /checkout/{id}, or {checkout_url, session_id} for a caller that accepts JSON (the pay button).
- *  A non-USDT session carries `priced` (its items stay in `currency`, as the checkout labels them); a fiat one lives only
- *  as long as the 10-min quote lock, USD (1:1) and USDT keep the 30-min session (FR-GW-11, AT-13). */
+ *  The items keep their prices in `currency`; a non-USDT session carries `priced` (the checkout labels them with it); a
+ *  fiat one lives only as long as the 10-min quote lock, USD (1:1) and USDT keep the 30-min session (FR-GW-11, AT-13). */
 export async function openCheckout(
   request: Request,
   from: { kind: CheckoutKind; refId: string; merchant: string; reference: string },
   priced: LineItem[],
   currency: Currency,
 ): Promise<Response> {
-  const { prices, rate } = await inUsdt(priced.map((item) => item.price), currency);
-  const amount = priced.reduce((sum, item, i) => sum + prices[i] * BigInt(item.qty), 0n);
+  const rate = await usdRate(currency);
+  const total = priced.reduce((sum, item) => sum + item.price * BigInt(item.qty), 0n); // in `currency`
+  const amount = toUsdtUnits(formatUnits(total, 6), rate);
   if (amount < MIN_PAYMENT || amount > MAX_PAYMENT) throw new HttpError(400, "The total must be between 1 and 1,000 USDT.");
   const merchant = getAddress(from.merchant);
-  const fiatTotal = priced.reduce((sum, item) => sum + item.price * BigInt(item.qty), 0n);
-  const fx = { currency, amount: fiatTotal, rate: rate.rate, rateAt: rate.rateAt, source: rate.source, fetchedAt: rate.fetchedAt };
+  const fx = { currency, amount: total, rate: rate.rate, rateAt: rate.rateAt, source: rate.source, fetchedAt: rate.fetchedAt };
   const usdt = currency === "USDT";
   const session = createSession(
     {
@@ -86,8 +99,8 @@ export async function openCheckout(
       merchantName: merchantName(merchant),
       amount,
       reference: from.reference,
-      items: usdt ? priced.map((item, i) => ({ ...item, price: prices[i] })) : priced,
-      priced: usdt ? undefined : { currency, amount: fiatTotal, rate: rate.rate, rateDate: rate.rateAt, fetchedAt: rate.fetchedAt, source: rate.source },
+      items: priced,
+      priced: usdt ? undefined : { currency, amount: total, rate: rate.rate, rateDate: rate.rateAt, fetchedAt: rate.fetchedAt, source: rate.source },
     },
     Date.now(),
     usdt || currency === "USD" ? SESSION_TTL_MS : QUOTE_TTL_MS,
@@ -112,14 +125,21 @@ export interface Link {
   cancelledAt: number | null;
   createdAt: number;
   payments: number; // paid checkouts
+  paidAt: number | null; // the first paid checkout's time
 }
 
 type LinkRow = { id: string; slug: string; merchant: string; amount: string | null; currency: Currency; description: string; reference_id: string | null; single_use: boolean; expires_at: string | null; cancelled_at: string | null; created_at: string };
 const COLUMNS = "id, slug, merchant, amount::text, currency, description, reference_id, single_use, expires_at::text, cancelled_at::text, created_at::text";
 const num = (text: string | null) => (text === null ? null : Number(text));
 
+/** Each link with its paid checkouts: how many, and when the first was paid (the public view's paid_at). */
 async function withPayments(rows: LinkRow[]): Promise<Link[]> {
-  const paid = await paidCounts("link", rows.map((r) => r.id));
+  if (rows.length === 0) return [];
+  const counted = await query<{ ref_id: string; n: string; first: string }>(
+    "SELECT ref_id, count(*)::text AS n, min(paid_at)::text AS first FROM app_gw_checkouts WHERE kind = 'link' AND ref_id = ANY($1) AND paid_at IS NOT NULL GROUP BY ref_id",
+    [rows.map((r) => r.id)],
+  );
+  const paid = new Map(counted.map((c) => [c.ref_id, c]));
   return rows.map((r) => ({
     id: r.id,
     slug: r.slug,
@@ -132,7 +152,8 @@ async function withPayments(rows: LinkRow[]): Promise<Link[]> {
     expiresAt: num(r.expires_at),
     cancelledAt: num(r.cancelled_at),
     createdAt: Number(r.created_at),
-    payments: paid.get(r.id) ?? 0,
+    payments: Number(paid.get(r.id)?.n ?? 0),
+    paidAt: num(paid.get(r.id)?.first ?? null),
   }));
 }
 
@@ -160,15 +181,19 @@ export const linkJson = (link: Link) => ({
   payments: link.payments,
 });
 
-/** What a payer sees: render info only, nothing merchant-private. */
-export const publicLinkJson = (link: Link) => ({
-  slug: link.slug,
-  merchant_name: merchantName(getAddress(link.merchant)),
-  amount: decimal(link.amount),
-  currency: link.currency,
-  description: link.description,
-  status: linkStatus(link),
-});
+/** What a payer sees: render info only, nothing merchant-private. `paid_at` only once the link is "paid". */
+export const publicLinkJson = (link: Link) => {
+  const status = linkStatus(link);
+  return {
+    slug: link.slug,
+    merchant_name: merchantName(getAddress(link.merchant)),
+    amount: decimal(link.amount),
+    currency: link.currency,
+    description: link.description,
+    status,
+    paid_at: status === "paid" ? iso(link.paidAt) : null,
+  };
+};
 
 export async function createLink(merchant: Address, body: Record<string, unknown>, now = Date.now()): Promise<Link> {
   const currency = currencyField(body.currency);
@@ -178,6 +203,7 @@ export async function createLink(merchant: Address, body: Record<string, unknown
   const referenceId = textField(body.reference_id, "reference_id", { max: 40, required: false }) || null;
   const expiresAt = given(body.expires_at) ? futureTime(body.expires_at, "expires_at", now) : null;
   if (given(body.single_use) && typeof body.single_use !== "boolean") throw new HttpError(400, "single_use must be true or false.");
+  if (amount !== null && !usd) await payablePrices([amount], currency, true); // USD and USDT: usdtField checked 1..1,000
   const rows = await query<LinkRow>(
     `INSERT INTO app_gw_links (id, slug, merchant, amount, currency, description, reference_id, single_use, expires_at, created_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (merchant, reference_id) DO NOTHING RETURNING ${COLUMNS}`,
