@@ -10,7 +10,9 @@ export function sqlStatements(text: string): string[] {
     .filter(Boolean);
 }
 
-/** The schema files db/migrate.ts applies (and the tests apply the same way): db/NNN_*.sql in name order, except the
- *  owner-run role files (*_role*.sql: they create and grant to the relayer's own login role, need the owner, and 002
- *  uses a DO block the splitter can't split). Batch 049. */
-export const isSchemaFile = (name: string): boolean => /^\d{3}_.+\.sql$/.test(name) && !/_role/.test(name);
+/** Owner-run role files (batch 049): db/NNN_relayer_role*.sql create and grant to the relayer's own login role, need
+ *  the owner, and 002 uses a DO block the splitter can't split. One anchored pattern for migrate, tests and harnesses
+ *  (review 049 L2): a schema file can't be skipped by having "_role" somewhere in its name. */
+export const isRoleFile = (name: string): boolean => /^\d{3}_relayer_role(_[a-z0-9]+)*\.sql$/.test(name);
+/** The schema files db/migrate.ts applies (and the tests apply the same way): db/NNN_*.sql in name order, minus role files. */
+export const isSchemaFile = (name: string): boolean => /^\d{3}_[a-z0-9_]+\.sql$/.test(name) && !isRoleFile(name);
