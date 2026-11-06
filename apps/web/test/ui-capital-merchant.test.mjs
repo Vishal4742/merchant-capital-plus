@@ -109,7 +109,7 @@ test("invoiceTerms mirrors listInvoice's rules: price below face, deadline a min
   const due = NOW + 60 * DAY;
   const error = (over) => {
     const r = m.invoiceTerms({ face: 100_000_000n, dueDate: due, apr: "12", deadline: NOW + DAY, ...over }, NOW);
-    assert.equal(r.ok, false, JSON.stringify(over));
+    assert.equal(r.ok, false, Object.keys(over).join());
     return r.error;
   };
   assert.match(error({ apr: "0" }), /APR above 0%/);
