@@ -10,7 +10,7 @@ import {
 } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { addresses, merchantPayAbi } from '../../../packages/shared/contracts.ts';
-import { health, makeClient, relay, relayerClient, startBalanceRefresh, USDT_ABI, USDT_DOMAIN } from '../src/relayer.ts';
+import { health, makeClient, relay, relayerClient, startBalanceRefresh, TIMING, USDT_ABI, USDT_DOMAIN } from '../src/relayer.ts';
 
 const MP = addresses.merchantPay; // lowercase in the generated file
 const USDT: Address = '0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7';
@@ -54,12 +54,13 @@ function authNonce(call: Call): Hex | undefined {
 }
 
 // A stateful fake JSON-RPC node: USDT reads, MerchantPay's relayFee, paySale/payInvoice (revert once their authorization
-// is used), a relayer nonce that advances on every send, and eth_sendRawTransactionSync with a Paid event.
+// is used), a relayer nonce that advances on every send, eth_sendRawTransaction + receipts with a Paid event.
 function fakeNode(opts: NodeOptions = {}) {
   const calls: string[] = [];
   const sent: Hex[] = [];
   const simulations: Record<string, unknown>[] = []; // the eth_call request objects of every payment simulation
   const used = new Set<Hex>(opts.used ?? []);
+  const mined = new Map<Hex, unknown>();
   let nonce = 7;
   let paymentId = 41n;
   const decode = (params: unknown[]) => decodeFunctionData({ abi: ABI, data: (params[0] as { data: Hex }).data });
@@ -84,18 +85,21 @@ function fakeNode(opts: NodeOptions = {}) {
         if (auth) return encodeFunctionResult({ abi: merchantPayAbi, functionName: 'paySale', result: paymentId + 1n });
         throw new Error(`fake node: unexpected eth_call ${call.functionName}`);
       }
-      case 'eth_sendRawTransactionSync': {
+      case 'eth_sendRawTransaction': { // accepted now, mined after sendDelayMs (the relayer polls for the receipt)
         const raw = params[0] as Hex;
+        const hash = keccak256(raw);
         sent.push(raw);
-        await sleep(opts.sendDelayMs ?? 0);
         const call = decodeFunctionData({ abi: merchantPayAbi, data: parseTransaction(raw).data! });
-        used.add(authNonce(call)!);
-        nonce += 1;
-        paymentId += 1n;
-        calls.push('eth_sendRawTransactionSync:done');
-        if (opts.minedRevert) return receipt(keccak256(raw), '0x0', [], opts.gasUsed);
-        return receipt(keccak256(raw), '0x1', [paidLog(keccak256(raw), paymentId, call)], opts.gasUsed);
+        void sleep(opts.sendDelayMs ?? 0).then(() => {
+          used.add(authNonce(call)!);
+          nonce += 1;
+          paymentId += 1n;
+          calls.push('mined');
+          mined.set(hash, opts.minedRevert ? receipt(hash, '0x0', [], opts.gasUsed) : receipt(hash, '0x1', [paidLog(hash, paymentId, call)], opts.gasUsed));
+        });
+        return hash;
       }
+      case 'eth_getTransactionReceipt': return mined.get(params[0] as Hex) ?? null;
     }
     throw new Error(`fake node: unexpected ${method}`);
   }
@@ -126,6 +130,15 @@ function paidLog(txHash: Hex, paymentId: bigint, call: ReturnType<typeof decodeF
     blockNumber: '0x10', blockHash: `0x${'ab'.repeat(32)}`, transactionHash: txHash, transactionIndex: '0x0', logIndex: '0x0', removed: false,
   };
 }
+
+// The relayer polls for its receipt; shrink the waits so timeout paths run in milliseconds.
+TIMING.receiptPollMs = 5;
+TIMING.receiptTimeoutMs = 120;
+// The node accepts the tx but it never gets mined (the receipt-timeout path). `push` records the raw tx.
+const sentButNeverMined = (push: (raw: Hex) => void): NodeOptions['on'] => ({
+  eth_sendRawTransaction: (params) => { push(params[0] as Hex); return keccak256(params[0] as Hex); },
+  eth_getTransactionReceipt: () => null,
+});
 
 function receipt(hash: Hex, status = '0x1', logs: unknown[] = [], gasUsed = GAS_USED) {
   return {
@@ -331,7 +344,7 @@ test('every simulation carries the same gas limit and fees the relayer signs wit
 
 // ---- 4. the send path ----
 
-test('a valid paySale is signed with capped gas and fees, sent once with eth_sendRawTransactionSync, and returns the hash', async () => {
+test('a valid paySale is signed with capped gas and fees, sent once, its own receipt polled, and returns the hash', async () => {
   const node = fakeNode();
   const sale = await signedSale();
   const { body } = sale;
@@ -356,8 +369,10 @@ test('a valid paySale is signed with capped gas and fees, sent once with eth_sen
 
   assert.deepEqual(node.calls.slice(0, 5).sort(), PRECHECKS);
   assert.deepEqual(node.calls.slice(5, 7).sort(), ['eth_call:paySale', 'eth_getTransactionCount']);
-  assert.deepEqual(node.calls.slice(7), ['eth_sendRawTransactionSync', 'eth_sendRawTransactionSync:done']);
-  for (const never of ['eth_fillTransaction', 'eth_estimateGas', 'eth_sendRawTransaction', 'eth_getTransactionReceipt']) {
+  assert.equal(node.calls[7], 'eth_sendRawTransaction');
+  assert.ok(node.calls.slice(8).includes('mined'));
+  assert.equal(node.calls.at(-1), 'eth_getTransactionReceipt', 'answered after our own receipt');
+  for (const never of ['eth_fillTransaction', 'eth_estimateGas', 'eth_sendRawTransactionSync']) {
     assert.ok(!node.calls.includes(never), `called ${never}`);
   }
 });
@@ -385,10 +400,8 @@ test('the same authorization sent twice at once is broadcast once; the copy is r
   assert.equal(node.sent.length, 1);
 });
 
-test('after a sync-send timeout, re-POSTing the same authorization is a replay and is not sent again', async () => {
-  const node = fakeNode({
-    on: { eth_sendRawTransactionSync: (params) => { node.sent.push(params[0] as Hex); throw rpcError(4, 'transaction not included in time'); } },
-  });
+test('after a receipt timeout, re-POSTing the same authorization is a replay and is not sent again', async () => {
+  const node = fakeNode({ on: sentButNeverMined((raw) => node.sent.push(raw)) });
   const { body } = await signedSale();
   const first = await post(body, node);
   assert.deepEqual([first.status, first.out.code], [502, 'rpc_error']);
@@ -404,14 +417,14 @@ test('two different payments at once are sent one after the other with nonces n 
   const results = await Promise.all([post(p.body, node), post(q.body, node)]);
   assert.deepEqual(results.map((r) => r.status), [200, 200]);
   assert.deepEqual(node.sent.map((raw) => parseTransaction(raw).nonce).sort(), [7, 8]);
-  const firstDone = node.calls.indexOf('eth_sendRawTransactionSync:done');
+  const firstDone = node.calls.indexOf('mined');
   const secondSim = node.calls.lastIndexOf('eth_call:paySale');
   assert.ok(secondSim > firstDone, `the second simulation ran before the first send finished: ${node.calls.join(' > ')}`);
 });
 
 test('failures inside the lock release it: the next payment still goes through', async () => {
   const failures: NodeOptions['on'][] = [
-    { eth_sendRawTransactionSync: () => { throw rpcError(-32000, 'nonce too low'); } },
+    { eth_sendRawTransaction: () => { throw rpcError(-32000, 'nonce too low'); } },
     { eth_getTransactionCount: () => { throw rpcError(-32000, 'header not found'); } },
   ];
   for (const on of failures) {
@@ -422,13 +435,16 @@ test('failures inside the lock release it: the next payment still goes through',
 
 test('send outcomes: mined-but-reverted, a receipt for another hash, and a sync timeout all return 502 with our txHash', async () => {
   const cases: [string, (params: unknown[]) => unknown][] = [
-    ['reverted', (params) => receipt(keccak256(params[0] as Hex), '0x0')],
+    ['reverted', (params) => receipt(params[0] as Hex, '0x0')],
     ['receipt_mismatch', () => receipt(`0x${'cd'.repeat(32)}`)],
-    ['rpc_error', (params) => { throw rpcError(4, 'transaction not included in time', keccak256(params[0] as Hex)); }],
-    ['rpc_error', () => { throw rpcError(-32000, 'nonce too low'); }],
+    ['rpc_error', () => null], // never mined within the receipt timeout
+    ['rpc_error', () => { throw rpcError(-32000, 'header not found'); }], // the receipt lookup itself fails
   ];
   for (const [code, reply] of cases) {
-    const node = fakeNode({ on: { eth_sendRawTransactionSync: (params) => { node.sent.push(params[0] as Hex); return reply(params); } } });
+    const node = fakeNode({ on: {
+      eth_sendRawTransaction: (params) => { node.sent.push(params[0] as Hex); return keccak256(params[0] as Hex); },
+      eth_getTransactionReceipt: reply,
+    } });
     const { status, out } = await post((await signedSale()).body, node);
     assert.deepEqual([status, out.code], [502, code], JSON.stringify(out));
     assert.equal(out.txHash, keccak256(node.sent[0]), `${code}: our hash is returned so the client can poll it`);
@@ -547,7 +563,7 @@ test('health caches the WBT balance for 5 s and re-reads it after a send or once
 const SECP256K1_N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
 const timeoutNode = () => {
   const node = fakeNode({
-    on: { eth_sendRawTransactionSync: async (params) => { node.sent.push(params[0] as Hex); await sleep(40); throw rpcError(4, 'transaction not included in time'); } },
+    on: sentButNeverMined((raw) => node.sent.push(raw)),
   });
   return node;
 };
@@ -587,7 +603,10 @@ test('queue time counts: an authorization that drops under 30 s while waiting fo
     let release!: () => void;
     const held = new Promise<void>((resolve) => { release = resolve; });
     const node = fakeNode({
-      on: { eth_sendRawTransactionSync: async (params) => { node.sent.push(params[0] as Hex); await held; return receipt(keccak256(params[0] as Hex)); } },
+      on: {
+        eth_sendRawTransaction: (params) => { node.sent.push(params[0] as Hex); return keccak256(params[0] as Hex); },
+        eth_getTransactionReceipt: async (params) => { await held; return receipt(params[0] as Hex); },
+      },
     });
     const first = post((await signedSale()).body, node);
     while (node.sent.length === 0) await sleep(1); // the first request now holds the lock
@@ -662,8 +681,8 @@ test("the health cache is per relayer: one relayer never sees another relayer's 
 
 test('a failed send (sync timeout, receipt for another hash) also clears the health cache; a reject before the lock does not', async () => {
   const failing: [string, NodeOptions['on']][] = [
-    ['sync timeout', { eth_sendRawTransactionSync: () => { throw rpcError(4, 'transaction not included in time'); } }],
-    ['receipt_mismatch', { eth_sendRawTransactionSync: () => receipt(`0x${'cd'.repeat(32)}`) }],
+    ['receipt timeout', { ...sentButNeverMined(() => undefined) }],
+    ['receipt_mismatch', { eth_sendRawTransaction: (params) => keccak256(params[0] as Hex), eth_getTransactionReceipt: () => receipt(`0x${'cd'.repeat(32)}`) }],
   ];
   for (const [name, on] of failing) {
     const node = balanceNode(10n ** 18n, { on });
@@ -846,7 +865,7 @@ test('budget accounting: a receipt adds gasUsed × price + L1 fee; a timeout add
   const h = await (await health(node.client)).json();
   assert.equal(h.gasSpentToday, formatEther(spent));
   assert.equal(h.budgetLeft, formatEther(100_000_000_000_000_000n - spent));
-  const slow = fakeNode({ on: { eth_sendRawTransactionSync: (params) => { slow.sent.push(params[0] as Hex); throw rpcError(4, 'not included in time'); } } });
+  const slow = fakeNode({ on: sentButNeverMined((raw) => slow.sent.push(raw)) });
   assert.equal((await post((await signedSale()).body, slow)).status, 502);
   assert.equal((await (await health(slow.client)).json()).gasSpentToday, formatEther(CAP_FEE), 'a timeout counts the worst case');
 });
