@@ -47,4 +47,5 @@ ETHGlobal asks teams to say where AI was used, down to files, and to commit spec
 | `apps/web/lib/server/` releaseHold guard, paid price passed through, fiat checkout age cap | claude-contracts | phase mode: ci + reviewer-security PASS; full review at the G4 phase gate | 012-P4-gateway-pay-integration |
 | `apps/web/` developers screen: API keys (hash only), webhook endpoints, /docs link | claude-frontend | phase mode: ci + reviewer-security PASS; full review at the G4 phase gate | 012-P4-web-developers |
 | `apps/web/` Vouchers, Reports + CSV, Settlements screens | claude-frontend | phase mode: ci PASS (Money: no); full review at the G4 phase gate | 013-P4-web-money-screens |
+| `apps/web/` G4 UX fixes: closed-link summary, retry on can't-open notices, plain empty states | claude-frontend | phase mode: ci PASS; findings from the G4 phase review part 1 (reviewer-ux-ui) | 014-P4-web-ux-fixes |
 | ⟨path⟩ | ⟨lane / agent⟩ | ⟨reviewers + human⟩ | ⟨NNN⟩ |
