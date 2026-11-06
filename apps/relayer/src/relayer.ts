@@ -353,20 +353,24 @@ function calldata(p: Payment): Hex {
   }
 }
 
-/** One parallel round of reads plus a gas-capped simulation; throws only if a read fails. */
+/** One parallel round of reads, a gas estimate and a gas-capped simulation; throws only if a read fails. */
 async function rpcChecks(client: RelayerClient, p: Payment): Promise<Reject | undefined> {
   const value = await signedValue(client, p);
-  const [used, code, balance, gasPrice, failedSimulation] = await Promise.all([
+  const [used, code, balance, gasPrice, failedSimulation, gasNeeded] = await Promise.all([
     client.readContract({ address: USDT, abi: USDT_ABI, functionName: 'authorizationState', args: [p.from, p.nonce] }),
     client.getCode({ address: p.from }),
     client.readContract({ address: USDT, abi: USDT_ABI, functionName: 'balanceOf', args: [p.from] }),
     client.getGasPrice(),
     simulate(client, p),
+    // the plain address, so viem doesn't fill nonce and fees first; an estimate reverts whenever the call would, and
+    // then the gas-capped simulation decides (claude-contracts Q19: a 3-holder invoice repayment needs 421,338 gas)
+    client.estimateGas({ account: client.account.address, to: p.target, data: calldata(p) }).catch(() => undefined),
   ]);
   if (used) return REPLAY;
   if (code !== undefined && code !== '0x') return reject(422, 'payer_has_code', 'the payer must be a plain account (no contract code)');
   if (balance < value) return reject(422, 'insufficient_funds', 'the payer does not hold enough USDT');
   if (gasPrice > FEES.maxFeePerGas) return reject(503, 'gas_price_cap', 'network gas price is above the relayer cap; retry later');
+  if (gasNeeded !== undefined && gasNeeded > FEES.gas) return reject(422, 'too_much_gas', `this payment needs ${gasNeeded} gas, above the relayer's ${FEES.gas} limit`);
   if (failedSimulation) return simulationReject(failedSimulation);
 }
 

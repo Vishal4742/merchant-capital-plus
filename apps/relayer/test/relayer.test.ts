@@ -399,9 +399,11 @@ test('a valid paySale is signed with capped gas and fees, sent once, its own rec
   assert.equal(node.calls[8], 'eth_sendRawTransaction');
   assert.ok(node.calls.slice(9).includes('mined'));
   assert.equal(node.calls.at(-1), 'eth_getTransactionReceipt', 'answered after our own receipt');
-  for (const never of ['eth_fillTransaction', 'eth_estimateGas', 'eth_sendRawTransactionSync']) {
+  for (const never of ['eth_fillTransaction', 'eth_sendRawTransactionSync']) {
     assert.ok(!node.calls.includes(never), `called ${never}`);
   }
+  // batch 022: one estimate, in the pre-check round, as a drain guard; the tx itself is still signed with the fixed 400k
+  assert.equal(node.calls.filter((c) => c === 'eth_estimateGas').length, 1);
 });
 
 test('ignores a client-supplied target or calldata: the tx always goes to MerchantPay as paySale', async () => {
