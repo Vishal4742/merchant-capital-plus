@@ -12,3 +12,4 @@ Log:
 - Ask claude-research: ARCHITECTURE §3 "Postgres advisory lock" → lease row with fencing (FR-REL-10).
 - 17:1x ci round 1 PASS (npm ci, 74/74, tsc 0, secret scan clean, .vercelignore ok, api/ never reaches pglite). Deploy smoke (every store statement + 3-way lease race) dry-run on PGlite ok. Human gate next.
 - 17:1x human gate: "Ship + deploy (Recommended)" (merge, deploy script: tables + restricted role + DATABASE_URL, relayer redeploy, /health; no money).
+- 17:2x deploy step (human yes): Neon refused ALTER ROLE NOSUPERUSER (only a superuser may set it) → dropped from 002 (a new role never is). Rerun: privileges rel_sent=true rel_lock=true app_gw_keys=false; not neon_superuser; store smoke on Neon as the role {winners:1, reserved ok, again replay, spent 1000, relock true}; DATABASE_URL on merchant-capital-relayer (Production, Secret). Nothing printed.

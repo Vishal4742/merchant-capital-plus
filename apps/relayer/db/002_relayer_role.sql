@@ -4,7 +4,7 @@
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'mcplus_relayer') THEN CREATE ROLE mcplus_relayer LOGIN; END IF;
 END $$;
-ALTER ROLE mcplus_relayer NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+ALTER ROLE mcplus_relayer NOCREATEDB NOCREATEROLE NOINHERIT; -- not SUPERUSER: a new role never is, and Neon refuses even NOSUPERUSER
 GRANT USAGE ON SCHEMA public TO mcplus_relayer;
 GRANT SELECT, INSERT ON rel_sent, rel_lock TO mcplus_relayer;
 GRANT UPDATE (fee_wei, reverted) ON rel_sent TO mcplus_relayer; -- settle
