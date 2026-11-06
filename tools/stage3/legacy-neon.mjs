@@ -30,7 +30,14 @@ if (!raw) {
   process.exit(1);
 }
 const DB = "wf_s2_web";
-const target = new URL(raw);
+let target;
+try {
+  target = new URL(raw);
+} catch {
+  // never the parser's error: it quotes the whole input, password included (review 051 S-L4)
+  console.log("FAIL  configuration: DATABASE_URL isn't a valid URL");
+  process.exit(1);
+}
 target.pathname = `/${DB}`;
 const TARGET = target.toString();
 const ORIGIN = "https://whiteflow.test";
@@ -204,6 +211,27 @@ const auditsFor = async (biz) => (await sql.query("SELECT actor_principal_id FRO
   check("3d: the removal is already waiting when the claim arrives (staged; business row held)",
     seen >= 2 && removed.status === 200 && claimed.status === 403 && link === null && audits.length === 0 && unused,
     `lock waits seen=${seen}; remove=${removed.status} claim=${claimed.status}; linked=${link !== null}; claim audits=${audits.length}; challenge unused=${unused}`);
+}
+
+// ---- 3e: Owner A claims while Owner B demotes A to Viewer (staged: the demotion already waiting) → A's claim is
+// refused (403) and nothing is linked; the demotion stands
+{
+  const wallet = privateKeyToAccount(generatePrivateKey());
+  const [a, b] = [await principal(), await principal()];
+  const biz = await business([a, b]);
+  const claim = await signedClaim(a, biz, wallet);
+  const holder = await hold("SELECT id FROM wf_businesses WHERE id = $1 FOR UPDATE", [biz]);
+  const { answers, seen } = await race([
+    { kind: "role", ctx: ctxOf(b, biz), args: { principalId: a.principalId, role: "viewer", idempotencyKey: "demote-a" } },
+    { kind: "claim", ctx: ctxOf(a, biz), args: claim },
+  ], holder, 2, { staged: true });
+  const [demoted, claimed] = answers;
+  const [{ role }] = await sql.query("SELECT role FROM wf_memberships WHERE business_id = $1 AND principal_id = $2", [biz, a.principalId]);
+  const link = await linkOf(biz);
+  const unused = (await consumedOf(claim.nonce)) === null;
+  check("3e: a claim races the demotion of its Owner (staged; business row held)",
+    seen >= 2 && demoted.status === 200 && role === "viewer" && claimed.status === 403 && link === null && unused,
+    `lock waits seen=${seen}; demote=${demoted.status} claim=${claimed.status}; A's role=${role}; linked=${link !== null}; challenge unused=${unused}`);
 }
 
 const failed = results.filter((ok) => !ok).length;

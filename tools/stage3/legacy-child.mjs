@@ -1,4 +1,5 @@
-// Child process for legacy-neon.mjs (batch 051): runs ONE service call (a legacy claim, or f3's member removal) through
+// Child process for legacy-neon.mjs (batch 051): runs ONE service call (a legacy claim, or f3's member removal or role
+// change) through
 // apps/web's real lib/server/db.ts (Neon HTTP driver, production adapter) with a server-built AuthContext. DATABASE_URL
 // (the isolated target) and PUBLIC_ORIGIN arrive in this process's environment only. Barrier: prints READY, waits for
 // "GO" on stdin, then runs, prints one JSON line {ok, status, error, result} and exits.
@@ -21,6 +22,7 @@ const ctx = {
 const run = {
   claim: () => legacy.claimLegacyMerchant(ctx, op.args, { obligations: async () => false }),
   remove: () => businesses.removeMember(ctx, op.args),
+  role: () => businesses.setMemberRole(ctx, op.args),
 }[op.kind];
 
 const rl = createInterface({ input: process.stdin });

@@ -151,11 +151,17 @@ export interface ClaimResult {
   v1Obligations: boolean;
 }
 
-/** The answer for a challenge that was already used: the same result if it linked this wallet here, else 409. */
-async function replay(businessId: string, address: string): Promise<ClaimResult> {
+/** The claim's answer if this workspace is linked to `address` (by this challenge or another), else null. */
+async function linkedHere(businessId: string, address: string): Promise<ClaimResult | null> {
   const [b] = await query<{ legacy_merchant: string | null; v1_obligations: boolean }>("SELECT legacy_merchant, v1_obligations FROM wf_businesses WHERE id = $1", [businessId]);
-  if (b?.legacy_merchant !== address) throw new HttpError(409, EXPIRED);
-  return { merchant: getAddress(address), v1Obligations: b.v1_obligations };
+  return b?.legacy_merchant === address ? { merchant: getAddress(address), v1Obligations: b.v1_obligations } : null;
+}
+
+/** The answer for a challenge that was already used: the same result if this wallet is linked here, else 409. */
+async function replay(businessId: string, address: string): Promise<ClaimResult> {
+  const here = await linkedHere(businessId, address);
+  if (!here) throw new HttpError(409, EXPIRED);
+  return here;
 }
 
 async function recoverSigner(message: string, signature: string): Promise<string> {
@@ -216,9 +222,10 @@ export async function claimLegacyMerchant(
   const [r] = rows;
   if (r?.claimed === 1) return { merchant: getAddress(c.address), v1Obligations };
   if (r?.is_owner === 0) throw new Forbidden(); // a concurrent change removed the caller's Owner role (R2-2)
-  // nothing claimed: a concurrent submission of this challenge won (same answer), or the workspace was linked meanwhile
-  const [after] = await query<{ consumed_at: string | null }>("SELECT consumed_at::text FROM wf_legacy_claim_challenges WHERE nonce = $1", [nonce]);
-  if (after?.consumed_at) return replay(owner.businessId, c.address);
+  // nothing claimed: a concurrent claim won. If it linked this same wallet here (this challenge or another of the same
+  // wallet), the link asked for exists: the same answer (review C-L6). Otherwise the workspace now has another wallet.
+  const here = await linkedHere(owner.businessId, c.address);
+  if (here) return here;
   throw new HttpError(409, ALREADY_LINKED);
 }
 
@@ -267,6 +274,8 @@ export interface DashboardWorkspace {
 export async function dashboardWorkspace(token: string | undefined): Promise<DashboardWorkspace | null> {
   if (!token) return null;
   try {
+    // a Request that carries only the session cookie, so pages and API routes share contextFromRequest's one check
+    // (expiry, revocation, membership re-read) instead of a second copy of it; the URL is never fetched
     const ctx = await contextFromRequest(new Request("http://dashboard.invalid/", { headers: { cookie: `${WF_SESSION_COOKIE}=${token}` } }));
     if (ctx.businessId === null || ctx.role === null) return null;
     const merchant = await linkedMerchantOf(ctx.businessId);
