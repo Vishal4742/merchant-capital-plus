@@ -3,7 +3,7 @@
 // ponytail: an HTTP call to ourselves while claude-contracts' backend lives on its own branch. Once it is on main, call
 // lib/server/{links,pages}.ts directly: one hop less, and on Vercel (which rewrites x-forwarded-for on our own call)
 // the public routes' per-IP rate limit then sees each payer instead of our server.
-import { GatewayError, gatewayClient, type CheckoutBody } from "./gateway-client.ts";
+import { GatewayError, gatewayClient, type CheckoutBody, type Transport } from "./gateway-client.ts";
 import { checkoutErrorCode, type CheckoutError } from "./gateway-forms.ts";
 import { previewFetch, previewOn } from "./gateway-preview.ts";
 
@@ -25,13 +25,16 @@ export function selfOrigin(env: Record<string, string | undefined> = process.env
   return `http://127.0.0.1:${env.PORT ?? "3000"}`;
 }
 
-/** The gateway client for one incoming request (the preview fixtures when GATEWAY_PREVIEW=1 off Vercel). */
-export function gatewayFor(h: Headers) {
+/** How our server calls the gateway for one incoming request (the preview fixtures when GATEWAY_PREVIEW=1 off Vercel). */
+export function transportFor(h: Headers): Transport {
   const base = selfOrigin();
-  if (previewOn()) return gatewayClient({ base, fetch: previewFetch });
+  if (previewOn()) return { base, fetch: previewFetch };
   const headers = Object.fromEntries(FORWARD.flatMap((name) => (h.get(name) ? [[name, h.get(name) as string]] : [])));
-  return gatewayClient({ base, headers });
+  return { base, headers };
 }
+
+/** The gateway client for one incoming request. */
+export const gatewayFor = (h: Headers) => gatewayClient(transportFor(h));
 
 /** 303 to a path on this site (relative, so the customer stays on the origin they came from). */
 export const seeOther = (location: string) => new Response(null, { status: 303, headers: { location, "cache-control": "no-store" } });

@@ -76,11 +76,12 @@ test("the chart's line spans the box and ends at the last value; an all-zero ser
   assert.ok(chartPaths([0, 0], 600, 220, 24).line.endsWith("196.0"));
 });
 
-test("formatWbt: 6 decimals, half up, no exponent, and a tiny fee isn't shown as 0", () => {
+test("formatWbt: a fixed 6 decimals, half up, no exponent, and a tiny fee isn't shown as 0", () => {
   assert.equal(formatWbt(21_000_000_000_000n), "0.000021");
+  assert.equal(formatWbt(1_040_122_983_005_341n), "0.001040", "AT-1's real fee keeps its trailing zero");
   assert.equal(formatWbt(123_456_789_012_345_678n), "0.123457");
-  assert.equal(formatWbt(1_500_000_000_000_000_000n), "1.5");
-  assert.equal(formatWbt(0n), "0");
+  assert.equal(formatWbt(1_500_000_000_000_000_000n), "1.500000");
+  assert.equal(formatWbt(0n), "0.000000");
   assert.equal(formatWbt(1n), "<0.000001");
   assert.equal(formatWbt(500_000_000_000n), "0.000001", "half a step rounds up");
 });

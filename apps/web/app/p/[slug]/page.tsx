@@ -31,7 +31,7 @@ async function PageLoader({ params, searchParams }: PageProps<"/p/[slug]">) {
   } catch (error) {
     if (error instanceof GatewayError && error.status === 404) notFound();
     return (
-      <HostedNotice eyebrow="Payment page" title="We can't open this page right now">
+      <HostedNotice eyebrow="Payment page" title="We can't open this page right now" action={{ href: `/p/${slug}`, label: "Try again" }}>
         Nothing was charged. Try again in a minute.
       </HostedNotice>
     );

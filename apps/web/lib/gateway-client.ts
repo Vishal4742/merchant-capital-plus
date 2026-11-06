@@ -224,3 +224,6 @@ export type GatewayClient = ReturnType<typeof gatewayClient>;
 
 /** The sentence to show for any failure from the client. */
 export const errorText = (error: unknown) => (error instanceof GatewayError ? error.message : "Something went wrong. Try again in a minute.");
+
+/** The parsers, the error rule and the transport limits, for the other dashboard clients (lib/gateway-money.ts). */
+export const wire = { bad, record, text, nullable, decimal, count, flag, listOf, plainError, OFFLINE, TIMEOUT_MS };

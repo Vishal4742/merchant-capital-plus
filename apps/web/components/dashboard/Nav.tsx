@@ -10,21 +10,21 @@ const SECTIONS = [
       { key: "links", label: "Links", href: "/merchant/links" },
       { key: "pages", label: "Pages", href: "/merchant/pages" },
       { key: "invoices", label: "Invoices", href: "/merchant#invoices" },
-      { key: "vouchers", label: "Vouchers" },
+      { key: "vouchers", label: "Vouchers", href: "/merchant/vouchers" },
     ],
   },
   {
     title: "Money",
     items: [
-      { key: "reports", label: "Reports" },
-      { key: "settlements", label: "Settlements" },
+      { key: "reports", label: "Reports", href: "/merchant/reports" },
+      { key: "settlements", label: "Settlements", href: "/merchant/settlements" },
       { key: "capital", label: "Capital" },
     ],
   },
   {
     title: "Developers",
     items: [
-      { key: "keys", label: "API keys" },
+      { key: "keys", label: "API keys", href: "/merchant/developers" },
       { key: "webhooks", label: "Webhooks" },
       { key: "docs", label: "Docs", href: "/docs" },
     ],

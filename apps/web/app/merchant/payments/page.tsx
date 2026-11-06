@@ -9,7 +9,7 @@ import { Shell } from "@/components/dashboard/Shell";
 import { Refund } from "@/components/merchant/Refund";
 import { authSecret } from "@/lib/auth";
 import { payConfig } from "@/lib/config";
-import { confirmed, formatWbt, paymentRows } from "@/lib/dashboard";
+import { confirmed, formatWbt, paymentRows, WBT_HINT } from "@/lib/dashboard";
 import { currentMerchant } from "@/lib/merchant-session";
 import { isHex } from "viem";
 import { paidLogs, readPayment, readTxFee, type PaymentRecord } from "@/lib/onchain";
@@ -82,7 +82,7 @@ async function Payments() {
           <p className="text-sm text-ink-muted">
             Your customers paid no network fee. We covered <span className="data text-ink">{formatWbt(covered)} WBT</span> across {known.length}{" "}
             {known.length === 1 ? "payment" : "payments"}
-            {known.length < payments.length ? `; the fee of ${payments.length - known.length} more couldn't be read just now` : ""}.
+            {known.length < payments.length ? `; the fee of ${payments.length - known.length} more couldn't be read just now` : ""}. {WBT_HINT}
           </p>
         )}
         <section aria-labelledby="all-payments" className={`${card} p-0 md:p-0`}>

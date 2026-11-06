@@ -1,12 +1,14 @@
-// GET /api/v1/payments?limit&cursor: the shop lists its payments with its secret key (FR-GW-5, the SDK's payments.list).
-// Which payments: the Paid log index for MERCHANT_ADDRESS (untrusted: ids only). What each one is: payments(id) on chain.
+// GET /api/v1/payments?limit&cursor: the shop lists its payments with its secret key (FR-GW-5, the SDK's payments.list):
+// SHOP_API_KEY for the demo shop, or a merchant's own sk_test_ key (batch 011, FR-GW-6).
+// Which payments: the Paid log index for the key's merchant (untrusted: ids only). What each one is: payments(id) on chain.
 // txHash, invoiceId and paidAt come from the index's Paid log, not the chain (security review 006 F7): labels for
 // finding the payment, never money. The amount, what was refunded and the merchant are read on chain.
 // ponytail: a payment shows once Blockscout has indexed it (seconds after the receipt); GET /api/v1/sessions/:id
 // answers sooner for one checkout.
-import { merchantConfig, payConfig, shopAuthorized } from "../../../../lib/config.ts";
+import { payConfig } from "../../../../lib/config.ts";
 import { paidLogs, readPayment } from "../../../../lib/onchain.ts";
 import { listPayments } from "../../../../lib/sessions.ts";
+import { shopCaller } from "../../../../lib/shop-auth.ts";
 import { plainUsdt as usdt } from "../../../../lib/usdt.ts"; // one API amount format across lanes: "1234.50"
 
 const DEFAULT_LIMIT = 20;
@@ -16,9 +18,8 @@ const fail = (status: number, error: string) => Response.json({ error }, { statu
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
 export async function GET(request: Request) {
-  const config = merchantConfig();
-  if (!config) return fail(503, "Checkout isn't set up on this server.");
-  if (!shopAuthorized(request, config.apiKey)) return fail(401, "Missing or wrong API key.");
+  const shop = await shopCaller(request);
+  if ("error" in shop) return fail(shop.status, shop.error);
   const pay = payConfig();
   if (!pay) return fail(503, "Payments aren't connected on this server yet.");
 
@@ -30,17 +31,17 @@ export async function GET(request: Request) {
   const cursor = cursorText === null ? null : BigInt(cursorText);
 
   try {
-    const logs = await paidLogs(pay.merchantPay, { merchant: config.merchant });
+    const logs = await paidLogs(pay.merchantPay, { merchant: shop.merchant });
     // newest first by payment id (MerchantPay counts up), one row per id, starting after the cursor
     const rest = [...new Map(logs.map((log) => [log.paymentId, log])).values()]
       .filter((log) => cursor === null || log.paymentId < cursor)
       .sort((a, b) => (a.paymentId < b.paymentId ? 1 : -1));
     const page = rest.slice(0, limit);
     const records = await Promise.all(page.map((log) => readPayment(pay.merchantPay, log.paymentId)));
-    const sessions = new Map(listPayments(config.merchant).map(({ session, payment }) => [payment.paymentId, session]));
+    const sessions = new Map(listPayments(shop.merchant).map(({ session, payment }) => [payment.paymentId, session]));
     const data = page.flatMap((log, i) => {
       const record = records[i];
-      if (record.gross === 0n || !same(record.merchant, config.merchant)) return []; // the index named a payment that isn't this merchant's
+      if (record.gross === 0n || !same(record.merchant, shop.merchant)) return []; // the index named a payment that isn't this merchant's
       const session = sessions.get(log.paymentId.toString());
       return [
         {

@@ -4,7 +4,7 @@
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
-import { HostedNotice, LinkSheet } from "@/components/gateway/Hosted";
+import { HostedNotice, LinkSheet, LinkSummary } from "@/components/gateway/Hosted";
 import { StaticScene } from "@/components/StaticScene";
 import { GatewayError, SLUG, type PublicLink } from "@/lib/gateway-client";
 import { checkoutMessage, closedLinkCopy } from "@/lib/gateway-forms";
@@ -33,15 +33,16 @@ async function LinkLoader({ params, searchParams }: PageProps<"/l/[slug]">) {
   } catch (error) {
     if (error instanceof GatewayError && error.status === 404) notFound();
     return (
-      <HostedNotice eyebrow="Payment link" title="We can't open this link right now">
+      <HostedNotice eyebrow="Payment link" title="We can't open this link right now" action={{ href: `/l/${slug}`, label: "Try again" }}>
         Nothing was charged. Try again in a minute.
       </HostedNotice>
     );
   }
   if (link.status !== "active") {
     const copy = closedLinkCopy(link.status, link.merchant_name);
+    // ponytail: the public link has no paid time or receipt id yet (asked of claude-contracts), so no receipt link here
     return (
-      <HostedNotice eyebrow={link.merchant_name} title={copy.title}>
+      <HostedNotice eyebrow={link.merchant_name} title={copy.title} detail={<LinkSummary link={link} />} action={{ href: "/", label: "About Merchant Capital+" }}>
         {copy.body}
       </HostedNotice>
     );
