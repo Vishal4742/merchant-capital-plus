@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Version | 2.0 (2026-11-06 02:35: pivot to a stablecoin payment gateway for international merchants; financing kept as the Capital tab) |
-| Changes | 1.1 (human approved 2026-11-05 19:50): FR-TOK-8 → M, Phase 4 (AT-8 needs it at G4); FR-PRIV-1 and FR-PRIV-4 reworded (pay and checkout pages make no browser chain reads); CON-8 added (demo funding by seed script); DEP-3 pass criteria (Privy then failed them, guest wallet); demo amounts divided by 10 in AT-3–AT-7 to fit the test USDT we can collect; FR-PRIV-4 lists the Nym worker's own traffic (human 21:18); NFR-12–14 speed budgets for web and relayer (human 22:28: "the system should be fast"); FR-PAY-15 merchant wallet sign-in (human asked in the frontend session, 22:5x); FR-PAY-16 owner sweep of stray USDT (human 23:40, contracts gate); demo amounts ÷100 in AT-3–AT-7 (human 23:58: ~110 test USDT available); FR-ADV-7 and FR-INV-6 cut (human 00:34); FR-KYC-2/3, FR-PAY-13/14 and FR-INV-7 cut, contracts freeze after G4 (human 02:02); FR-GW-10 network-fee column (claude-research, delegated by the human 06:43); FR-ARK-4 debtor left out, FR-PRIV-4 lists the Capital server reads, AT-8 pass by dry run + the recorded revert (claude-research from the Capital build pack, delegated, 10:42) |
+| Changes | 2.1 (human 2026-11-06 16:09: 'i want the mcp … and fix the other things'): FR-MCP-1..4 + AT-16 (assistant connector), FR-ARK-7 (checkout reads the voucher's Arkiv entity), FR-REL-10 (relayer limits across instances). 1.1 (human approved 2026-11-05 19:50): FR-TOK-8 → M, Phase 4 (AT-8 needs it at G4); FR-PRIV-1 and FR-PRIV-4 reworded (pay and checkout pages make no browser chain reads); CON-8 added (demo funding by seed script); DEP-3 pass criteria (Privy then failed them, guest wallet); demo amounts divided by 10 in AT-3–AT-7 to fit the test USDT we can collect; FR-PRIV-4 lists the Nym worker's own traffic (human 21:18); NFR-12–14 speed budgets for web and relayer (human 22:28: "the system should be fast"); FR-PAY-15 merchant wallet sign-in (human asked in the frontend session, 22:5x); FR-PAY-16 owner sweep of stray USDT (human 23:40, contracts gate); demo amounts ÷100 in AT-3–AT-7 (human 23:58: ~110 test USDT available); FR-ADV-7 and FR-INV-6 cut (human 00:34); FR-KYC-2/3, FR-PAY-13/14 and FR-INV-7 cut, contracts freeze after G4 (human 02:02); FR-GW-10 network-fee column (claude-research, delegated by the human 06:43); FR-ARK-4 debtor left out, FR-PRIV-4 lists the Capital server reads, AT-8 pass by dry run + the recorded revert (claude-research from the Capital build pack, delegated, 10:42) |
 | Status | Approved scope, locked by the human 2026-11-05 |
 | Related | ARCHITECTURE.md (design and ABI), PHASES.md (delivery plan), `research_notes/Mumbai hackathon idea validation/build_H1_merchant_capital.md` (design detail and sources), HANDOFF.md (decisions, event facts) |
 | Change control | Requirements change only through HANDOFF.md + an agentbus message; IDs are never reused |
@@ -121,6 +121,7 @@ Priority: **M** = must (never cut), **S** = should, **C** = could (first to cut)
 | FR-REL-7 | Payment functions are permissionless, so anyone can submit a signed authorization if the relayer is down | M | 2 |
 | FR-REL-8 | Collected fees are swapped to WBT on YetiTrade to refill the relayer | C | 5 |
 | FR-REL-9 | The merchant contract can be paused by the owner | S | 2 |
+| FR-REL-10 | The send lock, daily gas budget and per-payer limits hold across all relayer instances (shared Postgres lock and counters), not per process | S | 5 |
 
 ### 3.3 Revenue advance (Whitechain Tokenize, our differentiator)
 | ID | Requirement | Pri | Phase |
@@ -172,6 +173,7 @@ Priority: **M** = must (never cut), **S** = should, **C** = could (first to cut)
 | FR-ARK-4 | Offers contain no personal data (the debtor is left out of the entity entirely) | M | 4 |
 | FR-ARK-5 | An offer's status is updated when it is funded | S | 4 |
 | FR-ARK-6 | A merchant stats entity (30-day sales, unique payers) refreshes hourly | C | 5 |
+| FR-ARK-7 | At checkout the server reads the code's live Arkiv entity (by its keyed hash, from our writer) and refuses a code whose entity is missing or expired. If Arkiv can't be reached it refuses the code with a plain reason; the customer can still pay without a code | M | 5 |
 
 ### 3.8 Private reads (EF Anon-RPC)
 | ID | Requirement | Pri | Phase |
@@ -200,6 +202,14 @@ Priority: **M** = must (never cut), **S** = should, **C** = could (first to cut)
 | FR-GW-12 | **Discount vouchers:** the merchant creates codes (percent or fixed off, expiry, usage limit); the customer applies one at checkout; each code is an Arkiv entity that expires with the code, and redemptions are counted on our server | M | 4 |
 | FR-GW-13 | **Gift vouchers:** a customer buys a prepaid USDT voucher that someone else redeems at that merchant | C | 5 |
 | FR-GW-14 | **Test mode everywhere:** every page shows a "Test mode · Whitechain testnet" badge; no mainnet path exists | M | 4 |
+
+### 3.10 Assistant connector (MCP, v2.1)
+| ID | Requirement | Pri | Phase |
+|---|---|---|---|
+| FR-MCP-1 | A local MCP server (`packages/mcp`, stdio, the official MCP TypeScript SDK) signs in with the merchant's own `sk_test_` key from an environment variable and calls only the public gateway API; the web app is unchanged | M | 5 |
+| FR-MCP-2 | Tools: `create_checkout` (amount, currency, description → hosted checkout URL; creates no payment), `get_checkout` (status, amount, and once paid the tx hash with its explorer link), `list_payments` (recent payments with amount, refunded and tx link), `sales_summary` (gross, refunded and count for a date range, computed from `list_payments`) | M | 5 |
+| FR-MCP-3 | No tool moves money, signs, refunds or changes keys, wallets or webhooks. The key never appears in tool output or logs. Inputs are validated (amount format, currency list, limits) and API errors come back as a plain reason | M | 5 |
+| FR-MCP-4 | The README gives one `claude mcp add` command and a Claude Desktop config block | S | 5 |
 
 ## 4. Non-functional requirements
 | ID | Category | Requirement | How it's verified |
@@ -259,10 +269,11 @@ Priority: **M** = must (never cut), **S** = should, **C** = could (first to cut)
 | AT-9 | The investor offer book loads | Offers come from Arkiv; expired offers are gone; meter shows private reads |
 | AT-10 | The relayer is asked to submit an invalid or unprofitable call | Rejected before sending; no gas spent |
 | AT-11 | A customer pays a 25 USD payment link with 0 WBT | One tx on the explorer; the link shows Paid; the merchant's report and settlement list include it |
-| AT-12 | A payment page with two items is bought with a discount code | Arkiv holds the code entity; the price is reduced; the code's use count rises by one |
+| AT-12 | A payment page with two items is bought with a discount code | Arkiv holds the code entity and the checkout read it (FR-ARK-7); the price is reduced; the code's use count rises by one |
 | AT-13 | A 20 EUR item is bought | Checkout showed the EUR→USDT rate and its time; the USDT paid matches the locked quote |
 | AT-14 | The demo shop adds the gateway with the payment button or the SDK | Integration code ≤ 20 lines; a sale completes; the webhook arrives and its signature verifies |
 | AT-15 | The merchant opens Reports for today after AT-11–AT-14 and one refund | Gross, fees, refunds and count match the chain; the CSV has the same rows |
+| AT-16 | In Claude Code with the MCP server added, the merchant asks for a 5 USD checkout, a 0-WBT customer pays the URL, and the merchant asks whether it was paid | `get_checkout` returns Paid with the same tx hash the explorer shows; `list_payments` includes it; no tool output contains the key |
 
 ---
 
