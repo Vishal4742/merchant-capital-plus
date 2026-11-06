@@ -1,22 +1,29 @@
 // Merchant dashboard home (FR-PAY-15, FR-REL-6, FR-PAY-1/2 invoices, FR-PAY-8 refunds) in the approved gateway v2
-// design: the Shell, a night band, six figures, the gross chart, quick actions, invoices, payments and the relayer.
+// design: the Shell, a night band, Get started (batch 024), six figures, the gross chart, quick actions, invoices,
+// payments and the relayer. Any wallet can sign in; the demo shop's wallet also sees its invoices.
 // Behind "Sign in with your wallet" (SIWE), for the signed-in wallet only, read on our server. Every figure comes from
 // payments confirmed on chain; one we can't read shows "—", never a made-up number.
 import { connection } from "next/server";
-import { Suspense, type ReactNode } from "react";
+import { Suspense } from "react";
+import type { Address } from "viem";
 import { GrossChart, type GrossRange } from "@/components/dashboard/GrossChart";
 import { Reveal } from "@/components/dashboard/Reveal";
+import { GetStarted } from "@/components/dashboard/GetStarted";
 import { Shell } from "@/components/dashboard/Shell";
+import { Account, PlainPage, SignedOut } from "@/components/gateway/Frame";
 import { Invoices, type InvoiceRow } from "@/components/merchant/Invoices";
 import { Refund } from "@/components/merchant/Refund";
-import { SignIn, SignOut } from "@/components/merchant/SignIn";
 import { StaticScene } from "@/components/StaticScene";
 import { authSecret } from "@/lib/auth";
 import { currentMerchant } from "@/lib/merchant-session";
 import { merchantConfig, payConfig } from "@/lib/config";
 import { change, confirmed, dailyGross, figures, paymentRows, type Confirmed } from "@/lib/dashboard";
+import { logFailure } from "@/lib/gateway-server";
+import { setupSteps } from "@/lib/onboarding";
 import { merchantInvoices, paidLogs, readPayment, readRelayFee, type Invoice, type PaidLog, type PaymentRecord } from "@/lib/onchain";
 import { relayerHealth } from "@/lib/relay";
+import { listKeys } from "@/lib/server/keys";
+import { linkStatus, listLinks } from "@/lib/server/links";
 import { listPayments } from "@/lib/sessions";
 import { EXPLORER, formatUsdt } from "@/lib/usdt";
 
@@ -87,11 +94,17 @@ function home(payments: Confirmed[], fee: bigint | null) {
   const now = Date.now();
   const f = figures(payments, now);
   const vsYesterday = change(f.grossToday, f.grossYesterday);
+  // before the first payment there is nothing to compare or refund: calm zeros with a hint, never "—" (batch 024)
+  const none = payments.length === 0;
   const tiles: Tile[] = [
     { label: "Gross today", value: formatUsdt(f.grossToday), sub: vsYesterday === null ? "USDT, since midnight IST" : `${arrow(vsYesterday)}% vs yesterday`, tone: toneOf(vsYesterday) },
-    { label: "Payments", value: String(f.countToday), sub: `${arrow(f.countToday - f.countYesterday)} vs yesterday`, tone: toneOf(f.countToday - f.countYesterday) },
+    none
+      ? { label: "Payments", value: "0", sub: "Your first one shows here" }
+      : { label: "Payments", value: String(f.countToday), sub: `${arrow(f.countToday - f.countYesterday)} vs yesterday`, tone: toneOf(f.countToday - f.countYesterday) },
     { label: "Fees", value: fee === null ? "—" : formatUsdt(fee * BigInt(f.countToday)), sub: fee === null ? "can't read the fee now" : `${formatUsdt(fee)} each, today` },
-    { label: "Refunds", value: f.refunded === null ? "—" : formatUsdt(f.refunded), sub: `${f.refundedPayments} ${f.refundedPayments === 1 ? "payment" : "payments"}, all time` },
+    none
+      ? { label: "Refunds", value: formatUsdt(0n), sub: "None yet" }
+      : { label: "Refunds", value: f.refunded === null ? "—" : formatUsdt(f.refunded), sub: `${f.refundedPayments} ${f.refundedPayments === 1 ? "payment" : "payments"}, all time` },
     { label: "Settled", value: "T+0", sub: "in the payment's transaction" },
     { label: "Vouchers used", value: "—", sub: "Soon" },
   ];
@@ -116,23 +129,7 @@ function home(payments: Confirmed[], fee: bigint | null) {
   return { tiles, ranges: [range(7), range(30)], when, today: new Date(now).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }) };
 }
 
-function Signedout({ children }: { children: ReactNode }) {
-  return (
-    <main className="mx-auto max-w-6xl px-4 pt-6 pb-16">
-      <header className="flex items-center justify-between gap-4">
-        {/* a full load: home must not run inside this page's CSP (security review 005 F-N4) */}
-        {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
-        <a href="/" className="title inline-flex min-h-11 items-center whitespace-nowrap">
-          Merchant Capital+
-        </a>
-        <span className="label text-ink-muted">Merchant dashboard</span>
-      </header>
-      {children}
-    </main>
-  );
-}
-
-function Band({ shop, when }: { shop: string; when: string }) {
+function Band({ shop, when, note }: { shop: string; when: string; note?: string }) {
   return (
     // taller on a phone, where the greeting takes two lines, with a lighter wash so the scene shows (UX review 006 F1)
     <div className="relative h-[180px] overflow-hidden bg-scene-night text-glass-ink md:h-[150px]">
@@ -148,9 +145,21 @@ function Band({ shop, when }: { shop: string; when: string }) {
         <h1 className="mt-1.5 text-[32px] leading-[1.05] font-medium tracking-[-0.035em] md:text-[40px]">
           Tonight at <span className="emphasis">{shop}.</span>
         </h1>
+        {note && <p className="mt-1.5 text-sm opacity-80">{note}</p>}
       </div>
     </div>
   );
+}
+
+/** What Get started needs that the home doesn't already read: the merchant's links and keys (null: unreadable). */
+async function setupFacts(merchant: Address) {
+  const unread = (what: string) => (error: unknown) => {
+    logFailure(`get started: ${what}`, error);
+    return null;
+  };
+  const [links, keys] = await Promise.all([listLinks(merchant).catch(unread("links")), listKeys(merchant).catch(unread("keys"))]);
+  const open = links?.find((link) => linkStatus(link) === "active");
+  return { links: links?.length ?? null, keys: keys?.length ?? null, payHref: open ? `/l/${open.slug}` : null };
 }
 
 const action = "lift flex min-h-12 w-full items-center justify-between gap-3 rounded-[14px] border border-hairline px-4 py-3 text-left text-[15px]";
@@ -158,24 +167,19 @@ const action = "lift flex min-h-12 w-full items-center justify-between gap-3 rou
 async function Dashboard() {
   await connection(); // live data on every request, never a build-time snapshot
   const merchant = await currentMerchant();
-  if (!merchant) {
-    return (
-      <Signedout>
-        <SignIn available={Boolean(authSecret())} />
-      </Signedout>
-    );
-  }
+  if (!merchant) return <SignedOut available={Boolean(authSecret())} />;
   const config = merchantConfig();
   if (!config) {
     return (
-      <Signedout>
+      <PlainPage>
         <section className={`${card} mt-12`}>
           <h1 className="title">The shop isn&apos;t set up on this server</h1>
           <p className="text-ink-muted">Set MERCHANT_ADDRESS and SHOP_API_KEY in the server environment, then reload.</p>
         </section>
-      </Signedout>
+      </PlainPage>
     );
   }
+  const setup = setupFacts(merchant); // its own reads, alongside the chain's
   const pay = payConfig();
   const [health, invoices, logs, fee] = pay
     ? await Promise.all([
@@ -195,26 +199,14 @@ async function Dashboard() {
   const { tiles, ranges, when, today } = home(payments, fee);
   // the owner may change relayFee (≤ 0.25 USDT): every fee the merchant reads comes from the chain (code review 005 F7)
   const feeText = fee === null ? null : formatUsdt(fee);
-  const account = (
-    <>
-      <span className="data">
-        {merchant.slice(0, 6)}…{merchant.slice(-4)}
-      </span>
-      <SignOut />
-    </>
-  );
+  const steps = setupSteps({ ...(await setup), payments: payments.length });
+  const shopWallet = `${config.merchant.slice(0, 6)}…${config.merchant.slice(-4)}`;
 
   return (
-    <Shell active="home" account={account}>
-      <Band shop={shop} when={when} />
+    <Shell active="home" account={<Account merchant={merchant} />}>
+      <Band shop={shop} when={when} note={payments.length === 0 ? "No sales yet. Your first one shows here the moment it's paid." : undefined} />
       <div className="grid gap-6 px-4 py-6 md:px-8 md:py-7">
-        {!isShopWallet && (
-          // one notice for both facts (UX review 006 F5); /pay serves only the shop's own invoices (human, 2026-11-06 02:3x)
-          <p role="note" className="rounded-[14px] border border-current px-4 py-3 text-sm text-warning">
-            This wallet isn&apos;t the demo shop&apos;s. The shop is paid to {config.merchant.slice(0, 6)}…{config.merchant.slice(-4)}, so its test payments and invoices
-            won&apos;t show here. Sign in with that wallet to see them and send invoices.
-          </p>
-        )}
+        <GetStarted steps={steps} />
 
         <section aria-label="Today at a glance" className="grid grid-cols-2 gap-px overflow-hidden rounded-[20px] border border-hairline bg-hairline md:grid-cols-3 xl:grid-cols-6">
           {tiles.map((tile) => (
@@ -237,8 +229,9 @@ async function Dashboard() {
             <ul className="grid gap-2.5">
               <li>
                 <form method="post" action="/api/demo-checkout">
+                  {/* the demo checkout is always the demo shop's: from another wallet it says so (batch 024) */}
                   <button type="submit" className={`${action} cursor-pointer hover:border-accent`}>
-                    Open a test checkout <span className="eyebrow text-ink-muted">Test</span>
+                    {isShopWallet ? "Open a test checkout" : "Try the demo shop's checkout"} <span className="eyebrow text-ink-muted">{isShopWallet ? "Test" : "Demo"}</span>
                   </button>
                 </form>
               </li>
@@ -268,13 +261,27 @@ async function Dashboard() {
           </section>
         </div>
 
-        {!pay ? (
-          <section className={card}>
-            <span className="label text-ink-muted">Invoices</span>
-            <p className="text-sm text-ink-muted">Invoices open when MerchantPay is connected to this server.</p>
-          </section>
+        {pay && isShopWallet ? (
+          <Invoices merchant={merchant} merchantPay={pay.merchantPay} invoices={invoices ? invoiceRows(invoices, logs ?? []) : null} today={today} feeText={feeText} />
         ) : (
-          isShopWallet && <Invoices merchant={merchant} merchantPay={pay.merchantPay} invoices={invoices ? invoiceRows(invoices, logs ?? []) : null} today={today} feeText={feeText} />
+          // the menu's Invoices lands here too; /pay serves only the demo shop's invoices (human, 2026-11-06 02:3x)
+          <section className={`${card} scroll-mt-4`} aria-labelledby="invoices">
+            <h2 id="invoices" className="label text-ink-muted">
+              Invoices
+            </h2>
+            {pay ? (
+              <p className="text-sm text-ink-muted">
+                In this test build, invoices go out from the demo shop&apos;s wallet only ({config.merchantName}, <span className="data">{shopWallet}</span>). To bill a
+                customer from your own wallet, send them a{" "}
+                <a href="/merchant/links" className="text-accent underline underline-offset-4">
+                  payment link
+                </a>
+                .
+              </p>
+            ) : (
+              <p className="text-sm text-ink-muted">Invoices aren&apos;t switched on for this server yet. Payment links work without them.</p>
+            )}
+          </section>
         )}
 
         <section className="rounded-[20px] border border-hairline bg-surface" aria-labelledby="payments">
@@ -282,7 +289,11 @@ async function Dashboard() {
             Latest payments
           </h2>
           {payments.length === 0 ? (
-            <p className="px-6 pt-3 pb-6 text-sm text-ink-muted">No payments yet. Open a test checkout above and pay it to see one land here.</p>
+            <p className="px-6 pt-3 pb-6 text-sm text-ink-muted">
+              {isShopWallet
+                ? "No payments yet. Open a test checkout above and pay it to see one land here."
+                : "No payments yet. Pay your own payment link with test USDT and it lands here."}
+            </p>
           ) : (
             // a card per payment on a phone, a table row from sm up: Refund is never off screen (UX review 005 F2)
             <ul className="mt-3 grid divide-y divide-hairline text-sm sm:table sm:w-full sm:divide-y-0 sm:border-collapse">
