@@ -1,0 +1,68 @@
+# WhiteFlow — stage tracker (the one durable tracker)
+
+Owner's staged plan (2026-11-06): one active stage at a time; ≤ 3 agents per stage (Builder A, Builder B on independent files, independent reviewer/tester); one writer per file; no later-stage work while a stage is open. Supporting detail: `notes/phase-W0-baseline.md` (baseline + matrix), `docs/SRS-v3.0-WhiteFlow-PROPOSAL.md` (requirements proposal), `.batches/031-…/` (Stage 2 evidence). Statuses: verified locally · verified on testnet · implemented, unverified · missing · externally blocked · deferred · production not approved.
+
+**Current stage: 3 — Business identity & receiving policies (batch 032-PW2-identity ACTIVE since 2026-11-06; spec frozen after two non-author review rounds).** Stage 1 and **Stage 2 complete** (batch 031 closed at its human gate). Step-up form recorded: a purpose-bound Owner approval signature ≤ 5 min replaces the SRS §8.H reversible engineering choice "sign-in within 10 min" (stricter).
+
+## Approval state (actual owner decisions only)
+| Item | State |
+|---|---|
+| SRS v3.0 | **Adopted 2026-11-06** into docs/SRS.md §8 (owner: "I authorize you to finalize and adopt SRS v3.0…"). Verified present: durable budgets/limits/breakers (FR-OPS-9), pause rules (FR-OPS-10), source finality + trust (FR-XC-8), no timer-only release (FR-XC-5), on-chain duplicate-proof refunds (FR-RFD-3), support vs treasury (FR-BIZ-7), out of scope (CON-14), privacy ref AT-26/AT-32 (NFR-16), interim SIWE login (FR-BIZ-6). Does **not** approve 031 close, deployment, mainnet or early Stage 3. |
+| Interim testnet login | Approved: wallet SIWE behind AuthContext + memberships + server-revocable sessions; recovery limit disclosed; email/passkey before pilots (D12) |
+| Batch 031 gate decisions | Approved: relayer DB dependency; brief DB retry then 503; cooldown policy 3/10 min → 15 min (provisional), audited unblock, no penalty for infra/pauses/duplicates/forged signatures; DNS trade-off fixed before close (D13) |
+| Foundry toolchain | Approved and installed (v1.8.6, checksum verified); fresh `forge test` 154/154 |
+| Batch 031 close | **Closed 2026-11-06** after the owner's gate: breaker stays 3/h; rollout rule = one nonce coordinator (drain old relayer before the new one; rollback stops new first); keep wf_s2_* DBs for Stage 3. No deployment authorized. |
+| Database `.env` | Present at P:\WhiteFlow\.env (2026-11-06). Only `DATABASE_URL` is extracted in-process (the file also holds unrelated secrets that are never loaded). Connected: Neon Postgres 18.6, role has CREATEDB; the live app DB (17 tables) is untouched. **Isolation established:** disposable databases `wf_s2_relayer`, `wf_s2_relayer_prev`, `wf_s2_web`, `wf_s2_web_prev` created empty and verified through the Neon HTTP driver. Blockchain keys in that file are NOT authorized for live transactions. |
+| Hosting/scheduler plan, funded testnet keys | **Externally blocked** (owner-provided; names at the end) |
+
+## Stages
+| # | Goal | Requirement IDs | Existing work | Remaining tasks | Completion evidence | Blockers |
+|---|---|---|---|---|---|---|
+| 1 | Reconcile scope & state | — | W0 baseline, matrix, SRS proposal, decision log | — | This tracker; approval state above | none |
+| 2 | Stabilize payment foundation (W4 subset) | FR-GW-7, FR-PAY-10, FR-REL-5, FR-REL-6, FR-REL-10 | Verified locally: event marker/delivery atomic + shared lease; DNS deferral; c-ares + pinned HTTPS (controlled local TLS fixture 4/4); fair dispatch; cooldown/replay messages; pending tx reference (A14) + unknown-payment recovery 7/7; relayer lease+fence, write-ahead, idempotent DB retry, cooldown, audited unblock (98/98) | Real-Postgres evidence via production adapter on an **isolated** DB (B10 whiteflow-b7, D whiteflow-0f) — waiting for owner `.env`; Part C durable web limits + docs-limits open-handle fix (whiteflow-fb); independent review of Part A r3–4 (fb/b7); final integrated CI; human gate packet | last-round ci.md + review-security.md; isolated migration results (clean + previous-schema); real-PG concurrency output | `.env` not yet present; Part C in progress |
+| 3 | Business identity & receiving policies (W2) | FR-BIZ-1–7, FR-AUTH-1–5 (proposed) | `notes/W2-identity-design-draft.md`; wallet-scoped tenancy verified | All implementation | AT-27/28/31 service tests, revocation, policy-change tests, backfill tests | Stage 2 completion |
+| 4 | Direct payment & refund (W3) | FR-BILL-*, FR-CHK-*, FR-RFD-1/3, FR-RTE-*, FR-UX-* (proposed) | V1 MerchantPay (forge 154/154), gateway checkout/refund paths | Drafts→approval→issuance→publish; funded-wallet checkout; guest wallet → demo fixture; wrong-amount order consumption fix; truthful receipts; refunds | Local tests + **testnet** journey trace | Stage 3; funded keys/DB for live evidence |
+| 5 | Durable ops & reconciliation (rest of W4) | FR-OPS-1–9 (proposed) | Stage 2 pieces | Outbox with state change, traffic-independent worker, attempt recovery, indexer, journal, reconciliation, health | Crash/restart, duplicate, reorg, reconciliation tests; scheduler demonstrated | Stage 4; hosting/scheduler choice for hosted proof |
+| 6 | Remote MCP (W5) | FR-MCP-6–11 (proposed) | none (SDK 1.32.2 / protocol facts verified) | All | OAuth/tenant/injection tests; real client connection | Stages 3–5; public HTTPS host |
+| 7 | Prove external corridor (W1) | DEP-8 (proposed) | Read-only live checks (messengers paired, CGT zero-value, timings); `notes/W1-route-experiment-plan.md` | Deploy receivers, round trip, failed-relay replay, timing | Real Sepolia + Whitechain tx evidence | Stage 6 done; funded `SEPOLIA_MESSENGER_PRIVATE_KEY`, `WHITECHAIN_MESSENGER_PRIVATE_KEY` |
+| 8 | Cross-chain payment & recovery (W6/W7) | FR-XC-*, FR-RFD-2 (proposed) | none | All | Contract fuzz/invariant + testnet success/cancel/refund traces | Stage 7 proof |
+| 9 | Integrated verification & handoff (W9) | AT-19…56 | W0 docs | Checklist run, runbooks, setup/rollback | Evidence per AT | All prior stages |
+Out of plan: new World, new Arkiv publication, lending expansion, more chains, mainnet (W10 — production not approved).
+
+## Stage 2 blocker list (updated 2026-11-06, final)
+All Stage 2 technical blockers cleared: real-Postgres concurrency + migrations (local 8/8 + 6/6; Neon production adapter 8/8 + 8/8 on isolated DBs), docs-limits hang (root cause: PGlite never closed + mocked Date → teardown fix), durable rate limits (reviewed PASS), independent review (0 critical/high; F1/F2/F4 fixed + re-reviewed), final CI on Node 26.13.0 (round-4/ci.md PASS). **Only the human gate remains** — packet: `.batches/031-PW4-stabilize-webhooks-relayer/GATE.md`. Follow-ups: F3, stale comments, least-privilege relayer DB role, NFR re-measure, breaker threshold decision, V1 wrong-amount (Stage 4), outbound HTTPS smoke test. Helpers b7/0f/fb were interrupted at ~19:52; their finished work was run and integrated by the lead.
+
+## Stage 2 ownership (≤ 3 agents + lead)
+| Who | Role | Files |
+|---|---|---|
+| whiteflow-ef (lead) | Builder A: A11–A13; integrates; reviews B/C/D | apps/web/lib/server/{webhooks,events,capital-fund}.ts, lib/relay.ts, test/{gw-helpers,gw-outbox,gw-isolation,relay-cooldown}.mjs |
+| whiteflow-b7 | Builder B: B10 relayer real-PG harness | apps/relayer/** |
+| whiteflow-0f | Tester: web real-PG harness (Part D) | apps/web/test-pg/**, apps/web/package.json `test:pg` line |
+| whiteflow-fb | Finish Part C to a consistent tested state, then independent reviewer of Part A | lib/server/http.ts (rate-limit fns), rate-limit callers incl. links.ts/pages.ts lines, db/052, test/rate-limit-db.test.mjs |
+
+## Decision log
+| # | Decision | Source / reason |
+|---|---|---|
+| D14 | Owner supervision prompt (pasted 2026-11-06): before closing 031, require webhook connection isolation (vetted IP pinned through connect, no shared-threadpool stall, fair per-destination scheduling) and real-Postgres concurrency evidence with independent connections; reviewers must be independent of the implementer. | Owner |
+| D13 | Owner gate decisions for 031: accept new relayer dependency; DB outage → brief bounded retry then 503 (no in-memory fallback); no automatic ban — 3 distinct validated payer-attributable failures / 10 min → 15 min cooldown (provisional, testnet), persisted, audited unblock, never penalize infra failures/pauses/duplicates/forged signatures; DNS trade-off fixed before close. | Owner (AskUserQuestion answers) |
+| D12 | Interim login (owner): wallet-only SIWE behind AuthContext with memberships and server-revocable sessions; login separate from receiving-wallet proof; 'no recovery' disclosed as a testnet limitation; email/passkey + reviewed recovery tracked before broader pilots. SRS v3.0: owner will edit before approving. | Owner (AskUserQuestion answers) |
+| D11 | SRS v3.0 proposal amended after the peer's independent gap review (13 misses, 4 tensions incorporated). Workspace sign-in/recovery mechanism (WF§4.1: vetted auth + recovery + passkeys, login ≠ wallet signing) is escalated as a human decision; wallet SIWE stays behind the AuthContext adapter meanwhile. | WF§4.1, §6; PRD§19; owner §10 (auth/custody decisions escalate) |
+| D10 | Legacy-financed businesses keep collecting through V1 MerchantPay (repays investors); V2/new routes refuse them (CON-11 reworded). | WF§10 |
+| D9 | Parallel work uses **one** active batch with builders on disjoint files (whiteflow-ef: apps/web/lib/server, apps/web/db, apps/web/test; whiteflow-b7: apps/relayer/**). Separate worktrees are impossible (no git). | Owner 2026-11-06 "do the tasks in parallel"; PIPELINE §3.3, §7 |
+| D8 | First code batch = existing reliability defects under already-approved IDs (webhook event loss, relayer per-process state). No new behaviour until SRS v3.0 is approved. | PRD §16 G0 + practical order #1; PIPELINE §1/§6 |
+| D7 | Direct `enqueueEvent` keeps creating a delivery per call (existing test "batch 021 F2" relies on it); only payment events through `events.ts` get the once-per-key atomic path. | Preserve working integrations (owner §4) |
+| D6 | Webhook scheduler frequency not changed: Vercel Hobby crons are daily-only and the hosting plan is unknown. | No guessing provider/plan facts (owner §10) → NEEDS THE USER |
+| D5 | MCP targets protocol 2025-11-25 with `@modelcontextprotocol/sdk` 1.32.2 (latest SDK negotiates 2025-11-25; Claude connectors document support through 2025-11-25), even though the current spec is 2026-07-28. | Verified registry/spec/docs 2026-11-06; WF§6 "do not assume every client supports the newest protocol" |
+| D4 | Corridor messages carry zero native value (Whitechain is in custom-gas-token mode; Portal and L2ToL1MessagePasser revert on value). | Verified live 2026-11-06; WF§7 |
+| D3 | WhiteFlow conflicts with SRS v2.2 are resolved as listed in the proposal §B (R1–R16), e.g. FR-MCP-5 cut, FR-GW-15 withdraw deferred, guest wallet → demo fixture, FR-PAY-7 superseded, CON-4 scoped to the direct route, duplicate FR-PAY-16 → FR-PAY-17. Effective only after human approval. | Owner precedence (instruction > WF > PRD); SRS change control |
+| D2 | Pixa: patterns only, no code copied. | CON-1 Start Fresh; WF§5 |
+| D1 | No commits (workspace is not a git checkout; AGENTS.md: "outside the hack repo: no commits unless the human asks"). | AGENTS.md |
+
+
+## External prerequisites
+**Environment variable NAMES to set in a git-ignored `.env` (never paste values into chat)**
+- Existing, needed for live testnet work: `DATABASE_URL`, `AUTH_SECRET`, `WHITECHAIN_RPC_URL` (use the official `https://rpc.testnet.whitechain.io`), `RELAYER_PRIVATE_KEY`, `RELAY_API_SECRET`, `RELAYER_URL`, `MERCHANT_PAY_ADDRESS`, `CRON_SECRET`, `DEPLOYER_PRIVATE_KEY`, `PAYER_PRIVATE_KEY`, `VOUCHER_HASH_SECRET`, `PUBLIC_ORIGIN`.
+- Read by code but missing from `.env.example`: `MERCHANT_ADDRESS`, `MERCHANT_NAME`, `SHOP_API_KEY`, `GATEWAY_URL`, `GATEWAY_SECRET_KEY`, `GATEWAY_WEBHOOK_SECRET`, `RPC_URL`, `PORT`.
+- New for W1: `SEPOLIA_RPC_URL`, `SEPOLIA_MESSENGER_PRIVATE_KEY` (EOA with Sepolia ETH), `WHITECHAIN_MESSENGER_PRIVATE_KEY` (EOA with test WBT; or reuse a deployer key).
+
+**External / human-only (never invented here):** business interviews, audits, legal/KYB/jurisdiction review, MCP public-directory approval, World app registration, mainnet decision.
