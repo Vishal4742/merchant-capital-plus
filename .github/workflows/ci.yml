@@ -1,15 +1,52 @@
 # CI for Merchant Capital+ (the same checks the pipeline's ci agent runs locally; AGENTS.md "Done means verified").
+# Speed (human 2026-11-06 05:59): docs-only pushes skip CI, a newer push cancels the older run on the same
+# branch, and each job runs only when its own folder (or this workflow) changed. The secret scan always runs.
 name: ci
 on:
   push:
-    branches: [main, contracts, relayer]
+    branches: [main, contracts, backend, relayer, sdk]
+    paths-ignore: ["**/*.md", "docs/**", "arkiv/**", "notes/**", ".batches/**"]
   pull_request:
+    paths-ignore: ["**/*.md", "docs/**", "arkiv/**", "notes/**", ".batches/**"]
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      contracts: ${{ steps.f.outputs.contracts }}
+      web: ${{ steps.f.outputs.web }}
+      relayer: ${{ steps.f.outputs.relayer }}
+      sdk: ${{ steps.f.outputs.sdk }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: f
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            files="ALL"   # new branch or unknown base: run everything
+          else
+            files=$(git diff --name-only "$BASE" HEAD)
+          fi
+          hit() { [ "$files" = ALL ] || echo "$files" | grep -qE "$1"; }
+          wf='^\.github/workflows/'
+          hit "^contracts/|^packages/shared/|$wf" && echo contracts=true >> "$GITHUB_OUTPUT" || echo contracts=false >> "$GITHUB_OUTPUT"
+          hit "^apps/web/|^packages/|$wf" && echo web=true >> "$GITHUB_OUTPUT" || echo web=false >> "$GITHUB_OUTPUT"
+          hit "^apps/relayer/|^packages/shared/|$wf" && echo relayer=true >> "$GITHUB_OUTPUT" || echo relayer=false >> "$GITHUB_OUTPUT"
+          hit "^packages/sdk/|$wf" && echo sdk=true >> "$GITHUB_OUTPUT" || echo sdk=false >> "$GITHUB_OUTPUT"
+
   contracts:
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -25,6 +62,8 @@ jobs:
         working-directory: contracts
 
   web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -43,6 +82,8 @@ jobs:
       - run: npm run build
 
   relayer:
+    needs: changes
+    if: needs.changes.outputs.relayer == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -54,6 +95,24 @@ jobs:
           node-version: 26
           cache: npm
           cache-dependency-path: apps/relayer/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  sdk:
+    needs: changes
+    if: needs.changes.outputs.sdk == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/sdk
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: packages/sdk/package-lock.json
       - run: npm ci
       - run: npm run typecheck
       - run: npm test

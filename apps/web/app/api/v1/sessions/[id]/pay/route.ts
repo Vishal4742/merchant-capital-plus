@@ -10,6 +10,8 @@ import { findPayment, settlePending } from "../../../../../../lib/settle.ts";
 import { claimPayment, getSession, isInFlight, markPending, recordPayment, releasePayment } from "../../../../../../lib/sessions.ts";
 
 const fail = (status: number, error: string) => Response.json({ error }, { status });
+const LONGER_THAN_CHECKOUT = "This approval would last longer than the checkout, which expires sooner. Nothing was charged. Please try again.";
+const READ_TRIES = 2; // a customer is waiting: fail fast (a failed balance read isn't fatal: the relayer checks too)
 const EXPIRED = "This checkout has expired. Ask the shop for a new one.";
 const STILL_PENDING = "We're still confirming an earlier attempt. Don't pay again; check this page again in a few minutes.";
 const alreadyPaid = (id: string) => Response.json({ error: "Already paid.", receiptId: id, txHash: getSession(id)?.payment?.txHash ?? null }, { status: 409 });
@@ -34,9 +36,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const valid = await verifyTypedData({ ...saleAuthorization(sale, payer, salt, validBefore), address: payer, signature }).catch(() => false);
   if (!valid) return fail(400, "This approval doesn't match the checkout. Nothing was charged.");
   // an unfunded guest hears "this is a demo" now, before anything is locked or relayed (UX and security review 005 F1);
-  // if the read fails, carry on: the relayer checks the balance too
-  const balance = await readUsdtBalance(payer).catch(() => null);
-  if (balance !== null && balance < session.amount) return fail(400, NOT_FUNDED);
+  // if the read fails, carry on: the relayer checks the balance too. Not while an earlier attempt is pending: if it
+  // landed it spent this balance, and settlePending below shows its receipt (code review 005 R2-F1)
+  const balance = await readUsdtBalance(payer, { tries: READ_TRIES }).catch(() => null);
+  if (balance !== null && balance < session.amount && !session.pending) return fail(400, NOT_FUNDED);
 
   if (!claimPayment(id)) return fail(409, "This checkout is already being paid.");
   try {
@@ -45,6 +48,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (state === "paid") return alreadyPaid(id);
     if (state === "pending") return fail(409, STILL_PENDING);
     if (Date.now() > session.expiresAt) return fail(410, EXPIRED);
+    // the approval never outlives the checkout (ARCHITECTURE §4b), so nothing can settle after it says "expired"
+    if (validBefore > BigInt(Math.floor(session.expiresAt / 1000))) return fail(400, LONGER_THAN_CHECKOUT);
     const result = await relaySale({ relayerUrl: pay.relayerUrl, merchant: session.merchant, orderRef: session.orderRef, from: payer, amount: session.amount, validBefore, salt, signature });
     if (!result.ok) {
       if (result.unknown) markPending(id, { from: payer, validBefore }); // it may settle: the chain decides later

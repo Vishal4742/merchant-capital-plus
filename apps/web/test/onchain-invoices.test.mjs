@@ -88,6 +88,17 @@ test("the guest's balance is USDT.balanceOf(owner), read on the server", async (
   assert.deepEqual([calls[0].address, calls[0].functionName, calls[0].args], ["0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7", "balanceOf", [PAYER]]);
 });
 
+test("the balance read is retried like every other read, so one RPC hiccup doesn't switch the guard off (security 005 F-N3)", async () => {
+  const { read } = chain();
+  let failures = 1;
+  const flaky = async (req) => {
+    if (failures-- > 0) throw new Error("header not found");
+    return read(req);
+  };
+  assert.equal(await readUsdtBalance(PAYER, { read: flaky, gapMs: 0, tries: 2 }), 7_000_000n);
+  await assert.rejects(readUsdtBalance(PAYER, { read: async () => { throw new Error("down"); }, gapMs: 0, tries: 2 }), /down/);
+});
+
 test("payments(id) is read whole: merchant, gross, payer, refunded", async () => {
   const { read } = chain({ payments: { 1n: [MERCHANT, 2_000_000n, PAYER, 1_000_000n] } });
   assert.deepEqual(await readPayment(MERCHANT_PAY, 1n, { read }), { merchant: MERCHANT, gross: 2_000_000n, payer: PAYER, refunded: 1_000_000n });
@@ -156,4 +167,16 @@ test("the merchant's payments from the log index: payment id, invoice id, tx has
   const [one] = await paidLogs(MERCHANT_PAY, { paymentId: 2n });
   assert.equal(one.invoiceId, 7n);
   assert.equal(urls.at(-1).searchParams.get("topic1"), tx(2n), "a receipt looks its payment up by id (topic1)");
+});
+
+// viem's decodeEventLog picks the event by topic0 and ignores eventName, so an index that answers with another
+// event's log must be dropped by name (found by claude-contracts' reports builder, 03:31).
+test("a log of another event in the index answer is dropped, never read as a payment or an invoice", async () => {
+  blockscout = async () => Response.json({ message: "OK", status: "1", result: [created(9n), paidLog(1n, 0n)] });
+  assert.deepEqual((await paidLogs(MERCHANT_PAY, { merchant: MERCHANT })).map((l) => l.paymentId), [1n]);
+  blockscout = async () => Response.json({ message: "OK", status: "1", result: [paidLog(1n, 0n), created(9n)] });
+  const open = [MERCHANT, 1_900_000_000n, 1, "0x0000000000000000000000000000000000000000", 25_000_000n, 0n];
+  const { read, calls } = chain({ invoices: { 9: open, 1: open } });
+  assert.deepEqual((await merchantInvoices(MERCHANT_PAY, MERCHANT, read)).map((i) => i.id), [9n]);
+  assert.deepEqual(calls.map((c) => c.args[0]), [9n], "the Paid log's payment id is never read as an invoice id");
 });

@@ -94,8 +94,8 @@ export async function readRelayFee(merchantPay: Address, { read = defaultRead, .
 }
 
 /** The guest's test USDT, so an unfunded guest hears "this is a demo" before anything is locked or relayed. */
-export async function readUsdtBalance(owner: Address, { read = defaultRead }: ReadOptions = {}): Promise<bigint> {
-  return (await read({ address: USDT, abi: merchantPayAbi, functionName: "balanceOf", args: [owner] })) as bigint;
+export async function readUsdtBalance(owner: Address, { read = defaultRead, ...retry }: ReadOptions = {}): Promise<bigint> {
+  return retried(async () => (await read({ address: USDT, abi: merchantPayAbi, functionName: "balanceOf", args: [owner] })) as bigint, retry); // security 005 F-N3
 }
 
 const INVOICE_STATUS = ["missing", "open", "paid", "cancelled"] as const; // MerchantPay InvoiceStatus None/Open/Paid/Cancelled
@@ -155,7 +155,8 @@ async function indexedLogs(merchantPay: Address, eventName: "InvoiceCreated" | "
   return result.flatMap((log: { address?: string; data?: Hex; topics?: [Hex, ...Hex[]]; transactionHash?: string; timeStamp?: string }) => {
     try {
       if (!log.address || !same(log.address as Address, merchantPay) || !log.topics || !log.data) return [];
-      const { args } = decodeEventLog({ abi: merchantPayAbi, eventName, data: log.data, topics: log.topics, strict: true });
+      const { args, eventName: decoded } = decodeEventLog({ abi: merchantPayAbi, eventName, data: log.data, topics: log.topics, strict: true });
+      if (decoded !== eventName) return []; // viem decodes by topic0 and ignores eventName: another event's log
       return [{ args, txHash: isHash(log.transactionHash ?? "") ? (log.transactionHash as Hex) : null, time: Number(BigInt(log.timeStamp ?? "0")) * 1000 }];
     } catch {
       return []; // not a log we can read

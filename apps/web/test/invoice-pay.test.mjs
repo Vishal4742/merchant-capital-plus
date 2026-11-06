@@ -131,8 +131,13 @@ test("each attempt in the browser signs with a fresh salt (on-chain InvoiceNotOp
   assert.ok(await verifyTypedData({ ...auth, address: a.from, signature: a.signature }));
   const { signSale } = await import("../lib/sign-sale.ts");
   const sale = { merchantPay: MERCHANT_PAY, merchant: MERCHANT, orderRef: `0x${"22".repeat(32)}`, amount: "25000000" };
-  const [c, d] = [await signSale(sale), await signSale(sale)];
+  const later = Date.now() + 30 * 60 * 1000;
+  const [c, d] = [await signSale(sale, later), await signSale(sale, later)];
   assert.notEqual(c.salt, d.salt, "a checkout's attempts get fresh salts too (004 security S2)");
+  const nowS = Math.floor(Date.now() / 1000);
+  assert.ok(Number(c.validBefore) >= nowS + 460 && Number(c.validBefore) <= nowS + 466, "a long checkout: the usual 465 s window");
+  const soon = Date.now() + 120_000;
+  assert.equal((await signSale(sale, soon)).validBefore, String(Math.floor(soon / 1000)), "never past the checkout's expiry (ARCHITECTURE §4b)");
 });
 
 test("a correct approval is relayed once as payInvoice (credited amount, fee on top), counted only when the chain confirms it", async () => {
@@ -381,4 +386,14 @@ test("without MerchantPay or a relayer configured, nothing is read or relayed", 
   delete process.env.RELAYER_URL;
   assert.equal((await callPay(await signed())).status, 503);
   assert.equal(relayCalls.length, 0);
+});
+
+// The page has its own gate (the route's is tested above). A server component can't render in node:test, so this
+// pins its place in the source: a 404 for another merchant's invoice before any attempt state is read (F-N6, G1).
+test("the /pay page 404s another merchant's invoice before it reads attempt state (security 005 F-N6)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const page = readFileSync(new URL("../app/pay/%5BinvoiceId%5D/page.tsx", import.meta.url), "utf8");
+  const gate = page.indexOf("if (!shop || !isShopInvoice(invoice, shop.merchant)) notFound();");
+  assert.ok(gate > 0, "the shop gate is in the page");
+  assert.ok(gate < page.indexOf("invoiceState("), "and comes before invoiceState");
 });

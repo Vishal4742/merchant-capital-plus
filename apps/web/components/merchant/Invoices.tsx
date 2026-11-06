@@ -90,7 +90,7 @@ export function Invoices({ merchant, merchantPay, invoices, today, feeText }: In
   const key = notesKey(merchantPay);
   const notes = parseNotes(useSyncExternalStore(subscribe, () => readRaw(key), () => "{}"));
   return (
-    <section className="mt-6 grid gap-6 rounded-md border border-hairline bg-surface p-6 shadow-card" aria-labelledby="invoices">
+    <section className="grid scroll-mt-4 gap-6 rounded-[20px] border border-hairline bg-surface p-6" aria-labelledby="invoices">
       <h2 id="invoices" className="label text-ink-muted">
         Invoices
       </h2>
@@ -288,13 +288,14 @@ function InvoiceActions({ invoice, merchant, merchantPay }: { invoice: InvoiceRo
         <CopyLink id={invoice.id} />
         {cancellable &&
           (confirming ? (
-            <span role="group" aria-label={`Cancel invoice ${invoice.id}?`} className="inline-flex items-center gap-1 text-sm">
-              <span className="text-ink">Cancel invoice?</span>
-              <Button variant="quiet" onClick={cancel} aria-disabled={busy}>
+            // wraps as whole phrases with room at the card edge; "Keep it" says what the other choice does (UX review 005 N2)
+            <span role="group" aria-label={`Cancel invoice ${invoice.id}?`} className="flex flex-wrap items-center justify-end gap-x-2 pr-2 text-sm">
+              <span className="whitespace-nowrap text-ink">Cancel invoice?</span>
+              <Button variant="quiet" className="whitespace-nowrap" onClick={cancel} aria-disabled={busy}>
                 {busy ? "Cancelling…" : "Yes, cancel"}
               </Button>
-              <Button variant="quiet" onClick={() => setConfirming(false)} aria-disabled={busy}>
-                No
+              <Button variant="quiet" className="whitespace-nowrap" onClick={() => setConfirming(false)} aria-disabled={busy}>
+                Keep it
               </Button>
             </span>
           ) : (

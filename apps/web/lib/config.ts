@@ -29,3 +29,18 @@ export function shopAuthorized(request: Request, apiKey: string): boolean {
   const given = createHash("sha256").update(auth.slice(7)).digest(), expected = createHash("sha256").update(apiKey).digest();
   return timingSafeEqual(given, expected);
 }
+
+/** What /docs shows for the shop's secret key: 8 hex characters of its SHA-256, never a character of the key itself
+ *  (security review 006 F5). The shop can compare it with a fingerprint of its own copy. */
+export function keyFingerprint(apiKey: string): string {
+  return createHash("sha256").update(apiKey).digest("hex").slice(0, 8);
+}
+
+/** The gateway's public address for the /docs snippets: PUBLIC_ORIGIN when it is set to an http(s) URL (behind a CDN or
+ *  proxy the request's own Host isn't ours to trust, security review 006 F5), else `fallback`, read from the request. */
+export function publicOrigin(fallback: string): string {
+  const configured = process.env.PUBLIC_ORIGIN;
+  if (!configured || !URL.canParse(configured)) return fallback;
+  const url = new URL(configured);
+  return url.protocol === "https:" || url.protocol === "http:" ? url.origin : fallback;
+}

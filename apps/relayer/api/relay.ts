@@ -1,14 +1,21 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { relay, relayerClient } from '../src/relayer.ts';
 
-// claude-contracts' G1 PullStub on 1874 (usdt = prize USDT, payee = team wallet; checked with cast 21:10).
-// ponytail: inlined for Phase 1; batch 004 imports MerchantPay's address from packages/shared.
-const PULL_STUB = '0x51e2E2A530c9dabe6147D55F9bb7fcD47219325d';
+// Only our web server holds RELAY_API_SECRET (human 02:44, ARCHITECTURE §3 point 13). Digests make the compare
+// constant-time and equal-length; an unset secret refuses every request.
+const digest = (s: string) => createHash('sha256').update(s).digest();
+function authorized(request: Request): boolean {
+  const secret = process.env.RELAY_API_SECRET;
+  if (!secret) return false;
+  return timingSafeEqual(digest(request.headers.get('x-relay-secret') ?? ''), digest(secret));
+}
 
 export async function POST(request: Request): Promise<Response> {
+  if (!authorized(request)) return Response.json({ error: 'missing or wrong x-relay-secret', code: 'unauthorized' }, { status: 401 });
   // JSON only: a cross-site form can't send it without a CORS preflight, which this API never answers.
   const type = request.headers.get('content-type')?.split(';')[0].trim().toLowerCase();
   if (type !== 'application/json') {
     return Response.json({ error: 'content-type must be application/json', code: 'unsupported_media_type' }, { status: 415 });
   }
-  return relay(await request.text(), relayerClient(), PULL_STUB);
+  return relay(await request.text(), relayerClient());
 }

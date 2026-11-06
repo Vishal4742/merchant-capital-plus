@@ -33,7 +33,12 @@ const merchantPayAbi = parseAbi([
   "error WrongAmount()",
   "error InvoiceFinanced()",
 ]);
-const usdtAbi = parseAbi(["function allowance(address owner, address spender) view returns (uint256)", "function approve(address spender, uint256 amount) returns (bool)"]);
+const usdtAbi = parseAbi([
+  "function allowance(address owner, address spender) view returns (uint256)",
+  "function approve(address spender, uint256 amount) returns (bool)",
+  "function balanceOf(address owner) view returns (uint256)",
+]);
+const NOT_ENOUGH_USDT = "Your wallet doesn't have enough USDT for this refund.";
 
 const COPY: Record<string, string> = {
   NotMerchant: "Switch to the wallet that received this payment.",
@@ -97,10 +102,13 @@ export async function refund(w: MerchantWallet, paymentId: bigint, amount: bigin
   const call = { address: w.merchantPay, abi: merchantPayAbi, functionName: "refund", args: [paymentId, amount] } as const;
   const allowance = await w.reader.readContract({ address: USDT, abi: usdtAbi, functionName: "allowance", args: [w.account, w.merchantPay] });
   if (allowance < amount) {
-    // Before an approval costs gas, the dry run must fail only for the missing allowance: MerchantPay checks the merchant
-    // and the amount first, and USDT checks the balance before the allowance (security review 005 F2).
+    // Before an approval costs gas: the balance is read, not guessed from a revert string, and the dry run may fail only
+    // for the missing allowance; anything else (MerchantPay's checks, no revert data, a new error) stops here
+    // (security review 005 F2, F-N5).
+    const balance = await w.reader.readContract({ address: USDT, abi: usdtAbi, functionName: "balanceOf", args: [w.account] });
+    if (balance < amount) throw new Error(NOT_ENOUGH_USDT);
     await w.reader.simulateContract({ ...call, account: w.account }).catch((error: unknown) => {
-      if (merchantPayError(error) || revertReason(error).includes("exceeds balance")) throw error;
+      if (!revertReason(error).includes("exceeds allowance")) throw error;
     });
     await send(w, { address: USDT, abi: usdtAbi, functionName: "approve", args: [w.merchantPay, amount] });
   }
@@ -124,6 +132,6 @@ export function walletError(error: unknown): string {
   if (error.walk((e) => e instanceof UserRejectedRequestError)) return "You cancelled the request in your wallet.";
   const name = merchantPayError(error);
   if (name) return COPY[name];
-  if (revertReason(error).includes("exceeds balance")) return "Your wallet doesn't have enough USDT for this refund.";
+  if (revertReason(error).includes("exceeds balance")) return NOT_ENOUGH_USDT;
   return "Your wallet couldn't send this. Check it has a little WBT for fees, then try again.";
 }

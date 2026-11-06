@@ -21,7 +21,7 @@ const SLOP_PX = 12;
 type Phase = "idle" | "holding" | "busy" | "done";
 
 export interface HoldButtonProps {
-  /** Idle label, e.g. "Hold to pay 25.00". */
+  /** Idle label, e.g. "Hold to pay 25.00 USDT". */
   label: string;
   /** Runs once the hold completes (or on a keyboard press). Rejecting returns the button to idle. */
   onConfirm: () => Promise<unknown>;

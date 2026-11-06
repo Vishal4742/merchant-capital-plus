@@ -5,7 +5,10 @@ set -euo pipefail
 name=$(head -1 .batches/ACTIVE | tr -d '[:space:]'); dir=".batches/$name"
 last=$(ls -1d "$dir"/round-* 2>/dev/null | sort -V | tail -1)
 [ -n "$last" ] || { echo "no rounds in $dir"; exit 1; }
-for f in test review-code review-security review-ux-ui ci; do
+need="test review-code review-security review-ux-ui ci"
+# Phase mode (human 2026-11-06 06:03): a batch needs only its ci.md; money batches also need review-security.md.
+if grep -q "^Mode: phase" "$dir/batch.md"; then need="ci"; grep -q "^Money: yes" "$dir/batch.md" && need="ci review-security"; fi
+for f in $need; do
   [ -f "$last/$f.md" ] || { echo "missing $last/$f.md: the round isn't finished"; exit 1; }
   head -1 "$last/$f.md" | grep -qx 'VERDICT: PASS' || { echo "$last/$f.md is not 'VERDICT: PASS'"; exit 1; }
 done

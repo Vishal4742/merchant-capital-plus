@@ -58,6 +58,12 @@ start ─► spec ─► build ─► round N: tester ─► [code · security �
 4. **Light batches** (UI copy, layout, styles, docs; no signing, payment, key, auth or contract code in the diff): tester + reviewer-ux-ui + CI only. The lane writes `review-code.md` and `review-security.md` as `VERDICT: PASS` + "light batch (§3a.4): no money, signing, auth or contract code in the diff" + the `git diff --stat`. Anything that touches money, signatures, keys, sign-in, the relayer or contracts always gets all five checks.
 5. **Cheaper models:** the tester and ci run on Sonnet; reviewer-code and reviewer-security stay on Opus for money code.
 
+## 3b. Phase mode (human, 2026-11-06 06:03: "don't do tests in each step, test things phase by phase, we're moving too slow")
+1. **Each batch:** build, then the lane itself runs typecheck, lint, unit tests and build, and writes `ci.md` (`VERDICT: PASS` + the output). Put `Mode: phase` in `batch.md`. No tester or reviewer rounds per batch.
+2. **Money exception:** a batch that touches money movement, signatures, keys, sign-in, the relayer or contracts also writes `Money: yes` in `batch.md` and gets **one** reviewer-security pass (one agent, in parallel with the build's own checks); only HIGH/CRITICAL block.
+3. **Once per phase, at the gate:** the full tester + reviewer-code + reviewer-security + reviewer-ux-ui run over the whole phase diff, then the human gate. Findings are fixed in one batch before the gate is claimed.
+4. `tools/batch-close.sh` enforces this: phase-mode batches close on `ci.md` (plus `review-security.md` when `Money: yes`).
+
 ## 4. Batch files (agents read these, not the chat; each writes only its own)
 The first line is exact; the lane orchestrator reads only that line to decide.
 | File | Written by | First line |

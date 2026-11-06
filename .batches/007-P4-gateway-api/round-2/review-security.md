@@ -1,0 +1,35 @@
+VERDICT: PASS
+
+# Security review: 007-P4-gateway-api, round 2 (delta only, fast mode)
+
+Scope: build-contracts.md "ROUND 2", plus the files changed since round 1: `lib/server/{vouchers,db,events,http,reports}.ts`, `db/{statements,migrate}.mjs`, `app/api/v1/vouchers/route.ts`, `app/api/v1/webhooks/{[id]/test,deliveries/[id]/replay}/route.ts`, `test/gw-{vouchers,tester-vouchers,events,helpers,links,reports}.test.mjs`. I ran `node --experimental-test-module-mocks --test test/gw-vouchers.test.mjs`: 18/18 pass.
+
+## H1 (round 1): fixed
+`applyVoucher` (`lib/server/vouchers.ts:195-211`) now runs `pg_advisory_xact_lock(hashtext(voucher_id))` and then `INSERT … SELECT … WHERE times_redeemed + live holds of other sessions < max_redemptions`, both in one transaction. That's correct under concurrent applies:
+- **Neon's HTTP transaction is READ COMMITTED.** `db.ts:39` passes no `isolationLevel`, and the driver only sends `Neon-Batch-Isolation-Level` when one is set (`node_modules/@neondatabase/serverless/index.mjs:1309`), so the server default (RC) applies. Under RC each statement takes a new snapshot at its start. The INSERT starts only after the lock is granted. The lock is granted only after the previous holder's commit, and Postgres releases xact advisory locks after the commit is visible. So the INSERT's count sees every other session's committed hold. The count is exact, not just bounded.
+- **`confirmRedemption` doesn't need the lock.** It's one statement that confirms the hold and increments `times_redeemed` together, so any concurrent apply sees either "hold live, n uses" or "hold confirmed, n+1 uses". The total is the same either way, and the count can't slip.
+- **Can a session hold two vouchers? No.** `session_id` is the primary key of `app_gw_redemptions`. Switching A→B in one upsert frees A. When B has no capacity, the `INSERT … SELECT` yields no row, nothing is upserted, and A's hold stays.
+- **Is a `hashtext` collision harmless? Yes.** It's an int4 hash, so two colliding voucher ids share one lock. That only serialises them (a stronger lock, never a weaker one). Each transaction takes exactly one advisory lock, so there's no deadlock. Nothing else in `apps/web` uses advisory locks.
+- The test `security H1` (`test/gw-vouchers.test.mjs:256`) runs the exploit (a 1-use code on 4 checkouts → `[true, false, false, false]`), and the hold expires after `SESSION_TTL_MS` (:266). PGlite is a single connection, so the tests run the statements one after another and can't show the concurrency. That part rests on the reasoning above.
+
+Other delta items, all OK:
+- `futureTime` is capped at 5 years (`http.ts:103-109`): this closes round-1 L4.
+- Per-merchant limits, checked after the cookie, so unauthenticated calls can't fill the buckets: vouchers 30/h (`app/api/v1/vouchers/route.ts:9`), test and replay sharing one bucket of 20/min.
+- `confirmRedemption(sessionId, paidAmount)` counts only when the hold's total was paid. A hold that was applied but not paid stays live until it expires. That's conservative: it can only hold uses, never let one slip.
+- The webhook `data` change carries no PII.
+- `sqlStatements` strips `--` comments before splitting.
+
+## FOLLOW-UP (MEDIUM / LOW: next batch; none blocks this one)
+
+| # | Sev | Where | Issue / exploit sketch | Fix | Owner |
+|---|---|---|---|---|---|
+| R2-M1 | MEDIUM (blocks the **integration** batch if left open) | `vouchers.ts:195-211, 225-232`; claude-frontend's future `POST /api/v1/sessions/:id/voucher` + `sessions/[id]/pay` | The price the payer is charged (in-memory `session.amount`) and the hold row (Postgres) are two separate stores. Two concurrent applies on the **same** session with different codes take different advisory locks. The PK upsert is last-writer-wins, and both callers get `ok`. If the route writes `session.amount` from whichever response resolves last, an attacker can end with row = B (10% off) and price = A (50% off). They pay A's price; `confirmRedemption` needs `usdt_amount = paid`, so it counts nothing; A is neither held nor counted, and H1 is back. The attacker can tell the outcome by probing A on a fresh session. Not reachable today (no apply route yet). | The pay route charges the amount **read from Postgres**: export `amountDue(sessionId)` = the unconfirmed hold's `usdt_amount`, else the checkout's `usdt_amount`. Refuse to relay if `session.amount` differs. Optionally also take `pg_advisory_xact_lock(hashtext(session_id))` first, so applies on one session serialise. | claude-frontend (routes), claude-contracts (`amountDue` helper) |
+| R2-M2 | MEDIUM | `vouchers.ts:204-208` (`created_at = EXCLUDED.created_at`, `$5 = now`), `:176-180` (no check on checkout age) | Holds can be used to grief a promo, and re-applying makes it worse. A re-apply moves the hold's start to the re-apply time, so the hold outlives its 30-min session. `applyVoucher` never checks the checkout's age, so if the apply route accepts dead sessions, re-applying every 29 min keeps a code locked forever. Even without that, N public checkouts (20/min/IP/instance) lock an N-use code for 30 min. No money is lost; it's an availability hit on the promo. | Store the hold's `created_at` as `checkout.createdAt`, not the apply time, so a hold dies exactly with its session. Refuse the apply when `now >= checkout.createdAt + SESSION_TTL_MS`. In the apply route, add a per-IP rate limit and a cap on live holds per IP. | claude-contracts, claude-frontend |
+| R2-L1 | LOW | `db.ts:39` | The exactness above depends on RC's per-statement snapshot. If the database default ever becomes REPEATABLE READ, the snapshot is taken at the lock `SELECT` (before the wait), the count goes stale, and oversell returns. | Pin it: `sql.transaction(fn, { isolationLevel: "ReadCommitted" })`. | claude-contracts |
+| R2-L2 | LOW | `vouchers.ts:208` | The hold window is exactly `SESSION_TTL_MS`. A relay started just before expiry whose outcome is unknown (`pending`) can settle after the hold lapses, so another session could take the use: at most +1 at the edge, and the confirm-time guard still counts only one. | Window = `SESSION_TTL_MS` + the signature window (`SIGNATURE_WINDOW_S`). | claude-contracts |
+| R2-L3 | LOW | `vouchers.ts:196` | Advisory-lock keys share one keyspace with any other user of the database (the Neon DB is shared). A collision is harmless now. | Optional: the two-key form `pg_advisory_xact_lock(<constant class id>, hashtext($1))`. | claude-contracts |
+
+Still open from round 1 (the builder lists them): M1 (only rate-limited: any wallet can sign in, so one throwaway wallet per 30 vouchers/h still spends Arkiv writes), M2 (FX sanity band), M3 (`logo_url`), and the LOW list.
+
+## Secret grep
+`grep -nE '(PRIVATE_KEY|SECRET|0x[0-9a-fA-F]{64})'` over every diff file: no 64-hex literals and no real secrets. The hits are env var names (`webhooks/dispatch/route.ts:2,12`, `lib/server/vouchers.ts:122,124`) and test fixtures (`test/gw-helpers.mjs`, `gw-vouchers`, `gw-webhooks`, `gw-tester-webhooks`, and the new `gw-tester-vouchers.test.mjs:17`, which deletes the env var).

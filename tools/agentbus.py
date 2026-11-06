@@ -13,7 +13,7 @@
 
 Bus dir: $AGENTBUS_DIR or ~/.agentbus (machine-wide, any folder, any agent of this user).
 """
-import argparse, fcntl, json, os, re, sys, time
+import argparse, fcntl, json, os, re, subprocess, sys, time
 from datetime import datetime
 
 BUS = os.environ.get("AGENTBUS_DIR", os.path.expanduser("~/.agentbus"))
@@ -87,6 +87,37 @@ def hook_output(event, name, msgs):
                                    "additionalContext": f"Unread agentbus messages for {name}:\n{body}\n{howto}"}}
 
 
+def live_lanes():
+    """Names registered by tools/iam.sh whose Claude process is still running."""
+    d = os.path.join(os.environ.get("AGENTBUS_DIR", os.path.expanduser("~/.agentbus")), "lanes")
+    names = set()
+    for f in (os.listdir(d) if os.path.isdir(d) else []):
+        try:
+            os.kill(int(f), 0)
+            names.add(open(os.path.join(d, f)).read().strip())
+        except (ValueError, OSError):
+            pass
+    return names
+
+
+def registered_lane():
+    """Lane registered by tools/iam.sh for the nearest Claude ancestor process, or None."""
+    d = os.path.join(os.environ.get("AGENTBUS_DIR", os.path.expanduser("~/.agentbus")), "lanes")
+    pid = os.getppid()
+    for _ in range(12):
+        f = os.path.join(d, str(pid))
+        if os.path.isfile(f):
+            return open(f).read().strip() or None
+        try:
+            out = subprocess.run(["ps", "-o", "ppid=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+            pid = int(out)
+        except (ValueError, OSError):
+            return None
+        if pid <= 1:
+            return None
+    return None
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -99,6 +130,11 @@ def main(argv=None):
     a = p.parse_args(argv)
 
     if a.cmd == "send":
+        me = registered_lane()
+        if me and a.name != me:  # a session registered with tools/iam.sh may only speak as itself
+            sys.exit(f"refused: this session is registered as {me}; it cannot send as {a.name}")
+        if not me and a.name in live_lanes():  # an untraceable process may not speak as a live lane
+            sys.exit(f"refused: {a.name} is a live registered lane and this process isn't it (run agentbus from that lane's own session)")
         print("sent", fmt(send(a.name, a.to, " ".join(a.text))))
     elif a.cmd == "read":
         msgs = unread(a.name)

@@ -30,4 +30,12 @@ ETHGlobal asks teams to say where AI was used, down to files, and to commit spec
 | `apps/relayer/` drain guard (allowlist, simulate-before-send, caps, windows, payer-has-code refusal, 6 gwei cap) | claude-relayer | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 3) + claude-review drain review + human gate | 002-P2-drain-guard |
 | `contracts/script/LiveInvoice.s.sol`, `contracts/test/EventAbi.t.sol`, seed fee top-up | claude-contracts | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 2) + human gate | 006-P4-g4-live |
 | `apps/web/` invoices (fee on top, part payments), refunds (exact approval), payments table | claude-frontend | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 2) + human gate | 005-P2-web-invoices-refunds |
+| `packages/sdk/` (Gateway client: sessions, payments, webhook verify/sign; zero dependencies) | claude-sdk (tests first) | tester, reviewer-code, reviewer-security, reviewer-ux-ui, ci (all PASS round 2) + human gate | 005-P4-sdk-core |
+| `apps/relayer/` MerchantPay paySale/payInvoice relay | claude-relayer | 5 checks PASS + human gate | 007-P2-merchantpay-relay |
+| `packages/sdk/` pay button (`button.js`, DOM-clobbering guard) | claude-sdk | 5 checks PASS (round 2, after a HIGH) + human gate | 007-P4-sdk-button |
+| `apps/web/app/api/v1/{links,pages,vouchers,quotes,reports,settlements,keys,webhooks}`, `apps/web/lib/server`, `apps/web/db` | claude-contracts + 3 developer subagents | 5 checks PASS (round 2, after a voucher-oversell HIGH) + human gate | 007-P4-gateway-api |
+| `apps/web/` gateway shell: test-mode strip, sessions v2 + FX, payments API, checkout upgrades, dashboard shell, `/docs` | claude-frontend | 5 checks PASS (round 2) + human gate | 006-P4-web-gateway-shell |
+| `apps/relayer/` NFR-4: plain send + 300 ms receipt polling + batched reads | claude-relayer | phase mode: ci + reviewer-security PASS + human gate | 008-P2-nfr4-async-send |
+| gateway API follow-ups | claude-contracts | phase mode: ci + reviewer-security PASS (round 1) + human gate; full review at the G4 phase gate | 008-P4-gateway-followups |
+| `apps/relayer/` Postgres send lock, `rel_sent`, breaker, rate limits, daily WBT budget, shared secret | claude-relayer | 5 checks PASS + human gate | 006-P2-neon-limits |
 | ⟨path⟩ | ⟨lane / agent⟩ | ⟨reviewers + human⟩ | ⟨NNN⟩ |

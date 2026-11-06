@@ -1,57 +1,74 @@
 import {
-  BaseError, ContractFunctionRevertedError, createWalletClient, encodeFunctionData, formatEther, getAddress, http,
-  InternalRpcError, isAddress, isAddressEqual, isHex, keccak256, maxUint256, parseAbi, parseSignature, publicActions,
-  recoverTypedDataAddress, type Address, type Hash, type Hex, type LocalAccount, type Transport,
+  BaseError, ContractFunctionRevertedError, createWalletClient, encodeAbiParameters, encodeFunctionData, formatEther,
+  getAddress, http, InternalRpcError, isAddress, isAddressEqual, isHex, keccak256, maxUint256, parseAbi, parseEventLogs,
+  parseSignature, publicActions, recoverTypedDataAddress, TransactionReceiptNotFoundError, zeroAddress, zeroHash,
+  type Address, type Hash, type Hex, type LocalAccount, type Transport,
 } from 'viem';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { privateKeyToAccount } from 'viem/accounts';
 import { whitechainSepolia } from 'viem/chains';
+import {
+  addresses, KIND_INVOICE, KIND_SALE, merchantPayAbi, MIN_PAYMENT, nonceParams, receiveWithAuthorizationTypes, usdtDomain,
+} from '../../../packages/shared/contracts.ts';
 
-const ANKR_RPC = 'https://rpc.ankr.com/whitechain_testnet';
+// Ankr (G2 06:06: Whitechain's own RPC refused eth_sendRawTransactionSync with -32601, so the default went back to Ankr;
+// sends are plain eth_sendRawTransaction now). Upgrade: try Whitechain's RPC again for reads, which were ~2× faster.
+const DEFAULT_RPC = 'https://rpc.ankr.com/whitechain_testnet';
 // No retries: with viem's default 3, one slow call could hold the send lock for ~33 s. The lock is then held for at most
 // two RPC timeouts (simulate ‖ nonce, then the sync send); a client re-POSTs a 502 that carries no txHash.
 const RPC_TIMEOUT_MS = 8_000;
-const SYNC_SEND_TIMEOUT_MS = 4_000; // eth_sendRawTransactionSync inclusion wait (NFR-4: payment ≤ 5 s)
+// NFR-4 (payment ≤ 5 s): Ankr's eth_sendRawTransactionSync waited ~7 s for a 1 s-block chain (G2, 06:16), so send plainly
+// and poll our own receipt. Tests shrink these.
+export const TIMING = { receiptPollMs: 300, receiptTimeoutMs: 8_000 };
 const BALANCE_TTL_MS = 5_000; // /health WBT balance may be 5 s old (human 23:27, NFR-14 ≤ 300 ms p95); a send clears it
-// Refresh it every 3 s (human 01:14): stays inside the 5 s rule and keeps the Ankr socket warm (Node drops idle ones at ~4 s).
+// Refresh it every 3 s (human 01:14): stays inside the 5 s rule and keeps the RPC socket warm (Node drops idle ones at ~4 s).
 const BALANCE_REFRESH_MS = 3_000;
+const FEE_TTL_MS = 60_000; // MerchantPay.relayFee() for invoice signatures (owner-set; rarely changes)
 export const MAX_BODY_BYTES = 4096;
 
 // Drain guard (ARCHITECTURE §3 points 4–6; limits approved by the human 2026-11-05 22:53).
 const FEES = {
+  // ≥ 335k: a sale that repays an advance used 278k (claude-review 01:07). Many-holder routings above 400k are refused.
   gas: 400_000n,
   maxFeePerGas: 6_000_000_000n, // 6 gwei: break-even ≈6.2 gwei at 217k gas and the 0.10 USDT fee (human 00:45, drain review R5)
   // ponytail: constant tip = the node's own suggestion (0.001 gwei). Upgrade: read eth_maxPriorityFeePerGas, capped, if the testnet gets busy.
   maxPriorityFeePerGas: 1_000_000n,
 } as const;
-const MIN_VALUE = 1_000_000n; // 1 USDT
 const MAX_WINDOW_S = 900n; // validBefore ≤ now + 15 min
 const MIN_REMAINING_S = 30n; // validBefore ≥ now + 30 s, so it can't expire before it is mined
+// Limits (human 03:09) and the breaker (human 02:44, ARCHITECTURE §3 points 8 and 12).
+const DAILY_BUDGET_WEI = 100_000_000_000_000_000n; // 0.1 WBT per UTC day
+const CAP_FEE_WEI = FEES.gas * FEES.maxFeePerGas; // the most one send can cost: 0.0024 WBT
+const PAYER_SENDS_PER_HOUR = 10;
+const MERCHANT_SENDS_PER_HOUR = 200;
+const BREAKER_REVERTS_PER_HOUR = 3;
+const HOUR_MS = 3_600_000;
 
 const UINT_DECIMAL = /^\d{1,78}$/;
 const BYTES32_HEX = /^0x[0-9a-fA-F]{64}$/;
 const SIG65_HEX = /^0x[0-9a-fA-F]{130}$/;
 
-export const USDT: Address = '0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7';
-export const USDT_DOMAIN = { name: 'Tether USD', version: '1', chainId: 1874, verifyingContract: USDT } as const;
-const AUTH_TYPES = {
-  ReceiveWithAuthorization: [
-    { name: 'from', type: 'address' }, { name: 'to', type: 'address' }, { name: 'value', type: 'uint256' },
-    { name: 'validAfter', type: 'uint256' }, { name: 'validBefore', type: 'uint256' }, { name: 'nonce', type: 'bytes32' },
-  ],
-} as const;
+// The allowlist (FR-REL-2): exactly these two functions on this one contract. refund is the merchant's own tx.
+const MERCHANT_PAY = getAddress(addresses.merchantPay);
+const FORBIDDEN_MERCHANTS = new Set([zeroAddress, addresses.merchantPay, addresses.capitalMarket, addresses.usdt].map((a) => a.toLowerCase()));
+export const USDT = getAddress(addresses.usdt);
+export const USDT_DOMAIN = usdtDomain;
 export const USDT_ABI = parseAbi([
   'function authorizationState(address authorizer, bytes32 nonce) view returns (bool)',
   'function balanceOf(address account) view returns (uint256)',
 ]);
-// ponytail: Phase 1 stub ABI inlined; batch 004 imports MerchantPay's ABI from packages/shared.
-export const PULL_STUB_ABI = parseAbi([
-  'function pull(address from, uint256 value, uint256 validAfter, uint256 validBefore, bytes32 nonce, uint8 v, bytes32 r, bytes32 s)',
-]);
 
-type PullArgs = readonly [Address, bigint, bigint, bigint, Hex, number, Hex, Hex];
-interface Pull { from: Address; value: bigint; validAfter: bigint; validBefore: bigint; nonce: Hex; sig: Hex; args: PullArgs }
+type SaleArgs = readonly [Address, Hex, Address, bigint, bigint, bigint, Hex, number, Hex, Hex];
+type InvoiceArgs = readonly [bigint, Address, bigint, bigint, bigint, Hex, number, Hex, Hex];
+type Call = { functionName: 'paySale'; args: SaleArgs } | { functionName: 'payInvoice'; args: InvoiceArgs };
+/** A parsed payment: what the payer authorized (USDT EIP-3009) and the MerchantPay call that pulls it. */
+interface Payment {
+  from: Address; amount: bigint; validAfter: bigint; validBefore: bigint; nonce: Hex; sig: Hex; call: Call;
+  merchant?: Address; // sales only
+  feeOnTop: boolean; // invoices: the payer signs amount + relayFee
+}
 interface Reject { status: number; code: string; error: string; txHash?: Hash }
-interface Sent { txHash: Hash; blockNumber: bigint }
+interface Sent { txHash: Hash; blockNumber: bigint; paymentId?: bigint; gasUsed: bigint; gasCostWei: bigint }
 
 export function makeClient(account: LocalAccount, transport: Transport) {
   return createWalletClient({ account, chain: whitechainSepolia, transport }).extend(publicActions);
@@ -60,7 +77,7 @@ export type RelayerClient = ReturnType<typeof makeClient>;
 
 let liveClient: RelayerClient | undefined;
 
-/** The live client: relayer key from the environment (never logged or returned), Ankr RPC by default. */
+/** The live client: relayer key from the environment (never logged or returned), Whitechain's RPC by default. */
 export function relayerClient(): RelayerClient {
   if (liveClient) return liveClient;
   const key = process.env.RELAYER_PRIVATE_KEY;
@@ -71,7 +88,8 @@ export function relayerClient(): RelayerClient {
   } catch {
     throw new Error('RELAYER_PRIVATE_KEY is not a valid private key'); // noble's own message prints the number
   }
-  liveClient = makeClient(account, http(process.env.RPC_URL ?? ANKR_RPC, { timeout: RPC_TIMEOUT_MS, retryCount: 0 }));
+  // batch: one HTTP request per round keeps it on the warm socket (cold 5-call round 916 → 345 ms on Ankr).
+  liveClient = makeClient(account, http(process.env.RPC_URL ?? DEFAULT_RPC, { timeout: RPC_TIMEOUT_MS, retryCount: 0, batch: true }));
   // ponytail: only a long-running process keeps refreshing; on Vercel the first /health of an invocation may read live.
   startBalanceRefresh(liveClient, BALANCE_REFRESH_MS);
   return liveClient;
@@ -83,7 +101,7 @@ const nowSeconds = () => BigInt(Math.floor(Date.now() / 1000));
 const reason = (e: unknown) => (e instanceof BaseError ? e.shortMessage : 'unexpected error');
 const REPLAY = reject(422, 'replay', 'this authorization was already used');
 const EXPIRED = reject(422, 'expired', 'validBefore must leave at least 30 s');
-const tooLate = (p: Pull) => p.validBefore < nowSeconds() + MIN_REMAINING_S;
+const tooLate = (p: Payment) => p.validBefore < nowSeconds() + MIN_REMAINING_S;
 
 const balances = new Map<Address, { wei: bigint; at: number }>();
 let sendCount = 0; // a balance read that overlaps a send is returned but not cached
@@ -104,9 +122,57 @@ export function startBalanceRefresh(client: RelayerClient, everyMs: number): () 
   return () => clearInterval(timer);
 }
 
-// ponytail: in-process, one relayer process. Upgrade: a rel_sent table + Postgres advisory lock (batch 003, multi-instance Vercel).
+// ponytail: per process, per relayer address. Upgrade: rel_sent + Postgres advisory lock (the plan-reviewed full 006 spec).
+interface Ledger { day: string; spentWei: bigint; reverts: number[]; banned: Set<string>; sends: Map<string, number[]> }
+const ledgers = new Map<Address, Ledger>();
+function ledgerOf(client: RelayerClient): Ledger {
+  const day = new Date().toISOString().slice(0, 10); // UTC
+  const current = ledgers.get(client.account.address);
+  if (current?.day === day) return current;
+  const fresh: Ledger = { day, spentWei: 0n, reverts: current?.reverts ?? [], banned: current?.banned ?? new Set(), sends: current?.sends ?? new Map() };
+  ledgers.set(client.account.address, fresh);
+  return fresh;
+}
+const lastHour = (times: number[] = []) => times.filter((t) => Date.now() - t < HOUR_MS);
+const sendKeys = (p: Payment) => [`payer:${p.from.toLowerCase()}`, ...(p.merchant ? [`merchant:${p.merchant.toLowerCase()}`] : [])];
+
+/** Breaker, ban, budget and rate limits: free, so they run before any RPC and again inside the lock. */
+function ledgerChecks(client: RelayerClient, p: Payment): Reject | undefined {
+  const l = ledgerOf(client);
+  if (lastHour(l.reverts).length >= BREAKER_REVERTS_PER_HOUR) return reject(503, 'breaker_open', 'relaying is paused after repeated reverts; retry later');
+  if (l.banned.has(p.from.toLowerCase())) return reject(422, 'payer_banned', 'this payer caused a reverted relay');
+  if (l.spentWei + CAP_FEE_WEI > DAILY_BUDGET_WEI) return reject(503, 'budget_exhausted', "today's relay budget is used up; retry tomorrow");
+  const [payerKey, merchantKey] = sendKeys(p);
+  if (lastHour(l.sends.get(payerKey)).length >= PAYER_SENDS_PER_HOUR
+    || (merchantKey && lastHour(l.sends.get(merchantKey)).length >= MERCHANT_SENDS_PER_HOUR)) {
+    return reject(429, 'rate_limited', 'too many payments in the last hour; retry later');
+  }
+}
+
+/** After a broadcast attempt: count the spend (worst case when unknown), the send, and a mined revert. */
+function recordSend(client: RelayerClient, p: Payment, feeWei: bigint, minedRevert: boolean, txHash: Hash) {
+  const l = ledgerOf(client);
+  l.spentWei += feeWei;
+  for (const key of sendKeys(p)) l.sends.set(key, [...lastHour(l.sends.get(key)), Date.now()]);
+  if (!minedRevert) return;
+  l.banned.add(p.from.toLowerCase());
+  l.reverts = [...lastHour(l.reverts), Date.now()];
+  process.stderr.write(`ALERT reverted ${txHash} payer ${p.from}\n`);
+}
+
+let feeRead: { at: number; fee: Promise<bigint> } | undefined;
+/** MerchantPay.relayFee(), single-flight and cached for 60 s; a failed read is not cached. */
+function relayFee(client: RelayerClient): Promise<bigint> {
+  if (feeRead && Date.now() - feeRead.at < FEE_TTL_MS) return feeRead.fee;
+  const fee = client.readContract({ address: MERCHANT_PAY, abi: merchantPayAbi, functionName: 'relayFee' });
+  feeRead = { at: Date.now(), fee };
+  fee.catch(() => { feeRead = undefined; });
+  return fee;
+}
+
+// ponytail: in-process, one relayer process. Upgrade: a rel_sent table + Postgres advisory lock (batch 006, multi-instance Vercel).
 const sentAuthorizations = new Set<string>();
-const sentKey = (p: Pull) => `${p.from.toLowerCase()}:${p.nonce.toLowerCase()}`;
+const sentKey = (p: Payment) => `${p.from.toLowerCase()}:${p.nonce.toLowerCase()}`;
 let sendQueue: Promise<unknown> = Promise.resolve();
 function serialized<T>(run: () => Promise<T>): Promise<T> {
   const result = sendQueue.then(run, run);
@@ -124,21 +190,34 @@ function uint256(x: unknown): bigint | undefined {
   return n <= maxUint256 ? n : undefined;
 }
 
+const bytes32 = (x: unknown): Hex | undefined => (typeof x === 'string' && BYTES32_HEX.test(x) ? (x as Hex) : undefined);
+
+// MerchantPay's nonce: keccak256(abi.encode(chainid, merchantPay, kind, ref, orderRef, amount, salt)) (packages/shared nonceParams).
+const merchantPayNonce = (kind: number, ref: bigint, orderRef: Hex, amount: bigint, salt: Hex) =>
+  keccak256(encodeAbiParameters(nonceParams, [BigInt(whitechainSepolia.id), MERCHANT_PAY, kind, ref, orderRef, amount, salt]));
+
 // A revert means "this authorization won't work" (422); anything else (RPC down) leaves the signature reusable (502).
-function isRevert(e: unknown): boolean {
-  if (!(e instanceof BaseError)) return false;
+function revertOf(e: unknown): ContractFunctionRevertedError | undefined {
+  if (!(e instanceof BaseError)) return undefined;
   const revert = e.walk((cause) => cause instanceof ContractFunctionRevertedError);
-  if (!(revert instanceof ContractFunctionRevertedError)) return false;
+  if (!(revert instanceof ContractFunctionRevertedError)) return undefined;
   // viem also labels a JSON-RPC -32603 "Internal error" a revert; without hex revert data that's a node failure.
-  return isHex(revert.raw) || e.walk((cause) => cause instanceof InternalRpcError) === null;
+  return isHex(revert.raw) || e.walk((cause) => cause instanceof InternalRpcError) === null ? revert : undefined;
 }
 
-const simulationReject = (e: unknown) => isRevert(e)
-  ? reject(422, 'would_revert', reason(e))
-  : reject(502, 'rpc_error', 'the RPC node failed during simulation');
+function simulationReject(e: unknown): Reject {
+  const revert = revertOf(e);
+  if (!revert) return reject(502, 'rpc_error', 'the RPC node failed during simulation');
+  const name = revert.data?.errorName;
+  if (name === 'OrderPaid' || name === 'InvoiceNotOpen') return reject(422, 'order_paid', 'this order or invoice is already paid');
+  if (name === 'WrongAmount') return reject(422, 'wrong_amount', 'the amount does not match what the invoice still owes');
+  if (name === 'InvalidOrder') return reject(422, 'bad_merchant', 'this merchant address is not allowed');
+  if (name === 'EnforcedPause') return reject(503, 'paused', 'payments are paused; retry later');
+  return reject(422, 'would_revert', reason(e));
+}
 
 /** Validates a /relay body at the trust boundary. Never touches the chain. */
-export function parsePull(body: string): { pull: Pull } | { error: string } {
+export function parsePayment(body: string): { payment: Payment } | { error: string } {
   if (Buffer.byteLength(body) > MAX_BODY_BYTES) return { error: 'body too large' };
   let input: unknown;
   try {
@@ -146,71 +225,115 @@ export function parsePull(body: string): { pull: Pull } | { error: string } {
   } catch {
     return { error: 'body is not JSON' };
   }
-  if (!isRecord(input) || input.action !== 'pull') return { error: 'unknown action (this relayer supports "pull")' };
+  if (!isRecord(input) || (input.action !== 'paySale' && input.action !== 'payInvoice')) {
+    return { error: 'unknown action (this relayer supports "paySale" and "payInvoice")' };
+  }
   const { args, sig } = input;
   if (!isRecord(args)) return { error: 'args must be an object' };
-  const { from, nonce } = args;
-  if (typeof from !== 'string' || !isAddress(from)) return { error: 'args.from must be an address' };
-  const [value, validAfter, validBefore] = [args.value, args.validAfter, args.validBefore].map(uint256);
-  if (value === undefined || validAfter === undefined || validBefore === undefined) {
-    return { error: 'args.value, validAfter and validBefore must be uint256 decimal strings' };
+  if (typeof args.from !== 'string' || !isAddress(args.from)) return { error: 'args.from must be an address' };
+  const [amount, validAfter, validBefore] = [args.amount, args.validAfter, args.validBefore].map(uint256);
+  if (amount === undefined || validAfter === undefined || validBefore === undefined) {
+    return { error: 'args.amount, validAfter and validBefore must be uint256 decimal strings' };
   }
-  if (value === 0n) return { error: 'args.value must be above 0' };
-  if (typeof nonce !== 'string' || !BYTES32_HEX.test(nonce)) return { error: 'args.nonce must be 32 bytes of hex' };
+  if (amount === 0n) return { error: 'args.amount must be above 0' };
+  const salt = bytes32(args.salt);
+  if (!salt) return { error: 'args.salt must be 32 bytes of hex' };
   if (typeof sig !== 'string' || !SIG65_HEX.test(sig)) return { error: 'sig must be 65 bytes of hex' };
+  let v: number, r: Hex, s: Hex;
   try {
-    const { r, s, yParity } = parseSignature(sig as Hex);
-    const p = { from: getAddress(from), value, validAfter, validBefore, nonce: nonce as Hex, sig: sig as Hex };
-    return { pull: { ...p, args: [p.from, value, validAfter, validBefore, p.nonce, yParity + 27, r, s] } };
+    const parts = parseSignature(sig as Hex);
+    [v, r, s] = [parts.yParity + 27, parts.r, parts.s];
   } catch {
     return { error: 'sig is not a valid signature' };
   }
+  const from = getAddress(args.from);
+  const base = { from, amount, validAfter, validBefore, sig: sig as Hex };
+  if (input.action === 'paySale') {
+    if (typeof args.merchant !== 'string' || !isAddress(args.merchant)) return { error: 'args.merchant must be an address' };
+    const orderRef = bytes32(args.orderRef);
+    if (!orderRef || BigInt(orderRef) === 0n) return { error: 'args.orderRef must be 32 non-zero bytes of hex' };
+    const merchant = getAddress(args.merchant);
+    const nonce = merchantPayNonce(KIND_SALE, BigInt(merchant), orderRef, amount, salt);
+    const call: Call = { functionName: 'paySale', args: [merchant, orderRef, from, amount, validAfter, validBefore, salt, v, r, s] };
+    return { payment: { ...base, nonce, call, merchant, feeOnTop: false } };
+  }
+  const invoiceId = uint256(args.invoiceId);
+  if (invoiceId === undefined) return { error: 'args.invoiceId must be a uint256 decimal string' };
+  const nonce = merchantPayNonce(KIND_INVOICE, invoiceId, zeroHash, amount, salt);
+  const call: Call = { functionName: 'payInvoice', args: [invoiceId, from, amount, validAfter, validBefore, salt, v, r, s] };
+  return { payment: { ...base, nonce, call, feeOnTop: true } };
 }
 
-/** Free checks: the time window, the minimum and the payer's signature. */
-async function localChecks(p: Pull, target: Address): Promise<Reject | undefined> {
+/** What the payer must hold and sign: the sale price, or an invoice's credited amount + relayFee. */
+const signedValue = async (client: RelayerClient, p: Payment) => (p.feeOnTop ? p.amount + (await relayFee(client)) : p.amount);
+
+/** Free checks (the relayFee read for invoices is cached): merchant, window, minimum, signature, sent set. */
+async function localChecks(client: RelayerClient, p: Payment): Promise<Reject | undefined> {
+  if (p.merchant && FORBIDDEN_MERCHANTS.has(p.merchant.toLowerCase())) return reject(422, 'bad_merchant', 'this merchant address is not allowed');
   const now = nowSeconds();
   if (p.validAfter > now) return reject(422, 'not_yet_valid', 'validAfter is in the future');
   if (tooLate(p)) return EXPIRED;
   if (p.validBefore > now + MAX_WINDOW_S) return reject(422, 'window_too_long', 'validBefore must be within 15 min');
-  if (p.value < MIN_VALUE) return reject(422, 'below_minimum', 'value must be at least 1 USDT');
-  const message = { from: p.from, to: target, value: p.value, validAfter: p.validAfter, validBefore: p.validBefore, nonce: p.nonce };
+  // Sales: at least 1 USDT. Invoices: the contract allows an exact remainder below 1 USDT and enforces its own rule.
+  if (!p.feeOnTop && p.amount < MIN_PAYMENT) return reject(422, 'below_minimum', 'amount must be at least 1 USDT');
+  const message = { from: p.from, to: MERCHANT_PAY, value: await signedValue(client, p), validAfter: p.validAfter, validBefore: p.validBefore, nonce: p.nonce };
   const signer = await recoverTypedDataAddress({
-    domain: USDT_DOMAIN, types: AUTH_TYPES, primaryType: 'ReceiveWithAuthorization', message, signature: p.sig,
+    domain: usdtDomain, types: receiveWithAuthorizationTypes, primaryType: 'ReceiveWithAuthorization', message, signature: p.sig,
   }).catch(() => undefined);
   // An ECDSA signature never recovers to a contract, so ERC-1271 payers stop here.
-  if (!signer || !isAddressEqual(signer, p.from)) return reject(422, 'bad_signature', 'the signature is not from args.from for this target');
+  if (!signer || !isAddressEqual(signer, p.from)) return reject(422, 'bad_signature', 'the signature is not from args.from for this payment');
   if (sentAuthorizations.has(sentKey(p))) return REPLAY;
+  return ledgerChecks(client, p);
 }
 
-const simulate = (client: RelayerClient, target: Address, p: Pull) => client
-  .simulateContract({ address: target, abi: PULL_STUB_ABI, functionName: 'pull', args: p.args, ...FEES })
-  .then(() => undefined, (e: unknown) => e);
+const simulate = (client: RelayerClient, p: Payment) => (p.call.functionName === 'paySale'
+  ? client.simulateContract({ address: MERCHANT_PAY, abi: merchantPayAbi, functionName: 'paySale', args: p.call.args, ...FEES })
+  : client.simulateContract({ address: MERCHANT_PAY, abi: merchantPayAbi, functionName: 'payInvoice', args: p.call.args, ...FEES })
+).then(() => undefined, (e: unknown) => e);
+
+const calldata = (p: Payment) => (p.call.functionName === 'paySale'
+  ? encodeFunctionData({ abi: merchantPayAbi, functionName: 'paySale', args: p.call.args })
+  : encodeFunctionData({ abi: merchantPayAbi, functionName: 'payInvoice', args: p.call.args }));
 
 /** One parallel round of reads plus a gas-capped simulation; throws only if a read fails. */
-async function rpcChecks(client: RelayerClient, p: Pull, target: Address): Promise<Reject | undefined> {
+async function rpcChecks(client: RelayerClient, p: Payment): Promise<Reject | undefined> {
+  const value = await signedValue(client, p);
   const [used, code, balance, gasPrice, failedSimulation] = await Promise.all([
     client.readContract({ address: USDT, abi: USDT_ABI, functionName: 'authorizationState', args: [p.from, p.nonce] }),
     client.getCode({ address: p.from }),
     client.readContract({ address: USDT, abi: USDT_ABI, functionName: 'balanceOf', args: [p.from] }),
     client.getGasPrice(),
-    simulate(client, target, p),
+    simulate(client, p),
   ]);
   if (used) return REPLAY;
   if (code !== undefined && code !== '0x') return reject(422, 'payer_has_code', 'the payer must be a plain account (no contract code)');
-  if (balance < p.value) return reject(422, 'insufficient_funds', 'the payer does not hold enough USDT');
+  if (balance < value) return reject(422, 'insufficient_funds', 'the payer does not hold enough USDT');
   if (gasPrice > FEES.maxFeePerGas) return reject(503, 'gas_price_cap', 'network gas price is above the relayer cap; retry later');
   if (failedSimulation) return simulationReject(failedSimulation);
 }
 
-/** Runs inside the send lock: re-simulate on fresh state, sign with capped fees, send once, check the receipt. */
-async function send(client: RelayerClient, p: Pull, target: Address): Promise<Reject | Sent> {
+/** Our own receipt, looked up by our hash only (so never a replacement's), polled until TIMING.receiptTimeoutMs. */
+async function ownReceipt(client: RelayerClient, hash: Hash) {
+  const deadline = Date.now() + TIMING.receiptTimeoutMs;
+  for (;;) {
+    const receipt = await client.getTransactionReceipt({ hash }).catch((e: unknown) => {
+      if (e instanceof TransactionReceiptNotFoundError) return undefined;
+      throw e;
+    });
+    if (receipt) return receipt;
+    if (Date.now() >= deadline) return undefined;
+    await sleep(TIMING.receiptPollMs);
+  }
+}
+
+/** Runs inside the send lock: re-simulate on fresh state, sign with capped fees, send once, poll our receipt. */
+async function send(client: RelayerClient, p: Payment): Promise<Reject | Sent> {
   if (tooLate(p)) return EXPIRED; // queue time counts
   if (sentAuthorizations.has(sentKey(p))) return REPLAY;
   let nonce: number;
   try {
     const [failedSimulation, pending] = await Promise.all([
-      simulate(client, target, p),
+      simulate(client, p),
       client.getTransactionCount({ address: client.account.address, blockTag: 'pending' }),
     ]);
     if (failedSimulation) return simulationReject(failedSimulation);
@@ -219,16 +342,35 @@ async function send(client: RelayerClient, p: Pull, target: Address): Promise<Re
     return reject(502, 'rpc_error', reason(e));
   }
   if (tooLate(p)) return EXPIRED; // and so does a slow simulate/nonce step: never sign what could expire unmined
-  const data = encodeFunctionData({ abi: PULL_STUB_ABI, functionName: 'pull', args: p.args });
-  const signed = await client.account.signTransaction({ chainId: whitechainSepolia.id, type: 'eip1559', to: target, data, nonce, ...FEES });
+  const ledger = ledgerChecks(client, p); // queued requests: the budget or the breaker may have moved while we waited
+  if (ledger) return ledger;
+  const signed = await client.account.signTransaction({
+    chainId: whitechainSepolia.id, type: 'eip1559', to: MERCHANT_PAY, data: calldata(p), nonce, ...FEES,
+  });
   const txHash = keccak256(signed);
   sentAuthorizations.add(sentKey(p)); // kept even if the send fails: the tx may still be pending, so a re-POST must not pay twice
   try {
-    const receipt = await client.sendRawTransactionSync({ serializedTransaction: signed, timeout: SYNC_SEND_TIMEOUT_MS });
-    if (receipt.transactionHash.toLowerCase() !== txHash) return reject(502, 'receipt_mismatch', 'the node returned a receipt for another transaction', txHash);
-    if (receipt.status !== 'success') return reject(502, 'reverted', 'the transaction was mined and reverted', txHash);
-    return { txHash, blockNumber: receipt.blockNumber };
+    await client.sendRawTransaction({ serializedTransaction: signed });
+    const receipt = await ownReceipt(client, txHash);
+    if (!receipt) {
+      recordSend(client, p, CAP_FEE_WEI, false, txHash); // may still be mined: count the worst case
+      return reject(502, 'rpc_error', 'not mined within 8 s; poll the txHash', txHash);
+    }
+    if (receipt.transactionHash.toLowerCase() !== txHash) {
+      recordSend(client, p, CAP_FEE_WEI, false, txHash);
+      return reject(502, 'receipt_mismatch', 'the node returned a receipt for another transaction', txHash);
+    }
+    // OP Stack: the L1 data fee is charged on top of gasUsed × price (viem's OP formatter puts it on the receipt).
+    const l1Fee = 'l1Fee' in receipt && typeof receipt.l1Fee === 'bigint' ? receipt.l1Fee : 0n;
+    const gasCostWei = receipt.gasUsed * receipt.effectiveGasPrice + l1Fee;
+    const reverted = receipt.status !== 'success';
+    recordSend(client, p, gasCostWei, reverted, txHash);
+    if (reverted) return reject(502, 'reverted', 'the transaction was mined and reverted', txHash);
+    const paid = parseEventLogs({ abi: merchantPayAbi, eventName: 'Paid', logs: receipt.logs })
+      .find((log) => isAddressEqual(log.address, MERCHANT_PAY));
+    return { txHash, blockNumber: receipt.blockNumber, paymentId: paid?.args.paymentId, gasUsed: receipt.gasUsed, gasCostWei };
   } catch (e) {
+    recordSend(client, p, CAP_FEE_WEI, false, txHash); // outcome unknown: count the worst case
     return reject(502, 'rpc_error', reason(e), txHash);
   } finally {
     sendCount += 1; // gas was (probably) spent: drop the cached balance and any read in flight
@@ -238,31 +380,35 @@ async function send(client: RelayerClient, p: Pull, target: Address): Promise<Re
 
 /**
  * POST /relay: parse → free checks → one RPC pre-check round → send lock (re-simulate, sign, sync send).
- * Every rejection happens before a transaction exists (AT-10), and the target and function are fixed (FR-REL-2).
+ * Every rejection happens before a transaction exists (AT-10), and only MerchantPay paySale/payInvoice are called (FR-REL-2).
  */
-export async function relay(body: string, client: RelayerClient, target: Address): Promise<Response> {
-  const parsed = parsePull(body);
+export async function relay(body: string, client: RelayerClient): Promise<Response> {
+  const parsed = parsePayment(body);
   if ('error' in parsed) return respond(reject(400, 'bad_request', parsed.error));
-  const local = await localChecks(parsed.pull, target);
-  if (local) return respond(local);
+  const p = parsed.payment;
   try {
-    const pre = await rpcChecks(client, parsed.pull, target);
+    const pre = (await localChecks(client, p)) ?? (await rpcChecks(client, p));
     if (pre) return respond(pre);
   } catch (e) {
     return respond(reject(502, 'rpc_error', reason(e)));
   }
-  const result = await serialized(() => send(client, parsed.pull, target));
+  const result = await serialized(() => send(client, p));
   if ('code' in result) return respond(result);
-  return Response.json({ txHash: result.txHash, blockNumber: result.blockNumber.toString() });
+  return Response.json({
+    txHash: result.txHash, blockNumber: result.blockNumber.toString(), paymentId: result.paymentId?.toString(),
+    gasUsed: result.gasUsed.toString(), gasCostWei: result.gasCostWei.toString(),
+  });
 }
 
-/** GET /health (skeleton): the real WBT balance; spend, budget and fee fields arrive with batch 003's storage. */
+/** GET /health: the WBT balance (≤ 5 s old), today's relay spend and what is left of the 0.1 WBT budget (this process). */
 export async function health(client: RelayerClient): Promise<Response> {
   try {
     const wei = await wbtBalance(client);
+    const { spentWei } = ledgerOf(client);
     return Response.json({
       relayer: client.account.address, wbt: formatEther(wei),
-      gasSpentToday: null, budgetLeft: null, usdtFeesUnswapped: null, paused: false,
+      gasSpentToday: formatEther(spentWei), budgetLeft: formatEther(spentWei < DAILY_BUDGET_WEI ? DAILY_BUDGET_WEI - spentWei : 0n),
+      usdtFeesUnswapped: null, paused: false,
     });
   } catch (e) {
     return Response.json({ error: reason(e), code: 'rpc_error' }, { status: 502 });

@@ -15,6 +15,7 @@ const abi = parseAbi([
   "function cancelInvoice(uint256 id)",
   "function refund(uint256 paymentId, uint256 amount)",
   "function allowance(address owner, address spender) view returns (uint256)",
+  "function balanceOf(address owner) view returns (uint256)",
   "function approve(address spender, uint256 amount) returns (bool)",
   "event InvoiceCreated(uint256 indexed id, address indexed merchant, address indexed customer, uint256 amount, uint64 dueDate, bytes32 refHash)",
   "error NotMerchant()",
@@ -28,7 +29,7 @@ const abi = parseAbi([
 // eth_sendTransaction, and mines each one at once with a receipt (InvoiceCreated for createInvoice). refund behaves
 // like MerchantPay over TetherTokenV2: RefundTooLarge above what's left, then transferFrom checks the merchant's
 // balance before its allowance, with USDT's own reason strings (security review F2, code review F2).
-function fakeWallet({ account = MERCHANT, chainId = 1874, allowance = 0n, balance = 1_000_000_000n, left = 25_000_000n, reverts = {}, rejectSend = false, newId = 7n } = {}) {
+function fakeWallet({ account = MERCHANT, chainId = 1874, allowance = 0n, balance = 1_000_000_000n, left = 25_000_000n, reverts = {}, rejectSend = false, newId = 7n, bareRevert = false } = {}) {
   const sent = [];
   const receipts = new Map();
   const decode = ({ data }) => decodeFunctionData({ abi, data });
@@ -50,11 +51,14 @@ function fakeWallet({ account = MERCHANT, chainId = 1874, allowance = 0n, balanc
         };
         if (reverts[functionName]) revert(reverts[functionName]);
         if (functionName === "refund") {
+          if (bareRevert) throw { code: 3, message: "execution reverted" }; // a wallet that sends no revert data
           if (args[1] > left) revert("RefundTooLarge");
           if (balance < args[1]) revert("Error", "ERC20: transfer amount exceeds balance");
-          if (allowance < args[1]) revert("Error", "ERC20: insufficient allowance");
+          // TetherTokenV2 is OZ ERC20Upgradeable 4.4: its allowance reason, read on chain 1874 (security review 005 F-N5)
+          if (allowance < args[1]) revert("Error", "ERC20: transfer amount exceeds allowance");
         }
         if (functionName === "allowance") return encodeAbiParameters([{ type: "uint256" }], [allowance]);
+        if (functionName === "balanceOf") return encodeAbiParameters([{ type: "uint256" }], [balance]);
         if (functionName === "createInvoice") return encodeAbiParameters([{ type: "uint256" }], [newId]);
         if (functionName === "approve") return encodeAbiParameters([{ type: "bool" }], [true]);
         return "0x";
@@ -167,4 +171,17 @@ test("a request cancelled in the wallet says so", async () => {
   const { provider } = fakeWallet({ allowance: 5_000_000n, rejectSend: true });
   const error = await refund(await connectMerchant(provider, MERCHANT, MERCHANT_PAY), 3n, 1_500_000n).catch((e) => e);
   assert.equal(walletError(error), "You cancelled the request in your wallet.");
+});
+
+test("a dry run that fails for any reason but the allowance stops the refund before an approval (security F-N5)", async () => {
+  const { provider, sent } = fakeWallet({ allowance: 0n, bareRevert: true });
+  await assert.rejects(refund(await connectMerchant(provider, MERCHANT, MERCHANT_PAY), 3n, 1_500_000n));
+  assert.equal(sent.length, 0, "nothing approved for a refund whose failure we can't explain");
+});
+
+test("the balance is read before any approval, so a short wallet never spends an approval (security F-N5)", async () => {
+  const { provider, sent } = fakeWallet({ allowance: 0n, balance: 1_499_999n, bareRevert: true });
+  const error = await refund(await connectMerchant(provider, MERCHANT, MERCHANT_PAY), 3n, 1_500_000n).catch((e) => e);
+  assert.equal(walletError(error), "Your wallet doesn't have enough USDT for this refund.");
+  assert.equal(sent.length, 0);
 });

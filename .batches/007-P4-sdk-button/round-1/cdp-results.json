@@ -1,0 +1,91 @@
+{
+ "375-light": {
+  "focus1": {
+   "cls": "mc-pay-button",
+   "text": "Pay 25.00 USDT",
+   "outline": "auto 1px rgb(0, 95, 204)",
+   "matches": true
+  },
+  "info": {
+   "btns": [
+    "mc-pay-button|Pay 25.00 USDT|button|123e4567-e89b-12d3-a456-426614174000",
+    "mc-pay-button|Pay with USDT|button|cafe-25",
+    "|Pay with USDT|submit|shop-sess-1",
+    "|Late link|submit|late-slug"
+   ],
+   "w": 375,
+   "iw": 375
+  },
+  "errs": [
+   "Merchant Capital+ button: bad data-session/data-link (letters, digits, - and _ only)."
+  ]
+ },
+ "enter-session": "http://localhost:4400/checkout/123e4567-e89b-12d3-a456-426614174000",
+ "click-link": "http://localhost:4400/l/cafe-25",
+ "click-shop": "http://localhost:4400/checkout/shop-sess-1",
+ "click-late": "http://localhost:4400/l/late-slug",
+ "click-inner-span": "http://localhost:4400/checkout/shop-sess-1",
+ "375-dark": {
+  "focus1": {
+   "cls": "mc-pay-button",
+   "text": "Pay 25.00 USDT",
+   "outline": "auto 1px rgb(238, 238, 238)",
+   "matches": true
+  },
+  "info": {
+   "btns": [
+    "mc-pay-button|Pay 25.00 USDT|button|123e4567-e89b-12d3-a456-426614174000",
+    "mc-pay-button|Pay with USDT|button|cafe-25",
+    "|Pay with USDT|submit|shop-sess-1",
+    "|Late link|submit|late-slug"
+   ],
+   "w": 375,
+   "iw": 375
+  },
+  "errs": [
+   "Merchant Capital+ button: bad data-session/data-link (letters, digits, - and _ only)."
+  ]
+ },
+ "1440-light": {
+  "focus1": {
+   "cls": "mc-pay-button",
+   "text": "Pay 25.00 USDT",
+   "outline": "auto 1px rgb(0, 95, 204)",
+   "matches": true
+  },
+  "info": {
+   "btns": [
+    "mc-pay-button|Pay 25.00 USDT|button|123e4567-e89b-12d3-a456-426614174000",
+    "mc-pay-button|Pay with USDT|button|cafe-25",
+    "|Pay with USDT|submit|shop-sess-1",
+    "|Late link|submit|late-slug"
+   ],
+   "w": 1440,
+   "iw": 1440
+  },
+  "errs": [
+   "Merchant Capital+ button: bad data-session/data-link (letters, digits, - and _ only)."
+  ]
+ },
+ "1440-dark": {
+  "focus1": {
+   "cls": "mc-pay-button",
+   "text": "Pay 25.00 USDT",
+   "outline": "auto 1px rgb(238, 238, 238)",
+   "matches": true
+  },
+  "info": {
+   "btns": [
+    "mc-pay-button|Pay 25.00 USDT|button|123e4567-e89b-12d3-a456-426614174000",
+    "mc-pay-button|Pay with USDT|button|cafe-25",
+    "|Pay with USDT|submit|shop-sess-1",
+    "|Late link|submit|late-slug"
+   ],
+   "w": 1440,
+   "iw": 1440
+  },
+  "errs": [
+   "Merchant Capital+ button: bad data-session/data-link (letters, digits, - and _ only)."
+  ]
+ }
+}
