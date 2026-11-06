@@ -12,6 +12,8 @@ export interface PaymentRow {
   amount: bigint; // what the customer paid (an invoice's includes the fee), from payments(id) once read
   /** Our own checkout record; a row only the log index knows needs the chain to confirm it. */
   ours: boolean;
+  /** The checkout whose receipt page (/r/<id>) shows this payment; null for a row only the log index knows. */
+  receiptId: string | null;
 }
 
 /** This merchant's payment candidates: checkouts our server recorded, plus every Paid log the index has (invoices,
@@ -20,11 +22,11 @@ export function paymentRows(sessions: { session: Session; payment: Payment }[], 
   const rows = new Map<string, PaymentRow>();
   for (const log of logs) {
     const id = log.paymentId.toString();
-    rows.set(id, { key: id, paymentId: id, label: log.invoiceId ? `Invoice ${log.invoiceId}` : `Payment ${id}`, txHash: log.txHash, paidAt: log.time, amount: log.gross, ours: false });
+    rows.set(id, { key: id, paymentId: id, label: log.invoiceId ? `Invoice ${log.invoiceId}` : `Payment ${id}`, txHash: log.txHash, paidAt: log.time, amount: log.gross, ours: false, receiptId: null });
   }
   for (const { session, payment } of sessions) {
     const key = payment.paymentId ?? session.id;
-    rows.set(key, { key, paymentId: payment.paymentId, label: session.reference || `Payment ${payment.paymentId}`, txHash: payment.txHash ?? rows.get(key)?.txHash ?? null, paidAt: payment.paidAt, amount: session.amount, ours: true });
+    rows.set(key, { key, paymentId: payment.paymentId, label: session.reference || `Payment ${payment.paymentId}`, txHash: payment.txHash ?? rows.get(key)?.txHash ?? null, paidAt: payment.paidAt, amount: session.amount, ours: true, receiptId: session.id });
   }
   return [...rows.values()].sort((a, b) => b.paidAt - a.paidAt);
 }
@@ -97,5 +99,18 @@ export function chartPaths(values: number[], w: number, h: number, p: number) {
   const points = values.map((v, i) => [p + i * step, h - p - (v / max) * (h - p * 2)] as const);
   const line = points.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`).join(" ");
   const [lastX, lastY] = points[points.length - 1];
-  return { line, area: `${line} L${lastX.toFixed(1)} ${h - p} L${p} ${h - p} Z`, last: { x: lastX, y: lastY } };
+  return { line, area: `${line} L${lastX.toFixed(1)} ${h - p} L${p} ${h - p} Z`, last: { x: lastX, y: lastY }, points: points.map(([x, y]) => ({ x, y })) };
+}
+
+const WEI_PER_STEP = 10n ** 12n; // 6 decimals of WBT (18 decimals)
+
+/** One line on what WBT is, next to every fee figure (G4 UX review F1). */
+export const WBT_HINT = "WBT is Whitechain's own coin, used to pay network fees. The relayer pays them, so your customers never need any.";
+
+/** WBT for a merchant's eyes: rounded half up to a fixed 6 decimals (so a column lines up; G4 UX review F1), never an
+ *  exponent; a fee under 0.000001 reads "<0.000001" rather than a misleading 0. */
+export function formatWbt(wei: bigint): string {
+  if (wei > 0n && wei < WEI_PER_STEP / 2n) return "<0.000001";
+  const steps = (wei + WEI_PER_STEP / 2n) / WEI_PER_STEP;
+  return `${steps / 1_000_000n}.${(steps % 1_000_000n).toString().padStart(6, "0")}`;
 }

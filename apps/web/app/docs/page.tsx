@@ -1,7 +1,7 @@
 // Developer docs (FR-GW-8): add the gateway in three steps (pay button, a checkout from your server, webhooks), the
 // test keys, and "Simulate a payment" (test mode). Public and prerendered, except the keys box, which streams in.
-// The keys box never shows a key, not even its start (security review 006 F5): until the API keys screen (FR-GW-6)
-// lands, it says whether this server has one, with a fingerprint the shop can compare.
+// The keys box never shows a key, not even its start (security review 006 F5): it links a signed-in merchant to the
+// API keys screen (/merchant/developers, FR-GW-6), and says whether this server has the demo shop's key, by fingerprint.
 import { headers } from "next/headers";
 import { Suspense } from "react";
 import { buttonClasses } from "@/components/Button";
@@ -28,25 +28,38 @@ const session = await gateway.sessions.create({
   orderId: "order-42",
   returnUrl: "https://shop.example/thanks",
 });
-// Send the customer to session.url (a 303 redirect),
-// or give session.id to the pay button.`;
+// Save session.id with your order: webhooks name the
+// checkout by it. Send the customer to session.url (a 303
+// redirect), or give session.id to the pay button.`;
 
 const WEBHOOK_SNIPPET = `import { constructEvent, SIGNATURE_HEADER } from "@merchant-capital/sdk";
 
 // A Next.js route handler. Pass the raw body:
 // re-serialized JSON won't verify.
 export async function POST(request: Request) {
+  let event;
   try {
-    const event = constructEvent(
+    event = constructEvent(
       await request.text(),
       request.headers.get(SIGNATURE_HEADER),
       process.env.GATEWAY_WEBHOOK_SECRET!,
     );
-    if (event.type === "payment.succeeded") markPaid(event.data.reference);
-    return new Response("ok");
   } catch {
     return new Response("bad signature", { status: 400 });
   }
+  // a test event, or one you already handled: do nothing
+  if ("test" in event.data || (await seen(event.id))) {
+    return new Response("ok");
+  }
+  if (event.type === "payment.succeeded") {
+    // find the order by the checkout id you saved, never by
+    // reference alone, and check it was paid in full
+    const order = await orderByCheckout(event.data.id);
+    if (order && event.data.amount === order.amountUsdt) {
+      await markPaid(order.id);
+    }
+  }
+  return new Response("ok");
 }`;
 
 const card = "grid min-w-0 content-start gap-4 rounded-md border border-hairline bg-surface p-6 shadow-card";
@@ -109,7 +122,7 @@ export default function DocsPage() {
             <code className="data">MC-Signature: t=…,v1=…</code> header: an HMAC-SHA256 of <code className="data">&lt;t&gt;.&lt;raw body&gt;</code> with your webhook
             secret. Events more than 5 minutes old are refused.
           </p>
-          <span className={soon}>Sending starts with the webhooks screen; until then, read the checkout with gateway.sessions.retrieve(id)</span>
+          <span className={soon}>Add your endpoint on the API keys screen; every paid checkout sends payment.succeeded</span>
           <Snippet code={WEBHOOK_SNIPPET} name="the webhook snippet" />
         </li>
       </ol>
@@ -151,7 +164,7 @@ export default function DocsPage() {
   );
 }
 
-/** The gateway URL for the env file, and for the shop's own wallet whether this server has its key (never any of it). */
+/** The gateway URL for the env file, and the way to the API keys screen (never any key, not even its start). */
 async function TestKeys() {
   const h = await headers(); // a request-time read first, so the sign-in check's clock never runs while prerendering
   const merchant = await currentMerchant();
@@ -161,20 +174,26 @@ async function TestKeys() {
   return (
     <>
       <Snippet code={env} name="the gateway URL" />
+      {/* plain <a>: a full load, so /merchant/developers runs under its own CSP (security review 005 F-N4) */}
       {!merchant ? (
         <p className="text-sm text-ink-muted">
-          <a href="/merchant" className="text-accent underline underline-offset-4">
+          <a href="/merchant/developers" className="text-accent underline underline-offset-4">
             Sign in to the dashboard
           </a>{" "}
-          with the shop&apos;s wallet to check this server&apos;s secret key.
-        </p>
-      ) : config && merchant.toLowerCase() === config.merchant.toLowerCase() ? (
-        <p className="text-sm text-ink-muted">
-          This server has your secret key set (SHA-256 fingerprint <span className="data text-ink">{keyFingerprint(config.apiKey)}</span>). Put the same key in
-          GATEWAY_SECRET_KEY on your shop&apos;s server. Creating and revoking keys comes with the API keys screen.
+          with your shop&apos;s wallet to create your test keys.
         </p>
       ) : (
-        <p className="text-sm text-ink-muted">This wallet has no API keys yet. Creating keys comes with the API keys screen.</p>
+        <p className="text-sm text-ink-muted">
+          <a href="/merchant/developers" className="text-accent underline underline-offset-4">
+            Create and revoke your keys
+          </a>{" "}
+          on the API keys screen. Put a secret key in GATEWAY_SECRET_KEY on your shop&apos;s server.
+        </p>
+      )}
+      {merchant && config && merchant.toLowerCase() === config.merchant.toLowerCase() && (
+        <p className="text-sm text-ink-muted">
+          This server also has the demo shop&apos;s key set (SHA-256 fingerprint <span className="data text-ink">{keyFingerprint(config.apiKey)}</span>).
+        </p>
       )}
     </>
   );

@@ -2,6 +2,7 @@
 // - this customer paid the order on-chain with the exact amount → record it (the receipt shows);
 // - not paid, and the signed approval is past its validBefore → USDT can never settle it, so open the checkout;
 // - otherwise it stays pending ("Don't pay again").
+import { announcePaid } from "./announce-paid.ts";
 import type { Address } from "viem";
 import { saleSettled, type Invoice } from "./onchain.ts";
 import { clearPending, getSession, invoiceAttempt, isInFlight, recordPayment, setInvoiceAttempt, type Session } from "./sessions.ts";
@@ -18,7 +19,7 @@ export async function findPayment(session: Session, merchantPay: Address, payer:
     console.error(`checkout ${session.id}: chain read failed: ${error instanceof Error ? error.message : String(error)}`);
     return undefined;
   });
-  if (paymentId) recordPayment(session.id, { txHash: null, blockNumber: null, paymentId, from: payer, paidAt: Date.now() });
+  if (paymentId) announcePaid(recordPayment(session.id, { txHash: null, blockNumber: null, paymentId, from: payer, paidAt: Date.now() }));
   return paymentId;
 }
 

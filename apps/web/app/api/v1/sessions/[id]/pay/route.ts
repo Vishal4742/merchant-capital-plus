@@ -5,6 +5,7 @@ import { verifyTypedData } from "viem";
 import { payConfig } from "../../../../../../lib/config.ts";
 import { parseApproval, saleAuthorization } from "../../../../../../lib/pay.ts";
 import { readUsdtBalance, saleSettled } from "../../../../../../lib/onchain.ts";
+import { announcePaid } from "../../../../../../lib/announce-paid.ts";
 import { NOT_FUNDED, UNKNOWN, relaySale } from "../../../../../../lib/relay.ts";
 import { findPayment, settlePending } from "../../../../../../lib/settle.ts";
 import { claimPayment, getSession, isInFlight, markPending, recordPayment, releasePayment } from "../../../../../../lib/sessions.ts";
@@ -67,7 +68,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       markPending(id, { from: payer, validBefore }); // the relayer says it went through: never invite a second payment
       return fail(504, UNKNOWN);
     }
-    recordPayment(id, { txHash: result.txHash, blockNumber: result.blockNumber, paymentId, from: payer, paidAt: Date.now() });
+    announcePaid(recordPayment(id, { txHash: result.txHash, blockNumber: result.blockNumber, paymentId, from: payer, paidAt: Date.now() }));
     return Response.json({ receiptId: id, txHash: result.txHash });
   } finally {
     releasePayment(id); // only guards concurrent requests; an unknown outcome is kept as session.pending

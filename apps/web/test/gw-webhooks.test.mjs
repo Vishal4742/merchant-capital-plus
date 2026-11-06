@@ -292,3 +292,21 @@ test("secrets never reach the logs", async () => {
     for (const s of spies) s.mock.restore();
   }
 });
+
+test("batch 008: a shop's setup script registers and lists webhooks with its secret key (AT-14); publishable and revoked keys can't", async () => {
+  const { createKey, revokeKey } = await import("../lib/server/keys.ts");
+  const sk = await createKey(MERCHANT, "shop server", "sk");
+  const pk = await createKey(MERCHANT, "pay button", "pk");
+  const bearer = (key) => ({ authorization: `Bearer ${key}` });
+  const res = await create(req("POST", "/api/v1/webhooks", { body: { url: "https://shop.example/hooks" }, headers: bearer(sk.key) }));
+  assert.equal(res.status, 201);
+  assert.match((await res.json()).secret, /^whsec_/);
+  const viaKey = await (await list(req("GET", "/api/v1/webhooks", { headers: bearer(sk.key) }))).json();
+  assert.equal(viaKey.webhooks.length, 1);
+  assert.equal((await listHooks(MERCHANT)).length, 1, "the same merchant as the dashboard sees");
+  assert.equal((await listHooks(OTHER_MERCHANT)).length, 0);
+  assert.equal((await create(req("POST", "/api/v1/webhooks", { body: { url: "https://shop.example/x" }, headers: bearer(pk.key) }))).status, 401, "a publishable key can't");
+  assert.equal((await list(req("GET", "/api/v1/webhooks", { headers: bearer("sk_test_" + "A".repeat(32)) }))).status, 401, "an unknown key can't");
+  await revokeKey(MERCHANT, sk.record.id);
+  assert.equal((await list(req("GET", "/api/v1/webhooks", { headers: bearer(sk.key) }))).status, 401, "a revoked key can't");
+});

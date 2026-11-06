@@ -6,8 +6,9 @@ import { createVoucher, listVouchers, voucherInput, voucherJson } from "../../..
 export async function POST(request: Request) {
   return handle(async () => {
     const merchant = signedInMerchant(request);
-    rateLimit(`vouchers:${merchant.toLowerCase()}`, 30, 60 * 60_000); // each create is one Arkiv write on the shared key
     const input = voucherInput(await readJson(request));
+    // after validation, so bad requests can't use up the merchant's allowance (code review N2); each create is one Arkiv write
+    rateLimit(`vouchers:${merchant.toLowerCase()}`, 30, 60 * 60_000);
     return ok(voucherJson(await createVoucher(merchant, input)), 201);
   });
 }

@@ -37,6 +37,7 @@ const { POST: createRoute } = await import("../app/api/v1/sessions/route.ts");
 const { GET: statusRoute } = await import("../app/api/v1/sessions/[id]/route.ts");
 const { createSession, getSession, recordPayment, SESSION_TTL_MS } = await import("../lib/sessions.ts");
 const { QUOTE_LOCK_MS } = await import("../lib/fx.ts");
+const { resetRateLimits } = await import("../lib/server/http.ts");
 
 const auth = { authorization: `Bearer ${process.env.SHOP_API_KEY}`, "content-type": "application/json" };
 async function create(body, headers = {}) {
@@ -215,7 +216,21 @@ test("GET /api/v1/sessions/:id: another merchant's checkout is a 404 for this sh
 // Security review 006 F6: the Idempotency-Key store is capped (oldest dropped), so a shop can't grow it without limit.
 test("Idempotency-Key: the store keeps the newest 1,000 keys and forgets the oldest", async () => {
   const body = (n) => ({ amount: "25.00", reference: `cap-${n}` });
-  for (let n = 0; n <= 1000; n++) assert.equal((await create(body(n), { "idempotency-key": `cap-${n}` })).res.status, 201);
+  for (let n = 0; n <= 1000; n++) {
+    if (n % 50 === 0) resetRateLimits(); // the 60-a-minute checkout limit (security 012 F3) isn't what this test is about
+    assert.equal((await create(body(n), { "idempotency-key": `cap-${n}` })).res.status, 201);
+  }
+  resetRateLimits();
   assert.equal((await create(body(9999), { "idempotency-key": "cap-0" })).res.status, 201, "the oldest key was dropped: a new body is a new checkout");
   assert.equal((await create(body(9999), { "idempotency-key": "cap-1000" })).res.status, 422, "the newest is kept");
+});
+
+// Security review 012 F3: any signed-in wallet can mint a key, so one merchant's key can't flood the checkout store.
+test("POST /api/v1/sessions: at most 60 checkouts a minute per merchant, then a plain 429", async () => {
+  resetRateLimits();
+  for (let n = 0; n < 60; n++) assert.equal((await create({ amount: "5.00", reference: `rl-${n}` })).res.status, 201, `checkout ${n + 1}`);
+  const blocked = await create({ amount: "5.00", reference: "rl-61" });
+  assert.equal(blocked.res.status, 429);
+  assert.match(blocked.data.error, /Wait a minute/);
+  resetRateLimits();
 });

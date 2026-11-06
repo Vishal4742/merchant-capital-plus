@@ -24,6 +24,8 @@ const nextConfig: NextConfig = {
   // The Anon-RPC worker's srcdoc iframe is unaffected (X-Frame-Options applies to fetched documents only).
   async headers() {
     const csp = [{ key: "Content-Security-Policy", value: PAY_PAGE_CSP }];
+    // a payment page shows the merchant's logo from its own https URL (human 06:30): images only, scripts and calls stay 'self'
+    const logoCsp = [{ key: "Content-Security-Policy", value: PAY_PAGE_CSP.replace("img-src 'self' data:", "img-src 'self' data: https:") }];
     return [
       {
         source: "/(.*)",
@@ -37,9 +39,14 @@ const nextConfig: NextConfig = {
       { source: "/checkout/:path*", headers: csp },
       { source: "/pay/:path*", headers: csp },
       { source: "/r/:path*", headers: csp },
+      { source: "/l/:path*", headers: csp },
+      { source: "/counter/:path*", headers: csp },
       // the dashboard sends invoices, approvals and refunds, and loads nothing from another origin (security review 005
       // F8); wallet extensions aren't bound by a page's CSP
-      { source: "/merchant", headers: csp },
+      { source: "/merchant/:path*", headers: csp }, // `:path*` also matches /merchant itself
+      // after the rules above: for the same header the last match wins (Next docs, headers)
+      { source: "/p/:path*", headers: logoCsp },
+      { source: "/merchant/pages", headers: logoCsp },
       // /docs loads nothing third-party either, and hosts "Simulate a payment" (security review 006 F3)
       { source: "/docs", headers: csp },
     ];

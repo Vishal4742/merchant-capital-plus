@@ -40,4 +40,13 @@ ETHGlobal asks teams to say where AI was used, down to files, and to commit spec
 | `apps/web/` landing page (gateway story, design v8) | claude-frontend | phase mode: ci PASS + human gate | 009-P4-web-landing |
 | gateway API follow-ups | claude-contracts | phase mode: ci + reviewer-security PASS (round 1) + human gate; full review at the G4 phase gate | 008-P4-gateway-followups |
 | `apps/relayer/` Postgres send lock, `rel_sent`, breaker, rate limits, daily WBT budget, shared secret | claude-relayer | 5 checks PASS + human gate | 006-P2-neon-limits |
+| `apps/relayer/` Vercel production deploy (keys as Sensitive, Production only; human yes 06:10) | claude-relayer | phase mode: ci + reviewer-security PASS + human gate | 009-P2-vercel-deploy |
+| `apps/web/` payment links, payment pages, QR codes, gateway API client | claude-frontend | phase mode: ci + reviewer-security PASS; full review at the G4 phase gate | 010-P4-web-links-pages-qr |
+| `apps/web/lib/server/` FX-priced link and page sessions, voucher hold freeze and release, ±15% bands | claude-contracts | phase mode: ci + reviewer-security PASS; full review at the G4 phase gate | 009-P4-gateway-s1-fx-priced |
+| `apps/web/` merchant-only network-fee column (gas × price + L1 fee from the receipt) | claude-frontend | phase mode: ci PASS (Money: no) | 011-P4-web-network-fee |
+| `apps/web/lib/server/` releaseHold guard, paid price passed through, fiat checkout age cap | claude-contracts | phase mode: ci + reviewer-security PASS; full review at the G4 phase gate | 012-P4-gateway-pay-integration |
+| `apps/web/` developers screen: API keys (hash only), webhook endpoints, /docs link | claude-frontend | phase mode: ci + reviewer-security PASS; full review at the G4 phase gate | 012-P4-web-developers |
+| `apps/web/` Vouchers, Reports + CSV, Settlements screens | claude-frontend | phase mode: ci PASS (Money: no); full review at the G4 phase gate | 013-P4-web-money-screens |
+| `apps/web/` G4 UX fixes: closed-link summary, retry on can't-open notices, plain empty states | claude-frontend | phase mode: ci PASS; findings from the G4 phase review part 1 (reviewer-ux-ui) | 014-P4-web-ux-fixes |
+| `apps/web/lib/server/` paid price required, paid checkouts refused in the voucher upsert | claude-contracts | phase mode: ci + reviewer-security PASS; full review at the G4 phase gate | 013-P4-gateway-pay-hardening |
 | ⟨path⟩ | ⟨lane / agent⟩ | ⟨reviewers + human⟩ | ⟨NNN⟩ |

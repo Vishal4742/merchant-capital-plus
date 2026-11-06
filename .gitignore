@@ -35,3 +35,9 @@ HANDOFF_LOG.md
 HANDOFF.md
 tools/figma-merchant-build.py
 docs/PITCH.md
+
+# Batch screenshots and probe output stay local: large, and probe logs may echo request data (claude-research 07:44).
+# The verdicts and summaries (round-N/*.md) are committed.
+.batches/*/round-*/shots/
+.batches/*/round-*/shots-ux/
+.batches/*/round-*/probes/

@@ -1,7 +1,7 @@
 // Server-only payment links (SRS FR-GW-1, table app_gw_links), plus the checkout helpers links and pages share: a price
 // in the link's currency becomes USDT at checkout (lib/server/quotes.ts), then a session (lib/sessions.ts) and a checkout row.
 import { formatUnits, getAddress, type Address } from "viem";
-import { createSession, type LineItem } from "../sessions.ts";
+import { SESSION_TTL_MS, createSession, type LineItem } from "../sessions.ts";
 import { parseUsdt } from "../usdt.ts";
 import { paidCounts, recordCheckout, type CheckoutKind } from "./checkouts.ts";
 import { query } from "./db.ts";
@@ -22,7 +22,7 @@ import {
   usdtField,
   type Currency,
 } from "./http.ts";
-import { toUsdtUnits, usdRate, type Rate } from "./quotes.ts";
+import { QUOTE_TTL_MS, toUsdtUnits, usdRate, type Rate } from "./quotes.ts";
 
 const MAX_PRICE = 100_000_000_000_000n; // 100,000,000 of any currency: a sanity cap; the 1..1,000 USDT rule runs at checkout
 export const MAX_LIST = 200; // ponytail: list screens show the newest 200; add a cursor when a merchant has more
@@ -64,7 +64,9 @@ export async function readCheckoutBody(request: Request): Promise<Record<string,
 
 /** Opens a checkout session for line items priced in `currency`: converts them to USDT at one rate, records where the
  *  session came from and the rate (the checkout shows it, AT-13), and sends the payer there:
- *  303 to /checkout/{id}, or {checkout_url, session_id} for a caller that accepts JSON (the pay button). */
+ *  303 to /checkout/{id}, or {checkout_url, session_id} for a caller that accepts JSON (the pay button).
+ *  A non-USDT session carries `priced` (its items stay in `currency`, as the checkout labels them); a fiat one lives only
+ *  as long as the 10-min quote lock, USD (1:1) and USDT keep the 30-min session (FR-GW-11, AT-13). */
 export async function openCheckout(
   request: Request,
   from: { kind: CheckoutKind; refId: string; merchant: string; reference: string },
@@ -72,13 +74,24 @@ export async function openCheckout(
   currency: Currency,
 ): Promise<Response> {
   const { prices, rate } = await inUsdt(priced.map((item) => item.price), currency);
-  const items = priced.map((item, i) => ({ ...item, price: prices[i] }));
-  const amount = items.reduce((sum, item) => sum + item.price * BigInt(item.qty), 0n);
+  const amount = priced.reduce((sum, item, i) => sum + prices[i] * BigInt(item.qty), 0n);
   if (amount < MIN_PAYMENT || amount > MAX_PAYMENT) throw new HttpError(400, "The total must be between 1 and 1,000 USDT.");
   const merchant = getAddress(from.merchant);
-  const session = createSession({ merchant, merchantName: merchantName(merchant), amount, reference: from.reference, items });
   const fiatTotal = priced.reduce((sum, item) => sum + item.price * BigInt(item.qty), 0n);
-  const fx = { currency, amount: fiatTotal, rate: rate.rate, source: rate.source, fetchedAt: rate.fetchedAt };
+  const fx = { currency, amount: fiatTotal, rate: rate.rate, rateAt: rate.rateAt, source: rate.source, fetchedAt: rate.fetchedAt };
+  const usdt = currency === "USDT";
+  const session = createSession(
+    {
+      merchant,
+      merchantName: merchantName(merchant),
+      amount,
+      reference: from.reference,
+      items: usdt ? priced.map((item, i) => ({ ...item, price: prices[i] })) : priced,
+      priced: usdt ? undefined : { currency, amount: fiatTotal, rate: rate.rate, rateDate: rate.rateAt, fetchedAt: rate.fetchedAt, source: rate.source },
+    },
+    Date.now(),
+    usdt || currency === "USD" ? SESSION_TTL_MS : QUOTE_TTL_MS,
+  );
   await recordCheckout(session.id, from.kind, from.refId, merchant, amount, { fx });
   const url = new URL(`/checkout/${session.id}`, request.url).toString();
   if ((request.headers.get("accept") ?? "").includes("application/json")) return ok({ checkout_url: url, session_id: session.id });

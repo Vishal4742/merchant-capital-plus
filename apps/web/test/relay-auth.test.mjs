@@ -7,10 +7,11 @@ import assert from "node:assert/strict";
 const SECRET = "relay-secret-for-tests-0123456789";
 let seen;
 let seenInit;
+let answer = () => Response.json({ error: "unauthorized", code: "unauthorized" }, { status: 401 });
 globalThis.fetch = async (_url, init) => {
   seen = init.headers;
   seenInit = init;
-  return Response.json({ error: "unauthorized", code: "unauthorized" }, { status: 401 });
+  return answer();
 };
 
 const { relaySale } = await import("../lib/relay.ts");
@@ -54,4 +55,13 @@ test("relay: the secret goes only to an https or loopback relayer, and redirects
   assert.equal(seen["x-relay-secret"], SECRET, "this machine");
   assert.equal(seenInit.redirect, "manual");
   delete process.env.RELAY_API_SECRET;
+});
+
+test("relay: Vercel's burst mitigation (403 + x-vercel-mitigated) reads as busy, a plain 403 doesn't (claude-relayer 06:46)", async () => {
+  answer = () => new Response("<html>checkpoint</html>", { status: 403, headers: { "x-vercel-mitigated": "challenge" } });
+  const busy = await relaySale(sale);
+  assert.equal(busy.status, 503, "nothing was sent: unlock and say try again");
+  answer = () => new Response("forbidden", { status: 403 });
+  assert.equal((await relaySale(sale)).status, 400);
+  answer = () => Response.json({ error: "unauthorized", code: "unauthorized" }, { status: 401 });
 });

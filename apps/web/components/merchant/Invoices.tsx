@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 import type { Address } from "viem";
 import { Button } from "@/components/Button";
+import { QrActions } from "@/components/gateway/Share";
 import { cancelInvoice, connectMerchant, createInvoice, walletError } from "@/lib/merchant-wallet";
 import { parseUsdt } from "@/lib/usdt";
 
@@ -225,6 +226,7 @@ function NewInvoice({ merchant, merchantPay, today, feeText, notesKey: key }: Om
             </a>
             <CopyLink id={created} />
           </div>
+          <QrActions kind="pay" id={created} name={`invoice ${created}`} />
         </div>
       )}
     </div>
@@ -304,6 +306,7 @@ function InvoiceActions({ invoice, merchant, merchantPay }: { invoice: InvoiceRo
             </Button>
           ))}
       </div>
+      <QrActions kind="pay" id={invoice.id} name={`invoice ${invoice.id}`} />
       {error && (
         <p role="alert" className="max-w-64 text-right text-sm text-critical">
           {error}
