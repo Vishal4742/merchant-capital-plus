@@ -80,8 +80,10 @@ async function relay(signed: Signed, action: "paySale" | "payInvoice", target: R
   if (res.status === 422 && data.code === "insufficient_funds") return { ok: false, status: 400, refused: true, message: NOT_FUNDED };
   const again = action === "paySale" ? "start the checkout again" : "try again"; // an invoice is reused: retry the same link
   if (res.status === 422) return { ok: false, status: 400, refused: true, message: `That approval didn't work. Nothing was charged; please ${again}.` };
-  // 503: refused before sending (gas cap, paused, budget). 429: the relayer's rate limit, also before sending.
-  if (res.status === 503 || res.status === 429) return { ok: false, status: 503, message: BUSY };
+  // 503: refused before sending (gas cap, paused, budget). 429: the relayer's rate limit, also before sending. A 403
+  // with x-vercel-mitigated is Vercel's burst protection in front of the relayer: nothing was sent (claude-relayer 06:46).
+  const mitigated = res.status === 403 && res.headers.get("x-vercel-mitigated") !== null;
+  if (res.status === 503 || res.status === 429 || mitigated) return { ok: false, status: 503, message: BUSY };
   // a 502 or other 5xx (or a 200 without a valid txHash) may have been sent: the payment goes pending and the chain
   // settles it (lib/settle.ts). ponytail: a 502's txHash isn't used yet. A sale's chain read finds the payment through
   // saleOf; an invoice's only sees that it turned Paid, with no receipt id (code review 005 F3, deferred).
