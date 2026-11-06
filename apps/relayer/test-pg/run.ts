@@ -84,7 +84,7 @@ try {
       }
     }
     const tables = await c.lines("SELECT string_agg(table_name, ',' ORDER BY table_name) FROM information_schema.tables WHERE table_name LIKE 'rel\\_%'");
-    expect(tables[0] === 'rel_lease,rel_payer_unblocks,rel_sent', `tables: ${tables[0]}`);
+    expect(tables[0] === 'rel_lease,rel_lock,rel_payer_unblocks,rel_sent', `tables: ${tables[0]}`);
     const columns = await c.lines("SELECT string_agg(table_name || '.' || column_name, ',' ORDER BY table_name || '.' || column_name) FROM information_schema.columns WHERE (table_name, column_name) IN (('rel_lease', 'holder'), ('rel_sent', 'payer_fault_at'))");
     expect(columns[0] === 'rel_lease.holder,rel_sent.payer_fault_at', `round-3 columns: ${columns[0]}`);
     notes.push(`${files.join(' + ')} applied twice with no error; tables ${tables[0]}`);
