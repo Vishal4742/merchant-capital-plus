@@ -1,5 +1,7 @@
 // Hosted checkout page (FR-PAY-5, FR-PAY-7). Server component: the amount and shop come from our session
 // record, so this page makes no chain reads in the browser (FR-PRIV-1, SRS 1.1).
+import { announcePaid } from "@/lib/announce-paid";
+import { warmRelayer } from "@/lib/relay";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { Suspense } from "react";
@@ -56,6 +58,10 @@ async function CheckoutLoader({ params }: Pick<PageProps<"/checkout/[sessionId]"
   // an earlier attempt with an unknown outcome: our server asks the chain (never the browser, FR-PRIV-1)
   const state = found.pending && pay ? await settlePending(found, pay.merchantPay) : null;
   const session = getSession(sessionId) ?? found;
+  // paid: re-announce (idempotent), so a lost payment.succeeded or uncounted code recovers on a visit (G4 code M2);
+  // open: warm the relayer this customer is about to use (claude-relayer 09:42)
+  if (session.payment) announcePaid(session, session.payment.amount ?? session.amount);
+  else warmRelayer(pay?.relayerUrl);
   const terms = await codeTerms(session);
   // paid: what was charged; open: what is due now (a code makes it less than the session's amount)
   const amount = session.payment?.amount ?? terms?.due ?? session.amount;

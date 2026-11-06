@@ -1,5 +1,6 @@
 // Customer invoice page (FR-PAY-3, FR-PAY-7). Server component: our server reads invoices(id) and relayFee() on chain,
 // so the browser makes no chain reads (FR-PRIV-1, SRS 1.1). The total it shows is exactly what the customer will sign.
+import { warmRelayer } from "@/lib/relay";
 import { notFound } from "next/navigation";
 import { Suspense, type ReactNode } from "react";
 import { InvoicePay } from "@/components/InvoicePay";
@@ -40,6 +41,7 @@ async function InvoiceLoader({ params }: Pick<PageProps<"/pay/[invoiceId]">, "pa
   if (!/^[1-9]\d{0,19}$/.test(invoiceId)) notFound();
   const pay = payConfig();
   if (!pay) return <Notice title="Payments aren't live yet">Nothing can be charged from this page. Try again later.</Notice>;
+  warmRelayer(pay.relayerUrl); // the customer may pay in a moment (claude-relayer 09:42)
   const [invoice, fee] = await Promise.all([
     readInvoice(pay.merchantPay, BigInt(invoiceId), { tries: READ_TRIES }).catch(() => null),
     readRelayFee(pay.merchantPay, { tries: READ_TRIES }).catch(() => null),
