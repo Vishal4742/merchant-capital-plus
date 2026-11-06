@@ -175,6 +175,9 @@ function NewInvoice({ merchant, merchantPay, today, feeText, notesKey: key }: Om
     // batch 047 (security H1): a named customer wallet goes on chain, and only it can then acknowledge the invoice
     const wallet = walletRef.current?.value.trim() ?? "";
     if (wallet && !isAddress(wallet)) return setError("Enter your customer's wallet address (0x and 40 characters), or leave it empty.");
+    // all lowercase carries no checksum, so a mistyped character would bind the wrong wallet (re-review); isAddress
+    // already refused a mixed-case address whose checksum is wrong
+    if (wallet && wallet !== getAddress(wallet)) return setError("Paste the checksummed address (with its capital letters) from your customer's wallet.");
     if (wallet && wallet.toLowerCase() === merchant.toLowerCase()) return setError("That's your own wallet. Enter your customer's, or leave it empty.");
     const customer: Address = wallet ? getAddress(wallet) : zeroAddress;
     const note = { customer: customerRef.current?.value.trim().slice(0, 60) || undefined, label: labelRef.current?.value.trim().slice(0, 60) || undefined };
@@ -226,7 +229,7 @@ function NewInvoice({ merchant, merchantPay, today, feeText, notesKey: key }: Om
         Your wallet sends the invoice and pays a small WBT fee. Your customer adds {feeText ? `a ${feeText} USDT` : "a small"} payment fee on top, so you get the invoice amount in full. The customer and label stay in
         this browser and are never sent anywhere.
         <span className="block">
-          A customer wallet, if you add one, goes on chain with the invoice: only that wallet can then acknowledge it, and investors see &quot;Debtor acknowledged&quot;.
+          A customer wallet, if you add one, goes on chain with the invoice: only that wallet can then acknowledge it, and investors see &quot;Named customer wallet acknowledged&quot;.
         </span>
       </p>
       {error && (

@@ -87,7 +87,8 @@ export function OfferBook({ state, connect }: ScreenProps) {
       {/* what the two acknowledgement labels prove (security 047 H1) */}
       {book.offers.some((o) => o.kind === "invoice") && (
         <p className="text-xs text-ink-muted">
-          Debtor acknowledged ✓ means the customer wallet the shop named on the invoice signed it. A pay-link holder&apos;s acknowledgement doesn&apos;t check who they are.
+          Named customer wallet acknowledged ✓ means the wallet the shop named on the invoice signed it: the shop chooses this wallet; it is not an identity check. An unchecked
+          wallet is anyone with the pay link.
         </p>
       )}
       {mine?.reads === "ready" && !mine.eligible && (

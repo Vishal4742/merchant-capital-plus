@@ -44,23 +44,34 @@ type AckRow = { invoice_id: string; debtor: Address; merchant: Address; amount: 
 const toAck = (r: AckRow): InvoiceAck => ({ debtor: r.debtor, merchant: r.merchant, amount: BigInt(r.amount), dueDate: BigInt(r.due_date), bound: r.customer_bound, signedAt: Number(r.signed_at) });
 const COLUMNS = "invoice_id, debtor, merchant, amount::text AS amount, due_date::text AS due_date, customer_bound, signed_at::text AS signed_at";
 
-/** Stores this key's ack unless it already has one (its first ack stays) and returns the stored one. */
-export async function saveAck(merchantPay: Address, invoiceId: bigint, ack: Omit<InvoiceAck, "signedAt">, signature: Hex, now = Date.now()): Promise<InvoiceAck> {
+/** Unchecked acks one invoice keeps (security re-review 047, LOW); a named customer's invoice takes one wallet anyway. */
+export const MAX_UNBOUND_ACKS = 5;
+
+/** Stores this key's ack unless it already has one (its first ack stays) and returns the stored one; null when the
+ *  invoice already holds MAX_UNBOUND_ACKS unchecked acks and this key isn't one of them.
+ *  ponytail: the count and the insert are one statement, but two concurrent inserts can both see 4 and make 6;
+ *  acksFor's LIMIT leaves room for that. A per-invoice lock if it ever matters. */
+export async function saveAck(merchantPay: Address, invoiceId: bigint, ack: Omit<InvoiceAck, "signedAt">, signature: Hex, now = Date.now()): Promise<InvoiceAck | null> {
   const key = [merchantPay.toLowerCase(), invoiceId.toString(), ack.debtor];
   await query(
-    "INSERT INTO app_gw_invoice_acks (merchant_pay, invoice_id, debtor, merchant, amount, due_date, customer_bound, signature, signed_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (merchant_pay, invoice_id, debtor) DO NOTHING",
-    [...key, ack.merchant, ack.amount.toString(), ack.dueDate.toString(), ack.bound, signature, now],
+    `INSERT INTO app_gw_invoice_acks (merchant_pay, invoice_id, debtor, merchant, amount, due_date, customer_bound, signature, signed_at)
+     SELECT $1::text, $2::text, $3::text, $4::text, $5::bigint, $6::bigint, $7::boolean, $8::text, $9::bigint
+     WHERE $7::boolean OR (SELECT count(*) FROM app_gw_invoice_acks WHERE merchant_pay = $1::text AND invoice_id = $2::text) < $10
+     ON CONFLICT (merchant_pay, invoice_id, debtor) DO NOTHING`,
+    [...key, ack.merchant, ack.amount.toString(), ack.dueDate.toString(), ack.bound, signature, now, MAX_UNBOUND_ACKS],
   );
   const [row] = await query<AckRow>(`SELECT ${COLUMNS} FROM app_gw_invoice_acks WHERE merchant_pay = $1 AND invoice_id = $2 AND debtor = $3`, key);
-  return toAck(row);
+  return row ? toAck(row) : null;
 }
 
-/** Every key's ack for these invoices, by invoice id (decimal), oldest first. */
+/** Every key's ack for these invoices, by invoice id (decimal), oldest first. At most the cap per invoice plus one (a
+ *  race past the cap) in all, so a read stays bounded. */
 export async function acksFor(merchantPay: Address, invoiceIds: readonly bigint[]): Promise<Map<string, InvoiceAck[]>> {
   if (invoiceIds.length === 0) return new Map();
-  const rows = await query<AckRow>(`SELECT ${COLUMNS} FROM app_gw_invoice_acks WHERE merchant_pay = $1 AND invoice_id = ANY($2::text[]) ORDER BY signed_at, debtor`, [
+  const rows = await query<AckRow>(`SELECT ${COLUMNS} FROM app_gw_invoice_acks WHERE merchant_pay = $1 AND invoice_id = ANY($2::text[]) ORDER BY signed_at, debtor LIMIT $3`, [
     merchantPay.toLowerCase(),
     invoiceIds.map(String),
+    invoiceIds.length * (MAX_UNBOUND_ACKS + 1),
   ]);
   const byId = new Map<string, InvoiceAck[]>();
   for (const r of rows) byId.set(r.invoice_id, [...(byId.get(r.invoice_id) ?? []), toAck(r)]);

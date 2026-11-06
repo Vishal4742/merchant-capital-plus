@@ -9,7 +9,7 @@ import { merchantConfig, payConfig } from "../../../../../../lib/config.ts";
 import { ackTypedData } from "../../../../../../lib/invoice-ack.ts";
 import { readInvoice } from "../../../../../../lib/onchain.ts";
 import { clientIp, fail, handle, ok, rateLimit, readJson } from "../../../../../../lib/server/http.ts";
-import { saveAck } from "../../../../../../lib/server/invoice-acks.ts";
+import { MAX_UNBOUND_ACKS, saveAck } from "../../../../../../lib/server/invoice-acks.ts";
 import { isShopInvoice } from "../../../../../../lib/settle.ts";
 
 const ACKS_PER_MINUTE = 10; // per IP: each call is a chain read and a database write
@@ -49,5 +49,6 @@ async function post(request: Request, { params }: { params: Promise<{ id: string
 
   const ack = { debtor: getAddress(debtor), merchant: invoice.merchant, amount: invoice.amount, dueDate: invoice.dueDate, bound: customer !== null };
   const stored = await saveAck(pay.merchantPay, invoice.id, ack, signature);
+  if (!stored) return fail(409, `This invoice already has ${MAX_UNBOUND_ACKS} acknowledgements, the most we keep. Nothing was charged.`);
   return ok({ acknowledged: true, debtor: stored.debtor, signed_at: new Date(stored.signedAt).toISOString(), verified: stored.bound });
 }

@@ -11,6 +11,7 @@ import { useState } from "react";
 import type { Address } from "viem";
 import { Button } from "@/components/Button";
 import { istDateTime, short } from "@/components/capital/investor/format";
+import { ackCount } from "@/components/DebtorAck";
 import { connectVia, endWalletSession, loadSigner, useHasWallet, type WalletVia } from "@/components/WalletPay";
 import { errorTone } from "@/lib/outcome";
 import { privyAppId } from "@/lib/privy-config";
@@ -65,7 +66,7 @@ export function InvoiceAck({ terms, acks, customer, guest }: InvoiceAckProps) {
   const own = added ?? (guest && acks.find((a) => same(a.debtor, short(guest)))) ?? null;
   const others = acks.filter((a) => !own || !same(a.debtor, own.debtor));
   const count = others.length + (own ? 1 : 0);
-  const tally = count > 1 ? ` · ${count} acknowledgements` : "";
+  const tally = count > 1 ? ` · ${ackCount(count)} acknowledgements` : "";
   if (own) {
     return (
       <p role="status" className="border-t border-hairline pt-4 text-center text-sm text-positive">
