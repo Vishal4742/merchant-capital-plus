@@ -33,6 +33,7 @@ hit '^apps/web/|^packages/'          && run "web lint"      apps/web npm run lin
 hit '^apps/web/|^packages/'          && run "web tests"     apps/web npm test
 hit '^apps/relayer/|^packages/shared/' && run "relayer typecheck + tests" apps/relayer sh -c 'npm run typecheck && npm test'
 hit '^packages/sdk/'                 && run "sdk typecheck + tests" packages/sdk sh -c 'npm run typecheck && npm test'
+hit '^packages/(mcp|sdk|shared)/'     && [ -d "$root/packages/mcp" ] && run "mcp typecheck + tests" packages/mcp sh -c 'npm run typecheck && npm test'
 hit '^contracts/'                    && run "forge build" contracts forge build
 
 # Same secret scan as CI (always).
