@@ -1,4 +1,4 @@
-# Spec: 041-P5-withdraw-followup
+# Spec: 042-P5-withdraw-followup
 
 ## Requirements (cite docs/SRS.md IDs)
 - FR-GW-15 (settlement balance and withdraw): follow-ups from claude-frontend's UX review of PR #30. The merchant sees the

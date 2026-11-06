@@ -74,7 +74,7 @@ export async function quoteWithdraw(w: MerchantWallet, to: Address, amount: bigi
 }
 
 /** Simulate, send from the merchant's wallet, wait for the receipt (merchant-wallet's send(), for a USDT transfer).
- *  `onSent` gets the hash the moment the wallet returns it, so the page can link it during the receipt wait (041).
+ *  `onSent` gets the hash the moment the wallet returns it, so the page can link it during the receipt wait (042).
  *  A receipt that can't be read throws SENT_UNCONFIRMED with the hash, so the page links it instead of inviting a resend. */
 export async function withdraw(w: MerchantWallet, to: Address, amount: bigint, onSent?: (hash: Hex) => void): Promise<Hex> {
   // the wallet may have moved networks since Review; the dry run would then read another chain's state

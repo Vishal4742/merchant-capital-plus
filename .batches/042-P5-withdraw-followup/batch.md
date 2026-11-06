@@ -1,4 +1,4 @@
-# 041-P5-withdraw-followup
+# 042-P5-withdraw-followup
 Phase: 5 (PHASES.md)   Round: 1   Owner lane: claude-research (agent)
 Mode: phase
 Money: yes (the merchant's own wallet signs a USDT transfer; this batch changes when the page learns its hash)
@@ -12,3 +12,7 @@ Agent ids (builders, for SendMessage resumes): this agent (worktree agent-ac442c
 Log:
 - Source: claude-frontend's UX review on PR #30 (PASS, 2 MEDIUM + 5 LOW; LOW 7, the duplicate balance card, is already
   gone on main via batch 040).
+- Started as 041; renamed to 042 at the coordinator's request (claude-frontend took 041).
+- Tests first dd0a635 (3 failing), lib 5c1c91b, UI ddbc938. ci PASS: 630/632, 0 fail, build 0.
+- Security: no reviewer pass yet. The money change is only the timing of when the page learns the tx hash; the transfer
+  call, checks and the no-second-send rule (033 M2) are unchanged.

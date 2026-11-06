@@ -153,7 +153,7 @@ function fakeWallet({ balance = 70_710_000n, wbt = 10n ** 18n, rejectSend = fals
 
 const connect = (provider) => connectMerchant(provider, MERCHANT, MERCHANT_PAY);
 
-test("the hash is handed out as soon as the wallet sends, before any receipt is read (041, UX review MEDIUM 1)", async () => {
+test("the hash is handed out as soon as the wallet sends, before any receipt is read (042, UX review MEDIUM 1)", async () => {
   const { provider, calls } = fakeWallet();
   const seen = [];
   const hash = await withdraw(await connect(provider), EXCHANGE, ONE_USDT, (sentHash) => seen.push([sentHash, calls.length]));
@@ -178,7 +178,7 @@ test("onSent carries the hash of an unconfirmed send, and isn't called when noth
   }
 });
 
-test("the wrong-network copy names the network the way the app does (041, UX review LOW 4)", () => {
+test("the wrong-network copy names the network the way the app does (042, UX review LOW 4)", () => {
   assert.match(WRONG_NETWORK, /Whitechain Testnet \(chain 1874\)/);
   assert.doesNotMatch(WRONG_NETWORK, /Sepolia/);
 });

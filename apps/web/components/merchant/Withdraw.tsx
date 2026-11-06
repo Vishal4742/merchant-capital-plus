@@ -68,7 +68,7 @@ function WithdrawForm({ merchant, balance }: { merchant: Address; balance: bigin
   const [sent, setSent] = useState<{ hash: Hex; amount: bigint; to: Address } | null>(null);
   const [pending, setPending] = useState<Hex | null>(null); // sent by the wallet, not confirmed yet
 
-  /** The headline balance is our server's read: refresh now, and once more a few seconds later (041). */
+  /** The headline balance is our server's read: refresh now, and once more a few seconds later (042). */
   function reread() {
     router.refresh();
     setTimeout(() => router.refresh(), REREAD_MS);
@@ -89,7 +89,7 @@ function WithdrawForm({ merchant, balance }: { merchant: Address; balance: bigin
     setAmountError(units.ok ? null : units.error);
     setError(null);
     if (!dest.ok || !units.ok) {
-      document.getElementById(dest.ok ? "withdraw-amount" : "withdraw-to")?.focus(); // the first invalid field (041)
+      document.getElementById(dest.ok ? "withdraw-amount" : "withdraw-to")?.focus(); // the first invalid field (042)
       return;
     }
     setBusy(true);
@@ -109,7 +109,7 @@ function WithdrawForm({ merchant, balance }: { merchant: Address; balance: bigin
     setBusy(true);
     setError(null);
     try {
-      // the hash shows with its link as soon as the wallet returns it, not after the receipt (041)
+      // the hash shows with its link as soon as the wallet returns it, not after the receipt (042)
       const hash = await withdraw(review.wallet, review.to, review.amount, setPending);
       setSent({ hash, amount: review.amount, to: review.to });
       setPending(null);
