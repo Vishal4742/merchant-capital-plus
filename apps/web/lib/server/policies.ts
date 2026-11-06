@@ -7,6 +7,7 @@
 //   inserted only if the current version is the one the Owner saw, other Owners notified, audit written.
 // Policy versions are insert-only: nothing here updates or deletes one (FR-BIZ-4).
 import { getAddress, isAddress, recoverMessageAddress, type Address, type Hex } from "viem";
+import { whitechainSepolia } from "viem/chains";
 import { createSiweMessage, generateSiweNonce } from "viem/siwe";
 import { USDT } from "../usdt.ts";
 import { merchantAdvance } from "./capital.ts";
@@ -15,7 +16,7 @@ import { HttpError, sharedRateLimit } from "./http.ts";
 import { Forbidden, concurrencyConflict, requireScope, type AuthContext } from "./identity.ts";
 import { newId, publicOrigin, sha256 } from "./auth-sessions.ts";
 
-export const POLICY_CHAIN_ID = 1874; // Whitechain Testnet — the only supported chain (FR-RTE-1 registry, testnet)
+export const POLICY_CHAIN_ID = whitechainSepolia.id; // 1874, Whitechain Testnet: the only supported chain (FR-RTE-1, testnet)
 export const POLICY_TOKEN = USDT.toLowerCase() as Address; // Whitechain test USDT (packages/shared addresses.usdt)
 export const PROOF_TTL_MS = 10 * 60 * 1000;
 export const APPROVAL_TTL_MS = 5 * 60 * 1000;
@@ -35,11 +36,16 @@ export interface SettlementPolicy {
 }
 
 /** sha256 over the policy's canonical terms: what the Owner approves and what invoices bind to later (FR-BILL-2). */
-export const policyHash = (p: { businessId: string; version: number; chainId: number; token: string; recipient: string }) =>
-  `0x${sha256(JSON.stringify({ businessId: p.businessId, chainId: p.chainId, recipient: p.recipient.toLowerCase(), token: p.token.toLowerCase(), version: p.version }))}`;
+export const policyHash = (p: { businessId: string; version: number; token: string; recipient: string }) =>
+  `0x${sha256(JSON.stringify({ businessId: p.businessId, chainId: whitechainSepolia.id, recipient: p.recipient.toLowerCase(), token: p.token.toLowerCase(), version: p.version }))}`;
 
-const toPolicy = (r: Record<string, unknown>): SettlementPolicy => ({
-  version: Number(r.version), chainId: Number(r.chain_id), token: String(r.token_address), recipient: String(r.recipient),
+// a stored policy on any other chain is never served as a payable destination (FR-OPS-8 environment pinning)
+function toPolicy(r: Record<string, unknown>): SettlementPolicy {
+  if (Number(r.chain_id) !== POLICY_CHAIN_ID) throw new HttpError(500, "A stored receiving policy names an unsupported network.");
+  return policyFrom(r);
+}
+const policyFrom = (r: Record<string, unknown>): SettlementPolicy => ({
+  version: Number(r.version), chainId: whitechainSepolia.id, token: String(r.token_address), recipient: String(r.recipient),
   policyHash: String(r.policy_hash), approvedBy: String(r.approved_by), approvalWallet: String(r.approval_wallet),
   v1Obligations: r.v1_obligations === true, approvedAt: Number(r.created_at),
 });
@@ -80,7 +86,7 @@ export async function issueReceivingProof(ctx: AuthContext, input: { address: un
   const origin = publicOrigin();
   const [biz] = await query<{ display_name: string }>("SELECT display_name FROM wf_businesses WHERE id = $1", [ctx.businessId]);
   const version = (await currentVersion(ctx.businessId)) + 1;
-  const hash = policyHash({ businessId: ctx.businessId, version, chainId: POLICY_CHAIN_ID, token: POLICY_TOKEN, recipient });
+  const hash = policyHash({ businessId: ctx.businessId, version, token: POLICY_TOKEN, recipient });
   const nonce = generateSiweNonce();
   const expiresAt = now + PROOF_TTL_MS;
   const message = createSiweMessage({
@@ -89,7 +95,7 @@ export async function issueReceivingProof(ctx: AuthContext, input: { address: un
     statement: `WhiteFlow receiving-wallet proof: this wallet will receive USDT for "${biz.display_name.replace(/[\r\n]/g, " ")}" on Whitechain Testnet. It proves control of this wallet only; it moves no funds.`,
     uri: origin.origin,
     version: "1",
-    chainId: POLICY_CHAIN_ID,
+    chainId: whitechainSepolia.id,
     nonce,
     issuedAt: new Date(now),
     expirationTime: new Date(expiresAt),
@@ -100,12 +106,12 @@ export async function issueReceivingProof(ctx: AuthContext, input: { address: un
      VALUES ($1, 'receiving', $2, $3, $4, $5, $6::jsonb, $7, $8, $9)`,
     [nonce, ctx.principalId, ctx.businessId, recipient.toLowerCase(), POLICY_CHAIN_ID, JSON.stringify({ proposedVersion: version, token: POLICY_TOKEN, policyHash: hash }), message, now, expiresAt],
   );
-  return { nonce, message, expiresAt, recipient, version, policyHash: hash, chainId: POLICY_CHAIN_ID, token: POLICY_TOKEN };
+  return { nonce, message, expiresAt, recipient, version, policyHash: hash, chainId: whitechainSepolia.id, token: POLICY_TOKEN };
 }
 
 type Challenge = { nonce: string; purpose: string; principal_id: string | null; business_id: string | null; address: string; message: string; payload: Record<string, unknown>; expires_at: string; consumed_at: string | null };
 async function challenge(nonce: unknown, purpose: "receiving" | "approval", businessId: string, now: number): Promise<Challenge> {
-  if (typeof nonce !== "string" || nonce.length > 64) throw new HttpError(409, EXPIRED);
+  if (typeof nonce !== "string" || !/^[A-Za-z0-9]{8,128}$/.test(nonce)) throw new HttpError(409, EXPIRED); // viem's SIWE nonces are 96 chars
   const [c] = await query<Challenge>(
     "SELECT nonce, purpose, principal_id, business_id, address, message, payload, expires_at::text, consumed_at::text FROM wf_challenges WHERE nonce = $1",
     [nonce],
