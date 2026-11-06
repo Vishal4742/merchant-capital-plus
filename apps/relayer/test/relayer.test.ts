@@ -511,12 +511,12 @@ test('an unreachable RPC gives 502 and no response echoes the RPC URL', async ()
 
 // ---- 6. health and the key ----
 
-test('health reports the relayer WBT balance and Phase 2 fields as null; a failed lookup is 502', async () => {
+test('health reports the relayer WBT balance, nothing spent yet and the full 0.1 WBT budget; a failed lookup is 502', async () => {
   const node = fakeNode();
   const res = await health(node.client);
   assert.equal(res.status, 200);
   assert.deepEqual(await res.json(), {
-    relayer: node.relayer.address, wbt: '0.5', gasSpentToday: null, budgetLeft: null, usdtFeesUnswapped: null, paused: false,
+    relayer: node.relayer.address, wbt: '0.5', gasSpentToday: '0', budgetLeft: '0.1', usdtFeesUnswapped: null, paused: false,
   });
   const down = fakeNode({ on: { eth_getBalance: () => { throw rpcError(-32000, 'down'); } } });
   assert.equal((await health(down.client)).status, 502);
