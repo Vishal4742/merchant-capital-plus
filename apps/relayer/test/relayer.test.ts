@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { test } from 'node:test';
+import { after, before, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
+import type { PGlite } from '@electric-sql/pglite';
 import {
   custom, decodeFunctionData, domainSeparator, encodeAbiParameters, encodeErrorResult, encodeEventTopics,
   encodeFunctionResult, http, keccak256, parseAbi, parseAbiParameters, parseSignature, parseTransaction,
@@ -10,7 +11,22 @@ import {
 } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { addresses, capitalMarketAbi, merchantPayAbi } from '../src/contracts.ts';
+import { setTestDb, type Db } from '../src/db.ts';
+import { takeLease, unblockPayer, writeAhead } from '../src/state.ts';
 import { health, makeClient, relay, relayerClient, startBalanceRefresh, TIMING, USDT_ABI, USDT_DOMAIN } from '../src/relayer.ts';
+import { applySchema, pgDb, setupDb } from './db-helpers.ts';
+
+// Batch 031: the relayer's shared state is Postgres (FR-REL-10), so every test runs on one PGlite with db/*.sql applied.
+// Each fakeNode has its own relayer key, and the state is per relayer address, so tests stay independent.
+let pg: PGlite;
+before(async () => { pg = await setupDb(); });
+// After DDL, an open PGlite keeps the process alive ~10 s per idle stretch (41 s → 8 s here). `?.`: when a filter
+// matches no test, node:test skips before() but still runs after().
+after(() => pg?.close());
+// The second relayer instance for the batch 031 tests (bottom of the file). Imported here, before any test() is
+// registered: a top-level await between test() calls lets node:test end the root early under --test-name-pattern.
+const INSTANCE_2 = '../src/relayer.ts?instance=2';
+const two = (await import(INSTANCE_2)) as typeof import('../src/relayer.ts');
 
 const MP = addresses.merchantPay; // lowercase in the generated file
 const USDT: Address = '0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7';
@@ -282,21 +298,22 @@ test('the 4 KB cap counts bytes: 4096 multibyte bytes pass, 4097 bytes (under 40
 // ---- 2. local pre-checks: 422 with a code, no RPC ----
 
 test('local pre-checks reject with 422 + code before any RPC call', async () => {
-  const t = now();
-  const cases: [string, Parameters<typeof signedSale>[0]][] = [
-    ['not_yet_valid', { validAfter: t + 60n }],
-    ['expired', { validBefore: t + 10n }],
-    ['expired', { validBefore: t - 1n }],
-    ['window_too_long', { validBefore: t + 901n }],
-    ['window_too_long', { validBefore: 2n ** 256n - 1n }],
-    ['below_minimum', { value: 999_999n }],
-    ['below_minimum', { value: 1n }],
-    ['bad_signature', { signerKey: generatePrivateKey() }],
-    ['bad_signature', { to: '0x2222222222222222222222222222222222222222' }], // signed for another target
+  // Each case's times are computed when it is sent (batch 031 round 4): with one `t` for all cases, a second boundary
+  // crossed while earlier cases ran made `t + 901` equal `now + 900`, which the rule (validBefore ≤ now + 15 min) allows.
+  const cases: [string, (t: bigint) => Parameters<typeof signedSale>[0]][] = [
+    ['not_yet_valid', (t) => ({ validAfter: t + 60n })],
+    ['expired', (t) => ({ validBefore: t + 10n })],
+    ['expired', (t) => ({ validBefore: t - 1n })],
+    ['window_too_long', (t) => ({ validBefore: t + 905n })],
+    ['window_too_long', () => ({ validBefore: 2n ** 256n - 1n })],
+    ['below_minimum', () => ({ value: 999_999n })],
+    ['below_minimum', () => ({ value: 1n })],
+    ['bad_signature', () => ({ signerKey: generatePrivateKey() })],
+    ['bad_signature', () => ({ to: '0x2222222222222222222222222222222222222222' })], // signed for another target
   ];
-  for (const [code, o] of cases) {
+  for (const [code, at] of cases) {
     const node = fakeNode();
-    const { status, out } = await post((await signedSale(o)).body, node);
+    const { status, out } = await post((await signedSale(at(now()))).body, node);
     assert.equal(status, 422, `${code}: ${JSON.stringify(out)}`);
     assert.equal(out.code, code);
     assert.deepEqual(node.calls, [], `${code} made an RPC call`);
@@ -927,13 +944,14 @@ test('an all-zero orderRef is a bad request with no RPC', async () => {
   assert.deepEqual(node.calls, []);
 });
 
-test('breaker: a mined revert bans that payer; three mined reverts in an hour stop every relay with 503', async () => {
+// Round 3 (owner, B9): one mined revert no longer bans the payer; the global breaker is unchanged.
+test('breaker: a mined revert never bans the payer; three mined reverts in an hour stop every relay with 503', async () => {
   const node = fakeNode({ minedRevert: true });
   const payerKey = generatePrivateKey();
   assert.deepEqual([(await post((await signedSaleFrom(payerKey)).body, node)).out.code], ['reverted']);
-  const banned = await post((await signedSaleFrom(payerKey)).body, node); // the same payer, a new authorization
-  assert.deepEqual([banned.status, banned.out.code], [422, 'payer_banned'], JSON.stringify(banned.out));
-  for (let i = 0; i < 2; i++) assert.equal((await post((await signedSale()).body, node)).out.code, 'reverted');
+  const again = await post((await signedSaleFrom(payerKey)).body, node); // the same payer, a new authorization: relayed
+  assert.deepEqual([again.status, again.out.code], [502, 'reverted'], JSON.stringify(again.out));
+  assert.equal((await post((await signedSale()).body, node)).out.code, 'reverted');
   const sendsBefore = node.sent.length;
   const open = await post((await signedSale()).body, node);
   assert.deepEqual([open.status, open.out.code], [503, 'breaker_open']);
@@ -1025,4 +1043,505 @@ test('fund: a signature made for another contract (to = MerchantPay) is bad_sign
   const { status, out } = await post((await signedFunding({ to: MP })).body, node);
   assert.deepEqual([status, out.code], [422, 'bad_signature']);
   assert.equal(node.sent.length, 0);
+});
+
+// ---- batch 031 (FR-REL-10, FR-REL-5, FR-REL-6): the send lock, replay set, budget, limits and breaker across instances ----
+// A second "instance" is the same module imported under another URL (as apps/web/test/sessions-db.test.mjs does): its own
+// in-process state (send queue, caches, TIMING), the same PGlite, the same chain and hot key, as two Fluid instances have.
+
+two.TIMING.receiptPollMs = TIMING.receiptPollMs;
+two.TIMING.receiptTimeoutMs = TIMING.receiptTimeoutMs;
+const postTwo = async (body: unknown, node: ReturnType<typeof fakeNode>) => {
+  const res = await two.relay(JSON.stringify(body), node.client);
+  return { status: res.status, out: await res.json() };
+};
+type SentRow = { auth_key: string; tx_hash: string; tx_nonce: string; fee_wei: string; status: string; fence: string };
+const sentRows = async (relayer: Address) => (await pg.query<SentRow>(
+  'SELECT auth_key, tx_hash, tx_nonce::text, fee_wei::text, status, fence::text FROM rel_sent WHERE relayer = $1 ORDER BY tx_nonce, sent_at',
+  [relayer.toLowerCase()])).rows;
+/** Runs `run` with the relayer on `db`, then routes it back to the shared PGlite. */
+async function withDb<T>(db: Db | undefined, run: () => Promise<T>): Promise<T> {
+  setTestDb(db);
+  try {
+    return await run();
+  } finally {
+    setTestDb(pgDb(pg));
+  }
+}
+// Driver-like errors that name a host (which must never be echoed). Transient ones are retried (round 3, B8); fatal
+// ones (here an internal SQLSTATE) are not.
+const transientError = () => Object.assign(new Error('connect ECONNREFUSED db-host.internal:5432'), { code: 'ECONNREFUSED' });
+const fatalError = () => Object.assign(new Error('internal error on db-host.internal'), { code: 'XX000' });
+/** The shared PGlite, except the statements `fail(text, n)` picks (n counts from 1, retries included) throw. */
+const failingDb = (fail: (text: string, n: number) => boolean, kind: 'transient' | 'fatal' = 'transient'): Db => {
+  let n = 0;
+  return {
+    query: async (text, params) => {
+      if (fail(text, ++n)) throw kind === 'transient' ? transientError() : fatalError();
+      return pgDb(pg).query(text, params);
+    },
+  };
+};
+/** The shared PGlite, except the statements `lose(text)` picks run AND commit, then their reply is "lost" (B8). */
+const lostReplyDb = (lose: (text: string) => boolean): Db => ({
+  query: async (text, params) => {
+    const rows = await pgDb(pg).query(text, params);
+    if (lose(text)) throw Object.assign(new Error('socket hang up on db-host.internal'), { code: 'ECONNRESET' });
+    return rows;
+  },
+});
+const encodeBalance = (wei: bigint) => encodeFunctionResult({ abi: USDT_ABI, functionName: 'balanceOf', result: wei });
+const encodeUsed = (used: boolean) => encodeFunctionResult({ abi: USDT_ABI, functionName: 'authorizationState', result: used });
+/** A node whose next tx is mined reverted (B9). After the broadcast, `drained`: the payer's USDT is gone (they moved it:
+ *  payer-attributable); `consumedElsewhere`: the authorization was used by someone else (a front-run: not the payer's
+ *  fault); `checkFails`: the post-revert reads fail (RPC trouble: never the payer's fault). */
+function revertingNode(o: { drained?: boolean; consumedElsewhere?: boolean; checkFails?: boolean } = {}) {
+  let broadcast = false;
+  const after = (answer: () => unknown) => (_params: unknown[], next: () => unknown) => {
+    if (!broadcast) return next();
+    if (o.checkFails) throw rpcError(-32000, 'header not found');
+    return answer();
+  };
+  return fakeNode({ minedRevert: true, on: {
+    eth_sendRawTransaction: (_params, next) => { broadcast = true; return next(); },
+    'eth_call:balanceOf': after(() => encodeBalance(o.drained ? 0n : 10_000_000n)),
+    'eth_call:authorizationState': after(() => encodeUsed(o.consumedElsewhere === true)), // a reverted tx consumed nothing
+  } });
+}
+const faultRows = async (payer: Address) =>
+  Number((await pg.query<{ n: number }>('SELECT count(*)::int AS n FROM rel_sent WHERE payer = $1 AND payer_fault_at IS NOT NULL', [payer.toLowerCase()])).rows[0].n);
+/** Seeds a payer-attributable failure `agoMs` ago (another relayer's row), for the window/cooldown arithmetic. */
+const seedFault = (payer: Address, agoMs: number) => pg.query(
+  `INSERT INTO rel_sent (auth_key, relayer, payer, tx_hash, tx_nonce, fence, fee_wei, status, sent_at, reverted_at, payer_fault_at)
+   VALUES ($1, 'seed', $2, '0x', 0, 1, 0, 'reverted', $3, $3, $3)`, [`seed:${random32()}`, payer.toLowerCase(), Date.now() - agoMs]);
+const MINUTE = 60_000;
+/** Collects what the relayer writes to stderr while `run` runs (DB errors are logged there). */
+async function stderrOf<T>(run: () => Promise<T>): Promise<[T, string]> {
+  const write = process.stderr.write;
+  let text = '';
+  process.stderr.write = ((chunk: string | Uint8Array) => { text += String(chunk); return true; }) as typeof process.stderr.write;
+  try {
+    return [await run(), text];
+  } finally {
+    process.stderr.write = write;
+  }
+}
+
+test('B1: two instances on one database never sign at once: the second waits for the shared send lock and gets nonce n+1', async () => {
+  const node = fakeNode({ sendDelayMs: 40 });
+  const [p, q] = await Promise.all([signedSale(), signedSale()]);
+  const results = await Promise.all([post(p.body, node), postTwo(q.body, node)]);
+  assert.deepEqual(results.map((r) => r.status), [200, 200], JSON.stringify(results.map((r) => r.out)));
+  assert.deepEqual(node.sent.map((raw) => parseTransaction(raw).nonce).sort(), [7, 8]);
+  const nonceReads = node.calls.flatMap((c, i) => (c === 'eth_getTransactionCount' ? [i] : []));
+  assert.equal(nonceReads.length, 2);
+  assert.ok(nonceReads[1] > node.calls.indexOf('mined'), `the second nonce was read before the first tx was mined: ${node.calls.join(' > ')}`);
+  assert.deepEqual((await sentRows(node.relayer.address)).map((r) => r.tx_nonce), ['7', '8']);
+});
+
+test('B1: a live lease left by a crashed instance blocks sends (503 busy, nothing signed) until it lapses; then it is re-taken with the next fence', async () => {
+  const node = fakeNode();
+  const relayer = node.relayer.address.toLowerCase();
+  await pg.query("INSERT INTO rel_lease (relayer, fence, until) VALUES ($1, 41, now() + interval '1 hour')", [relayer]);
+  const saved = two.TIMING.maxRequestAgeMs;
+  two.TIMING.maxRequestAgeMs = 100;
+  try {
+    const blocked = await postTwo((await signedSale()).body, node);
+    assert.deepEqual([blocked.status, blocked.out.code, blocked.out.txHash], [503, 'busy', undefined], JSON.stringify(blocked.out));
+    assert.equal(node.sent.length, 0);
+    assert.ok(!node.calls.includes('eth_getTransactionCount'), 'nothing ran inside the lock');
+  } finally {
+    two.TIMING.maxRequestAgeMs = saved;
+  }
+  await pg.query("UPDATE rel_lease SET until = now() - interval '1 second' WHERE relayer = $1", [relayer]);
+  assert.equal((await postTwo((await signedSale()).body, node)).status, 200);
+  assert.deepEqual((await sentRows(node.relayer.address)).map((r) => r.fence), ['42']);
+  const lease = (await pg.query<{ fence: string; live: boolean }>('SELECT fence::text, until > now() AS live FROM rel_lease WHERE relayer = $1', [relayer])).rows;
+  assert.deepEqual(lease, [{ fence: '42', live: false }], 'released after the send: expired, not deleted, so a fence never repeats');
+});
+
+test('B1 fencing: a sender whose lease was taken over while it was in the lock cannot write ahead, so it never broadcasts', async () => {
+  const node = fakeNode({ on: { eth_getTransactionCount: async (_params, next) => {
+    // another instance takes the lease over meanwhile (e.g. this instance was frozen past the lease)
+    await pg.query('UPDATE rel_lease SET fence = fence + 1 WHERE relayer = $1', [node.relayer.address.toLowerCase()]);
+    return next();
+  } } });
+  const { status, out } = await post((await signedSale()).body, node);
+  assert.deepEqual([status, out.code, out.txHash], [503, 'busy', undefined], JSON.stringify(out));
+  assert.equal(node.sent.length, 0);
+  assert.deepEqual(await sentRows(node.relayer.address), []);
+});
+
+// Round 2 (R2-2): the write-ahead also needs the lease to be live, not only the fence to match.
+test('B1 fencing: a sender whose lease merely expired (same fence, nobody took it yet) cannot write ahead either', async () => {
+  const node = fakeNode({ on: { eth_getTransactionCount: async (_params, next) => {
+    await pg.query("UPDATE rel_lease SET until = now() - interval '1 second' WHERE relayer = $1", [node.relayer.address.toLowerCase()]);
+    return next();
+  } } });
+  const { status, out } = await post((await signedSale()).body, node);
+  assert.deepEqual([status, out.code, out.txHash], [503, 'busy', undefined], JSON.stringify(out));
+  assert.equal(node.sent.length, 0);
+  assert.deepEqual(await sentRows(node.relayer.address), []);
+});
+
+test('B2: an authorization sent by instance 1 is a replay on instance 2 while its tx is still pending', async () => {
+  const node = timeoutNode();
+  const { body } = await signedSale();
+  const first = await post(body, node);
+  assert.deepEqual([first.status, first.out.code], [502, 'rpc_error']);
+  const again = await postTwo(body, node); // still pending: authorizationState is false and the simulation passes
+  assert.deepEqual([again.status, again.out.code], [422, 'replay'], JSON.stringify(again.out));
+  assert.equal(node.sent.length, 1);
+  assert.deepEqual((await sentRows(node.relayer.address)).map((r) => r.status), ['unknown']);
+});
+
+test('B2: the signed tx hash and nonce are persisted before the broadcast; the receipt then records the real fee', async () => {
+  let atBroadcast: SentRow[] = [];
+  const node = fakeNode({ on: { eth_sendRawTransaction: async (_params, next) => {
+    atBroadcast = await sentRows(node.relayer.address);
+    return next();
+  } } });
+  const sale = await signedSale();
+  const { status, out } = await post(sale.body, node);
+  assert.equal(status, 200, JSON.stringify(out));
+  const authKey = `${sale.message.from.toLowerCase()}:${sale.message.nonce.toLowerCase()}`;
+  assert.equal(atBroadcast.length, 1, 'the row existed when eth_sendRawTransaction arrived');
+  const { fence: _fence, ...written } = atBroadcast[0];
+  assert.deepEqual(written, { auth_key: authKey, tx_hash: out.txHash, tx_nonce: '7', fee_wei: String(CAP_FEE), status: 'signed' });
+  const [settled] = await sentRows(node.relayer.address);
+  assert.deepEqual([settled.status, settled.fee_wei], ['mined', String(GAS_USED * GAS_PRICE + L1_FEE)]);
+});
+
+test("B3: the revert breaker is shared and a revert bans nobody: instance 2 relays the same payer, then opens after the 3rd revert", async () => {
+  const node = fakeNode({ minedRevert: true });
+  const payerKey = generatePrivateKey();
+  assert.equal((await post((await signedSaleFrom(payerKey)).body, node)).out.code, 'reverted');
+  assert.equal((await postTwo((await signedSaleFrom(payerKey)).body, node)).out.code, 'reverted', 'no ban on instance 2 either');
+  assert.equal((await post((await signedSale()).body, node)).out.code, 'reverted');
+  const sendsBefore = node.sent.length;
+  const open = await postTwo((await signedSale()).body, node);
+  assert.deepEqual([open.status, open.out.code], [503, 'breaker_open']);
+  assert.equal(node.sent.length, sendsBefore, 'nothing sent once the breaker is open');
+});
+
+test('B3: the daily budget is shared: three sales racing on two instances spend it once, the others are refused in the lock', async () => {
+  const big = fakeNode({ gasUsed: 20_000_000n, sendDelayMs: 30 }); // one send costs 0.10002 WBT
+  const sales = await Promise.all([signedSale(), signedSale(), signedSale()]);
+  const results = await Promise.all([post(sales[0].body, big), postTwo(sales[1].body, big), postTwo(sales[2].body, big)]);
+  assert.deepEqual(results.map((r) => r.status).sort(), [200, 503, 503], JSON.stringify(results.map((r) => r.out)));
+  assert.ok(results.filter((r) => r.status === 503).every((r) => r.out.code === 'budget_exhausted'));
+  assert.equal(big.sent.length, 1);
+  const calls = big.calls.length;
+  assert.equal((await postTwo((await signedSale()).body, big)).out.code, 'budget_exhausted');
+  assert.equal(big.calls.length, calls, 'refused on instance 2 with no RPC');
+});
+
+test('B3: the per-payer limit is shared: 10 sends on instance 1, the 11th on instance 2 is 429 rate_limited', async () => {
+  const node = fakeNode();
+  const payerKey = generatePrivateKey();
+  for (let i = 0; i < 10; i++) assert.equal((await post((await signedSaleFrom(payerKey)).body, node)).status, 200, `send ${i + 1}`);
+  const eleventh = await postTwo((await signedSaleFrom(payerKey)).body, node);
+  assert.deepEqual([eleventh.status, eleventh.out.code], [429, 'rate_limited']);
+  assert.equal(node.sent.length, 10);
+});
+
+test("B3: the per-merchant limit (200 an hour) counts every instance's sends: the 200th passes, the 201st is 429", async () => {
+  const node = fakeNode();
+  const merchant = privateKeyToAccount(generatePrivateKey()).address;
+  await pg.query(`INSERT INTO rel_sent (auth_key, relayer, payer, merchant, tx_hash, tx_nonce, fence, fee_wei, status, sent_at)
+    SELECT 'seed:' || g || ':' || $2::text, $1, 'seed' || g, $2::text, '0x', g, 1, 0, 'mined', $3 FROM generate_series(1, 199) g`,
+  [node.relayer.address.toLowerCase(), merchant.toLowerCase(), Date.now()]);
+  assert.equal((await postTwo((await signedSale({ merchant })).body, node)).status, 200, 'the 200th send');
+  const over = await post((await signedSale({ merchant })).body, node);
+  assert.deepEqual([over.status, over.out.code], [429, 'rate_limited']);
+});
+
+test('B4: with no database configured, /relay is 503 before any RPC (nothing signed or sent) and /health is 503', async () => {
+  const saved = process.env.DATABASE_URL;
+  delete process.env.DATABASE_URL;
+  try {
+    await withDb(undefined, async () => {
+      const node = fakeNode();
+      const { status, out } = await post((await signedSale()).body, node);
+      assert.deepEqual([status, out.code, out.txHash], [503, 'db_unavailable', undefined], JSON.stringify(out));
+      assert.deepEqual(node.calls, [], 'refused before any RPC');
+      const h = await health(node.client);
+      assert.deepEqual([h.status, (await h.json()).code], [503, 'db_unavailable']);
+    });
+  } finally {
+    if (saved !== undefined) process.env.DATABASE_URL = saved;
+  }
+});
+
+test('B4: a database failure at any step before the broadcast (pre-check, lease, in-lock read, write-ahead) is 503 and sends nothing', async () => {
+  for (const step of [1, 2, 3, 4]) {
+    const node = fakeNode();
+    // fatal errors: not retried (B8), so query n is exactly the step named above
+    const [{ status, out }, logged] = await stderrOf(() => withDb(failingDb((_text, n) => n === step, 'fatal'), async () => post((await signedSale()).body, node)));
+    assert.deepEqual([status, out.code, out.txHash], [503, 'db_unavailable', undefined], `query ${step}: ${JSON.stringify(out)}`);
+    assert.equal(node.sent.length, 0, `query ${step}: broadcast`);
+    assert.ok(!JSON.stringify(out).includes('db-host') && !logged.includes('db-host'), `query ${step}: the driver error leaked`);
+  }
+});
+
+test('B4: a database failure after the broadcast never turns a sent payment into a refusal: the 200 and txHash stand', async () => {
+  const node = fakeNode();
+  const [{ status, out }] = await stderrOf(() => withDb(failingDb((text) => /^\s*UPDATE rel_/.test(text)), async () => post((await signedSale()).body, node)));
+  assert.equal(status, 200, JSON.stringify(out));
+  assert.equal(out.txHash, keccak256(node.sent[0]));
+  const [row] = await sentRows(node.relayer.address);
+  assert.deepEqual([row.status, row.fee_wei], ['signed', String(CAP_FEE)], 'the write-ahead row stands: the cap is counted');
+});
+
+// Round 2 (R2-3), round 3: a settle that hits a database blip is retried (now by db.ts, B8), so a payer-attributable
+// revert still reaches the cooldown count and every revert the breaker.
+test('B3/B4: a failed settle is retried, so a payer-attributable revert is still recorded; the answer is unchanged', async () => {
+  let settles = 0;
+  const node = revertingNode({ drained: true });
+  const payerKey = generatePrivateKey();
+  const flaky = failingDb((text) => /^\s*UPDATE rel_sent/.test(text) && ++settles <= 2); // the first two tries fail
+  const [{ status, out }] = await stderrOf(() => withDb(flaky, async () => post((await signedSaleFrom(payerKey)).body, node)));
+  assert.deepEqual([status, out.code, out.txHash], [502, 'reverted', keccak256(node.sent[0])]);
+  assert.equal(settles, 3, 'two failures, then the third try recorded it');
+  assert.equal((await sentRows(node.relayer.address))[0].status, 'reverted');
+  assert.equal(await faultRows(privateKeyToAccount(payerKey).address), 1);
+});
+
+test('B4: settle runs once when it succeeds and at most 4 tries (≈1 s) when it keeps failing, then alerts; the 200 stands', async () => {
+  let settles = 0;
+  const counting = failingDb((text) => { if (/^\s*UPDATE rel_sent/.test(text)) settles += 1; return false; });
+  assert.equal((await withDb(counting, async () => post((await signedSale()).body, fakeNode()))).status, 200);
+  assert.equal(settles, 1, 'never retried after a success');
+  settles = 0;
+  const node = fakeNode();
+  const broken = failingDb((text) => /^\s*UPDATE rel_sent/.test(text) && ++settles > 0);
+  const [{ status, out }, logged] = await stderrOf(() => withDb(broken, async () => post((await signedSale()).body, node)));
+  assert.deepEqual([status, out.txHash], [200, keccak256(node.sent[0])]);
+  assert.equal(settles, 4);
+  assert.match(logged, new RegExp(`ALERT settle failed ${out.txHash}`));
+  assert.ok(!logged.includes('db-host'), 'the driver error leaked');
+});
+
+// ---- round 3, B8 (owner): retry transient database failures briefly, idempotently; never sign on unknown DB state ----
+
+test('B8: transient database errors are retried briefly: two failed tries of the pre-check read, then the payment goes through', async () => {
+  const node = fakeNode();
+  const [{ status, out }] = await stderrOf(() => withDb(failingDb((_text, n) => n <= 2), async () => post((await signedSale()).body, node)));
+  assert.equal(status, 200, JSON.stringify(out));
+  assert.equal(node.sent.length, 1);
+});
+
+test('B8: a take-lease whose reply was lost is recognised as ours on retry (never a false "busy")', async () => {
+  const node = fakeNode();
+  let takes = 0;
+  const saved = TIMING.maxRequestAgeMs;
+  TIMING.maxRequestAgeMs = 400; // without recognition this request would wait on its own lease, then answer busy
+  try {
+    const db = lostReplyDb((text) => /INSERT INTO rel_lease/.test(text) && ++takes === 1);
+    const [{ status, out }] = await stderrOf(() => withDb(db, async () => post((await signedSale()).body, node)));
+    assert.equal(status, 200, JSON.stringify(out));
+  } finally {
+    TIMING.maxRequestAgeMs = saved;
+  }
+  assert.equal(takes, 2, 'the first take committed, its reply was lost, the retry recognised it');
+  assert.deepEqual((await sentRows(node.relayer.address)).map((r) => r.fence), ['1'], 'one take: fence 1, not a second lease');
+});
+
+test('B8: a write-ahead whose reply was lost is recognised as ours on retry (never a false "replay"); broadcast once', async () => {
+  const node = fakeNode();
+  let writes = 0;
+  const db = lostReplyDb((text) => /INSERT INTO rel_sent/.test(text) && ++writes === 1);
+  const [{ status, out }] = await stderrOf(() => withDb(db, async () => post((await signedSale()).body, node)));
+  assert.equal(status, 200, JSON.stringify(out));
+  assert.equal(writes, 2);
+  assert.equal(node.sent.length, 1);
+  assert.equal((await sentRows(node.relayer.address)).length, 1);
+});
+
+// The relay path can't reach this guard (its replay reads refuse first), so writeAhead is called directly: a stale holder
+// re-signing the same nonce produces the SAME tx hash, and only the fence tells the two writers apart.
+test('B8: write-ahead recognition needs our fence too: the same tx hash under another fence is a replay', async () => {
+  const relayer = privateKeyToAccount(generatePrivateKey()).address;
+  const base = { relayer, auth: { key: `0xabc:${random32()}`, payer: '0xabc' }, txHash: random32(), txNonce: 7, feeWei: CAP_FEE, sentAt: Date.now() };
+  const first = await takeLease(relayer, 'holder-1');
+  assert.ok(first);
+  assert.equal(await writeAhead({ ...base, fence: first }), 'written');
+  assert.equal(await writeAhead({ ...base, fence: first }), 'written', 'our own retry after a lost reply');
+  await pg.query("UPDATE rel_lease SET until = now() - interval '1 second' WHERE relayer = $1", [relayer.toLowerCase()]);
+  const second = await takeLease(relayer, 'holder-2');
+  assert.ok(second && second !== first);
+  assert.equal(await writeAhead({ ...base, fence: second }), 'replay', 'same hash, another holder');
+  assert.equal(await takeLease(relayer, 'holder-1'), undefined, 'holder-1 lost its lease and is not recognised');
+  assert.equal(await takeLease(relayer, 'holder-2'), second, 'holder-2 retrying its take is recognised');
+});
+
+test("B8: another holder's write-ahead row is still a replay on retry (recognition needs our tx hash AND fence)", async () => {
+  const node = timeoutNode();
+  const { body } = await signedSale();
+  assert.equal((await post(body, node)).status, 502); // written ahead + broadcast, then no receipt
+  const again = await postTwo(body, node);
+  assert.deepEqual([again.status, again.out.code], [422, 'replay']);
+  assert.equal(node.sent.length, 1);
+});
+
+test('B8: non-transient errors are not retried; persistent transient errors give up within ~1.5 s with 503; nothing signed or sent', async () => {
+  let tries = 0;
+  const fatal = failingDb(() => { tries += 1; return true; }, 'fatal');
+  const node = fakeNode();
+  const [first] = await stderrOf(() => withDb(fatal, async () => post((await signedSale()).body, node)));
+  assert.deepEqual([first.status, first.out.code, tries], [503, 'db_unavailable', 1], 'a fatal error is tried once');
+  tries = 0;
+  const down = failingDb(() => { tries += 1; return true; });
+  const started = performance.now();
+  const [second] = await stderrOf(() => withDb(down, async () => post((await signedSale()).body, node)));
+  const elapsed = performance.now() - started;
+  assert.deepEqual([second.status, second.out.code, second.out.txHash, tries], [503, 'db_unavailable', undefined, 4]);
+  assert.ok(elapsed < 1_800, `gave up after ${Math.round(elapsed)} ms`);
+  assert.deepEqual([node.calls, node.sent], [[], []], 'refused before any RPC, nothing signed');
+});
+
+// ---- round 3, B9 (owner): no automatic ban; a temporary cooldown for repeated payer-attributable failures ----
+
+test('B9: 3 payer-attributable reverts within 10 min put the payer in a 15-min cooldown: 429 payer_cooldown + retry_after_s, on every instance', async () => {
+  const payerKey = generatePrivateKey();
+  const payer = privateKeyToAccount(payerKey).address;
+  // separate relayers, so the per-relayer revert breaker stays closed and only the payer's cooldown can refuse
+  for (const via of [post, postTwo, post]) {
+    assert.equal((await via((await signedSaleFrom(payerKey)).body, revertingNode({ drained: true }))).out.code, 'reverted');
+  }
+  assert.equal(await faultRows(payer), 3);
+  const node = fakeNode();
+  const res = await two.relay(JSON.stringify((await signedSaleFrom(payerKey)).body), node.client);
+  const out = await res.json();
+  assert.deepEqual([res.status, out.code], [429, 'payer_cooldown'], JSON.stringify(out));
+  assert.ok(Number.isInteger(out.retry_after_s) && out.retry_after_s > 890 && out.retry_after_s <= 900, `retry_after_s ${out.retry_after_s}`);
+  assert.equal(res.headers.get('retry-after'), String(out.retry_after_s));
+  assert.deepEqual(node.calls, [], 'refused before any RPC');
+  const one = await post((await signedSaleFrom(payerKey)).body, fakeNode());
+  assert.deepEqual([one.status, one.out.code], [429, 'payer_cooldown'], 'instance 1 sees it too');
+  assert.equal((await post((await signedSale()).body, fakeNode())).status, 200, 'other payers are unaffected');
+});
+
+test('B9: two attributable reverts do not block; unattributable reverts never count (pause/unknown, front-run, RPC trouble)', async () => {
+  const twice = generatePrivateKey();
+  for (let i = 0; i < 2; i++) await post((await signedSaleFrom(twice)).body, revertingNode({ drained: true }));
+  assert.equal((await post((await signedSaleFrom(twice)).body, fakeNode())).status, 200, 'two failures: still relayed');
+  const cases: [string, Parameters<typeof revertingNode>[0]][] = [
+    ['funds still there (pause, gas, unknown)', {}],
+    ['authorization consumed elsewhere (front-run), funds gone with it', { drained: true, consumedElsewhere: true }],
+    ['the post-revert check itself failed (RPC trouble)', { drained: true, checkFails: true }],
+  ];
+  for (const [name, o] of cases) {
+    const payerKey = generatePrivateKey();
+    for (let i = 0; i < 3; i++) assert.equal((await post((await signedSaleFrom(payerKey)).body, revertingNode(o))).out.code, 'reverted', name);
+    assert.equal(await faultRows(privateKeyToAccount(payerKey).address), 0, `${name}: counted`);
+    assert.equal((await post((await signedSaleFrom(payerKey)).body, fakeNode())).status, 200, `${name}: penalized`);
+  }
+});
+
+test('B9: re-POSTs of a failed authorization are replays (no rebroadcast) and never add a failure; bad signatures never count', async () => {
+  const payerKey = generatePrivateKey();
+  const payer = privateKeyToAccount(payerKey).address;
+  const node = revertingNode({ drained: true });
+  const { body } = await signedSaleFrom(payerKey);
+  assert.equal((await post(body, node)).out.code, 'reverted');
+  for (const via of [post, postTwo]) assert.deepEqual([(await via(body, node)).out.code], ['replay']);
+  assert.deepEqual([node.sent.length, await faultRows(payer)], [1, 1]);
+  // someone else signs "as" this payer: refused before any relay, so it can never count against them
+  for (let i = 0; i < 5; i++) {
+    const forged = await signedSale({ signerKey: generatePrivateKey() });
+    const res = await post({ ...forged.body, args: { ...forged.body.args, from: payer } }, fakeNode());
+    assert.equal(res.out.code, 'bad_signature');
+  }
+  assert.deepEqual([await faultRows(payer), (await post((await signedSaleFrom(payerKey)).body, fakeNode())).status], [1, 200]);
+});
+
+test('B9: the window is 10 min (exclusive) and the cooldown 15 min from the 3rd failure', async () => {
+  const blocked = async (payerKey: Hex) => (await post((await signedSaleFrom(payerKey)).body, fakeNode())).out.code === 'payer_cooldown';
+  const spread = generatePrivateKey(); // 11, 5 and 1 min ago: never 3 inside one 10-min window
+  for (const ago of [11, 5, 1]) await seedFault(privateKeyToAccount(spread).address, ago * MINUTE);
+  assert.equal(await blocked(spread), false);
+  const old = generatePrivateKey(); // 3 within 2 min, the last 16 min ago: the 15-min cooldown is over
+  for (const ago of [18, 17, 16]) await seedFault(privateKeyToAccount(old).address, ago * MINUTE);
+  assert.equal(await blocked(old), false);
+  const recent = generatePrivateKey(); // 9, 5 and 1 min ago: in cooldown for another ~14 min
+  for (const ago of [9, 5, 1]) await seedFault(privateKeyToAccount(recent).address, ago * MINUTE);
+  const res = await post((await signedSaleFrom(recent)).body, fakeNode());
+  assert.equal(res.out.code, 'payer_cooldown');
+  assert.ok(res.out.retry_after_s > 830 && res.out.retry_after_s <= 840, `retry_after_s ${res.out.retry_after_s}`);
+});
+
+test('B9: the thresholds come from RELAYER_COOLDOWN_FAILURES, RELAYER_COOLDOWN_WINDOW_S and RELAYER_COOLDOWN_S', async () => {
+  const names = ['RELAYER_COOLDOWN_FAILURES', 'RELAYER_COOLDOWN_WINDOW_S', 'RELAYER_COOLDOWN_S'] as const;
+  const saved = names.map((n) => process.env[n]);
+  Object.assign(process.env, { RELAYER_COOLDOWN_FAILURES: '2', RELAYER_COOLDOWN_WINDOW_S: '120', RELAYER_COOLDOWN_S: '60' });
+  try {
+    const payerKey = generatePrivateKey();
+    for (const ago of [90_000, 10_000]) await seedFault(privateKeyToAccount(payerKey).address, ago);
+    const res = await post((await signedSaleFrom(payerKey)).body, fakeNode());
+    assert.equal(res.out.code, 'payer_cooldown');
+    assert.ok(res.out.retry_after_s > 45 && res.out.retry_after_s <= 50, `retry_after_s ${res.out.retry_after_s}`);
+  } finally {
+    names.forEach((n, i) => { if (saved[i] === undefined) delete process.env[n]; else process.env[n] = saved[i]; });
+  }
+});
+
+test('B9: an audited unblock lifts a cooldown at once (actor, reason, what was active); earlier failures stop counting', async () => {
+  const payerKey = generatePrivateKey();
+  const payer = privateKeyToAccount(payerKey).address;
+  for (const ago of [3, 2, 1]) await seedFault(payer, ago * MINUTE);
+  assert.equal((await post((await signedSaleFrom(payerKey)).body, fakeNode())).out.code, 'payer_cooldown');
+  const audit = await unblockPayer({ payer, actor: 'ops-asha', reason: 'customer confirmed the funds move was a mistake' });
+  const [row] = (await pg.query<{ payer: string; actor: string; reason: string; cooldown_until: string | null }>(
+    'SELECT payer, actor, reason, cooldown_until::text FROM rel_payer_unblocks WHERE id = $1', [audit.id])).rows;
+  assert.deepEqual([row.payer, row.actor, row.reason], [payer.toLowerCase(), 'ops-asha', 'customer confirmed the funds move was a mistake']);
+  assert.ok(Number(row.cooldown_until) > Date.now(), 'the audit row keeps the cooldown it lifted');
+  assert.equal((await post((await signedSaleFrom(payerKey)).body, fakeNode())).status, 200);
+  await seedFault(payer, 0); // one new failure + the 3 before the unblock: not a new cooldown
+  assert.equal((await post((await signedSaleFrom(payerKey)).body, fakeNode())).status, 200);
+  await assert.rejects(unblockPayer({ payer, actor: ' ', reason: 'x' }), /actor/);
+  await assert.rejects(unblockPayer({ payer: '0x12', actor: 'a', reason: 'x' }), /payer/);
+});
+
+test("B5: /health on instance 2 reports instance 1's spend, and paused is the real breaker state (at most 5 s old, like the balance)", async () => {
+  const node = fakeNode({ minedRevert: true });
+  const healthTwo = async () => (await two.health(node.client)).json();
+  const fresh = await healthTwo();
+  assert.deepEqual([fresh.gasSpentToday, fresh.budgetLeft, fresh.paused], ['0', '0.1', false]);
+  for (let i = 0; i < 3; i++) assert.equal((await post((await signedSale()).body, node)).out.code, 'reverted');
+  const realNow = Date.now;
+  Date.now = () => realNow() + 5_001;
+  let later;
+  try {
+    later = await healthTwo();
+  } finally {
+    Date.now = realNow;
+  }
+  assert.deepEqual([later.gasSpentToday, later.paused], [formatEther(3n * (GAS_USED * GAS_PRICE + L1_FEE)), true]);
+});
+
+test('B5: paused is true once the shared budget cannot cover one more send', async () => {
+  const big = fakeNode({ gasUsed: 20_000_000n });
+  assert.equal((await post((await signedSale()).body, big)).status, 200);
+  const h = await (await two.health(big.client)).json();
+  assert.deepEqual([h.budgetLeft, h.paused], ['0', true]);
+});
+
+test('B5: a burst of /health calls makes one database read (the endpoint is public)', async () => {
+  let reads = 0;
+  const counting: Db = { query: (text, params) => { reads += 1; return pgDb(pg).query(text, params); } };
+  const node = fakeNode();
+  const replies = await withDb(counting, () => Promise.all(Array.from({ length: 10 }, () => health(node.client))));
+  assert.ok(replies.every((r) => r.status === 200));
+  assert.equal(reads, 1);
+});
+
+test('B7: db/*.sql is idempotent: applying it again keeps every table and row', async () => {
+  const rows = async () => (await pg.query<{ n: number }>('SELECT count(*)::int AS n FROM rel_sent')).rows[0].n;
+  await pg.query(`INSERT INTO rel_sent (auth_key, relayer, payer, tx_hash, tx_nonce, fence, fee_wei, status, sent_at)
+    VALUES ('b7:' || $1::text, 'b7', 'b7', '0x', 0, 1, 0, 'mined', 0)`, [random32()]);
+  const existing = await rows();
+  assert.ok(existing > 0);
+  await applySchema(pg);
+  assert.equal(await rows(), existing);
 });

@@ -7,13 +7,18 @@
   },
   "scripts": {
     "dev": "node --env-file=.env dev.ts",
+    "db:migrate": "node --env-file=../../.env db/migrate.ts",
+    "payer:unblock": "node --env-file=../../.env db/unblock-payer.ts",
     "test": "node --test",
+    "test:pg": "node test-pg/run.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@neondatabase/serverless": "1.2.0",
     "viem": "2.57.13"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.11",
     "@types/node": "26.6.6",
     "typescript": "7.0.2"
   }
