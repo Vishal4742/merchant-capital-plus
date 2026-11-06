@@ -1,0 +1,10 @@
+# Every change to main needs the owner's approval (human, 2026-11-06 20:52).
+# Sensitive paths are listed again so the intent survives if the catch-all is narrowed later.
+*                         @Vishal4742
+/contracts/               @Vishal4742
+/apps/relayer/            @Vishal4742
+/packages/shared/         @Vishal4742
+/.github/                 @Vishal4742
+/.claude/                 @Vishal4742
+/apps/web/next.config.ts  @Vishal4742
+/tools/                   @Vishal4742
