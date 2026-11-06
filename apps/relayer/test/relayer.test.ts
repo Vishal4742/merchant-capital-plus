@@ -584,10 +584,10 @@ test('concurrent /health calls on a cold cache share one balance read', async ()
   assert.equal(node.calls.filter((c) => c === 'eth_getBalance').length, 1);
 });
 
-// Batch 022 (claude-contracts Q19): a full repayment of a 3-holder invoice needs 421,338 gas, above the relayer's fixed 400k.
-test('a payment that needs more gas than the 400k limit is refused with 422 too_much_gas and never sent', async () => {
+// Batch 022 (claude-contracts Q19): 421,338 gas is above a sale's fixed 400k (an invoice gets up to 600k since batch 045).
+test('a sale that needs more gas than the 400k limit is refused with 422 too_much_gas and never sent', async () => {
   const node = fakeNode({ estimate: 421_338n });
-  const { status, out } = await post((await signedInvoice()).body, node);
+  const { status, out } = await post((await signedSale()).body, node);
   assert.equal(status, 422, JSON.stringify(out));
   assert.equal(out.code, 'too_much_gas');
   assert.equal(node.sent.length, 0);
@@ -1240,4 +1240,58 @@ test('FR-REL-10: as the mcplus_relayer role (db/002_relayer_role.sql) a sale rel
     assert.deepEqual((await post(sale.body, node)).out.code, 'replay');
     assert.equal((await (await health(node.client)).json()).budgetLeft !== '0.1', true, 'spend read back as the role');
   });
+});
+
+// ---- batch 045 (claude-contracts M3): an invoice's gas limit is clamp(ceil(estimate x 1.2), 400k, 600k) ----
+const GWEI6 = 6_000_000_000n;
+const authOf = (m: { from: Address; nonce: Hex }) => `${lc(m.from)}:${lc(m.nonce)}`;
+
+test('M3: an invoice is signed at clamp(ceil(estimate x 1.2), 400k, 600k); simulated at 600k before the lock, at its limit inside', async () => {
+  const cases: [bigint, bigint][] = [[457_214n, 548_657n], [504_115n, 600_000n], [500_000n, 600_000n], [421_338n, 505_606n], [310_000n, 400_000n]];
+  for (const [estimate, limit] of cases) {
+    const node = fakeNode({ estimate });
+    const { status, out } = await post((await signedInvoice()).body, node);
+    assert.equal(status, 200, `${estimate}: ${JSON.stringify(out)}`);
+    assert.equal(parseTransaction(node.sent[0]).gas, limit, `estimate ${estimate}`);
+    assert.deepEqual(node.simulations.map((c) => BigInt(c.gas as string)), [600_000n, limit], `estimate ${estimate}`);
+  }
+});
+
+test('M3: an invoice estimated above 600k is 422 too_much_gas and never sent; a failed estimate signs at 600k', async () => {
+  const over = fakeNode({ estimate: 600_001n });
+  const res = await post((await signedInvoice()).body, over);
+  assert.deepEqual([res.status, res.out.code], [422, 'too_much_gas'], JSON.stringify(res.out));
+  assert.match(res.out.error, /600000/);
+  assert.equal(over.sent.length, 0);
+  const failed = fakeNode({ on: { eth_estimateGas: () => { throw rpcError(-32000, 'header not found'); } } });
+  assert.equal((await post((await signedInvoice()).body, failed)).status, 200);
+  assert.equal(parseTransaction(failed.sent[0]).gas, 600_000n);
+});
+
+test('M3: sales and funding keep the fixed 400k: 421,338 estimated is too_much_gas, and they simulate at 400k', async () => {
+  const sale = fakeNode({ estimate: 421_338n });
+  assert.equal((await post((await signedSale()).body, sale)).out.code, 'too_much_gas');
+  const fund = fakeNode({ estimate: 421_338n, quote: 2_000_000n });
+  assert.equal((await post((await signedFunding({ quote: 2_000_000n })).body, fund)).out.code, 'too_much_gas');
+  const ok = fakeNode({ estimate: 390_000n });
+  assert.equal((await post((await signedSale()).body, ok)).status, 200);
+  assert.equal(parseTransaction(ok.sent[0]).gas, 400_000n);
+  assert.deepEqual(ok.simulations.map((c) => c.gas), ['0x61a80', '0x61a80']);
+});
+
+test('M3: an unmined invoice reserves its own limit x 6 gwei; the budget holds an invoice to 0.0036 WBT and a sale to 0.0024', async () => {
+  const node = fakeNode({ estimate: 457_214n, on: sentButNeverMined(() => undefined) });
+  const inv = await signedInvoice();
+  await post(inv.body, node);
+  const [row] = await sql('SELECT fee_wei::text AS fee FROM rel_sent WHERE auth_key = $1', [authOf(inv.message)]);
+  assert.equal(row.fee, String(548_657n * GWEI6));
+  const spentElsewhere = 100_000_000_000_000_000n - 3_000_000_000_000_000n; // 0.097 WBT: a sale fits, an invoice doesn't
+  const forInvoice = fakeNode();
+  await otherInstanceRow(forInvoice.relayer.address, { feeWei: spentElsewhere });
+  const refused = await post((await signedInvoice()).body, forInvoice);
+  assert.deepEqual([refused.status, refused.out.code], [503, 'budget_exhausted']);
+  assert.deepEqual(forInvoice.calls, [], 'refused before any RPC (relayFee is cached)');
+  const forSale = fakeNode();
+  await otherInstanceRow(forSale.relayer.address, { feeWei: spentElsewhere });
+  assert.equal((await post((await signedSale()).body, forSale)).status, 200);
 });
