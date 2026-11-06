@@ -107,9 +107,12 @@ export function makeContext(base: Omit<Ctx, "profile" | "require" | "write" | "t
         try {
           verify?.(result.data);
         } catch (error) {
-          if (!(error instanceof Mismatch)) throw error;
-          base.journal.settle(scope, claim.key, "needs_reconciliation", error.message);
-          throw new ToolRefusal(`WhiteFlow's reply doesn't match what was asked: ${error.message}. Don't share or use this record; the operation is marked for reconciliation.`, {
+          // ANY failure while checking a write's reply (a mismatch, or a value the connector's own arithmetic can't read)
+          // leaves the write for reconciliation: the server may have created it, so it must never be settled "refused"
+          // and then re-created under a fresh key (round-2 security probe)
+          const reason = error instanceof Mismatch ? error.message : "a reply the connector couldn't verify";
+          base.journal.settle(scope, claim.key, "needs_reconciliation", reason);
+          throw new ToolRefusal(`WhiteFlow's reply doesn't match what was asked: ${reason}. Don't share or use this record; the operation is marked for reconciliation.`, {
             outcome: "needs_reconciliation",
             idempotency_key: claim.key,
             next_action: "Tell the merchant. Check the record in the WhiteFlow dashboard before doing anything else with it.",

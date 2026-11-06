@@ -181,9 +181,16 @@ function get(state: SandboxState, caller: Caller, url: URL, now: number): unknow
   const path = url.pathname, q = url.searchParams, m = caller.merchant;
   let match: RegExpExecArray | null;
   if (path === "/api/v1/account") return need(caller, "account:read"), account(caller);
-  if ((match = /^\/api\/v1\/operations\/([\w.:-]{1,255})$/.exec(path))) {
+  // the key arrives percent-encoded (the client encodes it; ':' becomes %3A), so match the raw segment, then decode
+  if ((match = /^\/api\/v1\/operations\/([^/]{1,800})$/.exec(path))) {
     need(caller, "account:read");
-    const slot = state.idempotency.find((s) => s.merchant_id === m.id && s.key === decodeURIComponent(match![1]));
+    let key = "";
+    try {
+      key = decodeURIComponent(match[1]);
+    } catch {
+      key = "";
+    }
+    const slot = key && key.length <= 255 ? state.idempotency.find((s) => s.merchant_id === m.id && s.key === key) : undefined;
     if (!slot) throw new SandboxHttpError(404, "No operation with that Idempotency-Key for this merchant (or it is older than 24 hours).");
     return { idempotency_key: slot.key, route: slot.route, state: "succeeded", http_status: slot.status, result_id: slot.result_id ?? null, created_at: new Date(slot.at).toISOString() };
   }
