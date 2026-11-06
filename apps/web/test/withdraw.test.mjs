@@ -104,7 +104,9 @@ function fakeWallet({ balance = 70_710_000n, wbt = 10n ** 18n, rejectSend = fals
   const sent = [];
   const receipts = new Map();
   const state = { chainId: 1874 };
+  const calls = []; // every RPC method in order, so a test can see what happened before a receipt was asked for
   const request = async ({ method, params }) => {
+    calls.push(method);
     switch (method) {
       case "eth_requestAccounts":
       case "eth_accounts":
@@ -146,10 +148,40 @@ function fakeWallet({ balance = 70_710_000n, wbt = 10n ** 18n, rejectSend = fals
         throw new Error(`fake wallet: unexpected ${method}`);
     }
   };
-  return { provider: { request }, sent, state };
+  return { provider: { request }, sent, state, calls };
 }
 
 const connect = (provider) => connectMerchant(provider, MERCHANT, MERCHANT_PAY);
+
+test("the hash is handed out as soon as the wallet sends, before any receipt is read (041, UX review MEDIUM 1)", async () => {
+  const { provider, calls } = fakeWallet();
+  const seen = [];
+  const hash = await withdraw(await connect(provider), EXCHANGE, ONE_USDT, (sentHash) => seen.push([sentHash, calls.length]));
+  assert.equal(seen.length, 1, "onSent once");
+  const [[sentHash, callsBefore]] = seen;
+  assert.equal(sentHash, hash, "the same hash the confirmed send returns");
+  assert.equal(calls[callsBefore - 1], "eth_sendTransaction", "right after the wallet returned it");
+  assert.ok(!calls.slice(0, callsBefore).includes("eth_getTransactionReceipt"), "before any receipt read");
+  assert.ok(calls.slice(callsBefore).includes("eth_getTransactionReceipt"), "the receipt is still awaited after");
+});
+
+test("onSent carries the hash of an unconfirmed send, and isn't called when nothing was sent", async () => {
+  const lost = fakeWallet({ lostReceipt: true });
+  const seen = [];
+  const error = await withdraw(await connect(lost.provider), EXCHANGE, ONE_USDT, (h) => seen.push(h)).catch((e) => e);
+  assert.deepEqual(seen, [error.hash]);
+  for (const options of [{ balance: 500_000n }, { rejectSend: true }, { returnsFalse: true }]) {
+    const { provider } = fakeWallet(options);
+    const none = [];
+    await withdraw(await connect(provider), EXCHANGE, ONE_USDT, (h) => none.push(h)).catch(() => {});
+    assert.deepEqual(none, [], JSON.stringify(options, (_, v) => (typeof v === "bigint" ? `${v}n` : v)));
+  }
+});
+
+test("the wrong-network copy names the network the way the app does (041, UX review LOW 4)", () => {
+  assert.match(WRONG_NETWORK, /Whitechain Testnet \(chain 1874\)/);
+  assert.doesNotMatch(WRONG_NETWORK, /Sepolia/);
+});
 
 test("AT-18: withdrawing 1 USDT sends exactly one transfer of 1_000_000 units to that address, from the merchant's wallet", async () => {
   const { provider, sent } = fakeWallet();
