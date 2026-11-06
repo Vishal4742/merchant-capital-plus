@@ -1,22 +1,25 @@
 import {
   BaseError, ContractFunctionRevertedError, createWalletClient, encodeAbiParameters, encodeFunctionData, formatEther,
   getAddress, http, InternalRpcError, isAddress, isAddressEqual, isHex, keccak256, maxUint256, parseAbi, parseEventLogs,
-  parseSignature, publicActions, recoverTypedDataAddress, zeroAddress, zeroHash,
+  parseSignature, publicActions, recoverTypedDataAddress, TransactionReceiptNotFoundError, zeroAddress, zeroHash,
   type Address, type Hash, type Hex, type LocalAccount, type Transport,
 } from 'viem';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { privateKeyToAccount } from 'viem/accounts';
 import { whitechainSepolia } from 'viem/chains';
 import {
   addresses, KIND_INVOICE, KIND_SALE, merchantPayAbi, MIN_PAYMENT, nonceParams, receiveWithAuthorizationTypes, usdtDomain,
 } from '../../../packages/shared/contracts.ts';
 
-// Ankr: it answers eth_sendRawTransactionSync. Whitechain's own RPC (faster reads, chosen 02:44) refuses it with
-// -32601 "rpc method is not whitelisted", which broke the first G2 sale (06:06). Upgrade: reads on Whitechain, sends via Ankr.
+// Ankr (G2 06:06: Whitechain's own RPC refused eth_sendRawTransactionSync with -32601, so the default went back to Ankr;
+// sends are plain eth_sendRawTransaction now). Upgrade: try Whitechain's RPC again for reads, which were ~2× faster.
 const DEFAULT_RPC = 'https://rpc.ankr.com/whitechain_testnet';
 // No retries: with viem's default 3, one slow call could hold the send lock for ~33 s. The lock is then held for at most
 // two RPC timeouts (simulate ‖ nonce, then the sync send); a client re-POSTs a 502 that carries no txHash.
 const RPC_TIMEOUT_MS = 8_000;
-const SYNC_SEND_TIMEOUT_MS = 4_000; // eth_sendRawTransactionSync inclusion wait (NFR-4: payment ≤ 5 s)
+// NFR-4 (payment ≤ 5 s): Ankr's eth_sendRawTransactionSync waited ~7 s for a 1 s-block chain (G2, 06:16), so send plainly
+// and poll our own receipt. Tests shrink these.
+export const TIMING = { receiptPollMs: 300, receiptTimeoutMs: 8_000 };
 const BALANCE_TTL_MS = 5_000; // /health WBT balance may be 5 s old (human 23:27, NFR-14 ≤ 300 ms p95); a send clears it
 // Refresh it every 3 s (human 01:14): stays inside the 5 s rule and keeps the RPC socket warm (Node drops idle ones at ~4 s).
 const BALANCE_REFRESH_MS = 3_000;
@@ -85,7 +88,8 @@ export function relayerClient(): RelayerClient {
   } catch {
     throw new Error('RELAYER_PRIVATE_KEY is not a valid private key'); // noble's own message prints the number
   }
-  liveClient = makeClient(account, http(process.env.RPC_URL ?? DEFAULT_RPC, { timeout: RPC_TIMEOUT_MS, retryCount: 0 }));
+  // batch: one HTTP request per round keeps it on the warm socket (cold 5-call round 916 → 345 ms on Ankr).
+  liveClient = makeClient(account, http(process.env.RPC_URL ?? DEFAULT_RPC, { timeout: RPC_TIMEOUT_MS, retryCount: 0, batch: true }));
   // ponytail: only a long-running process keeps refreshing; on Vercel the first /health of an invocation may read live.
   startBalanceRefresh(liveClient, BALANCE_REFRESH_MS);
   return liveClient;
@@ -308,7 +312,21 @@ async function rpcChecks(client: RelayerClient, p: Payment): Promise<Reject | un
   if (failedSimulation) return simulationReject(failedSimulation);
 }
 
-/** Runs inside the send lock: re-simulate on fresh state, sign with capped fees, send once, check the receipt. */
+/** Our own receipt, looked up by our hash only (so never a replacement's), polled until TIMING.receiptTimeoutMs. */
+async function ownReceipt(client: RelayerClient, hash: Hash) {
+  const deadline = Date.now() + TIMING.receiptTimeoutMs;
+  for (;;) {
+    const receipt = await client.getTransactionReceipt({ hash }).catch((e: unknown) => {
+      if (e instanceof TransactionReceiptNotFoundError) return undefined;
+      throw e;
+    });
+    if (receipt) return receipt;
+    if (Date.now() >= deadline) return undefined;
+    await sleep(TIMING.receiptPollMs);
+  }
+}
+
+/** Runs inside the send lock: re-simulate on fresh state, sign with capped fees, send once, poll our receipt. */
 async function send(client: RelayerClient, p: Payment): Promise<Reject | Sent> {
   if (tooLate(p)) return EXPIRED; // queue time counts
   if (sentAuthorizations.has(sentKey(p))) return REPLAY;
@@ -332,7 +350,12 @@ async function send(client: RelayerClient, p: Payment): Promise<Reject | Sent> {
   const txHash = keccak256(signed);
   sentAuthorizations.add(sentKey(p)); // kept even if the send fails: the tx may still be pending, so a re-POST must not pay twice
   try {
-    const receipt = await client.sendRawTransactionSync({ serializedTransaction: signed, timeout: SYNC_SEND_TIMEOUT_MS });
+    await client.sendRawTransaction({ serializedTransaction: signed });
+    const receipt = await ownReceipt(client, txHash);
+    if (!receipt) {
+      recordSend(client, p, CAP_FEE_WEI, false, txHash); // may still be mined: count the worst case
+      return reject(502, 'rpc_error', 'not mined within 8 s; poll the txHash', txHash);
+    }
     if (receipt.transactionHash.toLowerCase() !== txHash) {
       recordSend(client, p, CAP_FEE_WEI, false, txHash);
       return reject(502, 'receipt_mismatch', 'the node returned a receipt for another transaction', txHash);
