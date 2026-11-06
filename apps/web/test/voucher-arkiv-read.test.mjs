@@ -51,13 +51,14 @@ const unixS = (ms) => BigInt(Math.floor(ms / 1000));
 const live = (expiresMs = t + DAY) => [{ $key: ENTITY_KEY, expires_at: { value: unixS(expiresMs) } }];
 const hashOf = (code) => createHmac("sha256", HASH_SECRET).update(`${MERCHANT.toLowerCase()}:${code}`).digest("hex");
 
+let n = 0;
+// the id is random like a real one (vch_…), so the log check below can't trip on a code inside the id
 async function voucher(code, entityKey = ENTITY_KEY) {
   await query(
     "INSERT INTO app_gw_vouchers (id, merchant, code, kind, value, expires_at, max_redemptions, created_at, arkiv_entity_key) VALUES ($1, $2, $3, 'percent', 10, $4, 5, $5, $6)",
-    [`v_${code}`, MERCHANT.toLowerCase(), code, t + DAY, t, entityKey],
+    [`vch_${++n}`, MERCHANT.toLowerCase(), code, t + DAY, t, entityKey],
   );
 }
-let n = 0;
 async function checkout() {
   const id = `ses_ark_${++n}`;
   await recordCheckout(id, "link", "lnk_1", MERCHANT, USDT(25), { now: t });
@@ -159,7 +160,7 @@ test("a voucher never published to Arkiv (no entity key) applies as before, with
 
 test("a code Postgres already refuses is not read from Arkiv", async () => {
   await voucher("USED");
-  await query("UPDATE app_gw_vouchers SET times_redeemed = max_redemptions WHERE id = 'v_USED'");
+  await query("UPDATE app_gw_vouchers SET times_redeemed = max_redemptions WHERE code = 'USED'");
   const id = await checkout();
   assert.deepEqual(await applyVoucher(MERCHANT, "USED", id, USDT(25), t), { ok: false, reason: "That code has been used up." });
   assert.equal(arkiv.reads.length, 0);

@@ -14,11 +14,15 @@ const ENTITY_KEY = `0x${"ab".repeat(32)}`;
 // mirror's "already on Arkiv?" query with arkiv.existing (batch 022); arkiv.queryFail makes it throw; arkiv.clientFail
 // makes arkivClients itself throw; arkiv.during runs inside the write (another attempt acting meanwhile). arkiv.query is
 // the last query's filters (022 review L4). No ownedBy: an owner can change, so the mirror must filter on the creator.
+// The checkout's read (batch 034, FR-ARK-7) filters on owner AND creator: it gets a live entity, untracked here
+// (test/voucher-arkiv-read.test.mjs covers that read).
 const arkiv = { calls: [], fail: null, existing: [], queries: 0, queryFail: null, clientFail: null, during: null, query: null };
+const LIVE = [{ $key: ENTITY_KEY, expires_at: { type: "u64", value: BigInt(Math.floor(Date.now() / 1000) + 365 * 86_400) } }];
 const queryChain = () => {
   const q = {};
-  const chain = { from: () => chain, where: (e) => ((q.where = e), chain), createdBy: (a) => ((q.creator = a), chain), limit: () => chain };
+  const chain = { from: () => chain, where: (e) => ((q.where = e), chain), ownedBy: (a) => ((q.owner = a), chain), createdBy: (a) => ((q.creator = a), chain), limit: () => chain };
   chain.fetch = async () => {
+    if (q.owner) return { entities: LIVE };
     arkiv.query = q;
     arkiv.queries += 1;
     if (arkiv.queryFail) throw arkiv.queryFail;
