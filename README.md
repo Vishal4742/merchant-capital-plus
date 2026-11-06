@@ -101,6 +101,8 @@ cd apps/shop && npm ci && npm run dev
 ```
 Test funds: claim WBT at faucet.testnet.whitechain.io, then swap some to the prize USDT (`0xcedfb56113143d55b2358b8cfbb0deb5ad2f55a7`) on testnet.yetitrade.fi. CI runs the same checks on every push (`.github/workflows/ci.yml`).
 
+**Contract tests:** 155 Foundry tests (fork tests against Whitechain Sepolia with the real USDT). Coverage of the four deployed contracts (`forge coverage --ir-minimum`): lines 346/349 (99.1%), branches 92/92 (100%), functions 61/61 (100%). Per contract: CapitalMarket 100% lines, ClaimToken 99.1%, InvestorRegistry 100%, MerchantPay 97.8% (the two missed lines are `_pause`/`_unpause`, an IR line-map artifact; the pause test runs them).
+
 ### Operations (testnet)
 - Our demo wallets were funded once by a seed script from the team wallet (test USDT swapped from faucet WBT on YetiTrade); the app has no faucet button.
 - **Admin trust (testnet):** one deployer key (`0xb4E7…714D`) is the compliance admin and the contract owner. It can force-transfer claims between eligible investors, freeze claim units and revoke investor eligibility (ERC-7943 rules, simulated KYC), and it can pause MerchantPay. Ownership uses `Ownable2Step`; production would put these roles behind a multisig.
