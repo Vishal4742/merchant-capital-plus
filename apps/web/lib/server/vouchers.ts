@@ -44,9 +44,14 @@ const MAX_REDEMPTIONS = 100_000;
 const LINKS_AND_PAGES_ONLY = "Vouchers work on payment links and pages only.";
 /** How long a hold counts against the usage limit: the checkout session's life plus a grace for a payment signed just
  *  before it expired that is still settling (security R2-L2, S2: the relayer accepts signatures valid for up to 900 s).
- *  Measured from the checkout's start, never from a re-apply. A frozen hold (being paid) counts until it is confirmed. */
+ *  Measured from the checkout's start, never from a re-apply. A frozen hold also counts for FREEZE_MS after its claim. */
 export const HOLD_MS = SESSION_TTL_MS + 15 * 60_000;
+/** How long a claim (claimAmountDue) counts as mid-payment: the relayer's 15-min signature window (lib/pay.ts refuses a
+ *  longer validBefore) + 5 min. After it the claimed payment can't land, so an abandoned claim stops holding a voucher
+ *  use (F2) or a single-use link (M3). A paid checkout's frozen hold counts until confirmRedemption counts it. */
+export const FREEZE_MS = 20 * 60_000;
 const BEING_PAID = "This checkout is being paid.";
+const PAID_ONCE = "This payment link has already been paid.";
 
 type VoucherRow = { id: string; merchant: string; code: string; kind: VoucherKind; value: string; expires_at: string; max_redemptions: number; times_redeemed: number; min_amount: string | null; active: boolean; arkiv_entity_key: string | null; created_at: string };
 const COLUMNS = "id, merchant, code, kind, value::text, expires_at::text, max_redemptions, times_redeemed, min_amount::text, active, arkiv_entity_key, created_at::text";
@@ -184,7 +189,7 @@ export async function applyVoucher(merchant: string, code: string, sessionId: st
   if (!checkout || checkout.merchant !== merchant.toLowerCase()) return { ok: false, reason: LINKS_AND_PAGES_ONLY };
   if (checkout.paidAt !== null) return { ok: false, reason: "This checkout is already paid." };
   // S1: the pay route claimed the price; the upsert below re-checks this, so a claim racing this read still wins
-  const frozen = await query("SELECT 1 FROM app_gw_redemptions WHERE session_id = $1 AND frozen_at IS NOT NULL", [sessionId]);
+  const frozen = await query("SELECT 1 FROM app_gw_redemptions WHERE session_id = $1 AND frozen_at > $2", [sessionId, now - FREEZE_MS]);
   if (frozen.length) return { ok: false, reason: BEING_PAID };
   // R2-M2 + F4: a fiat checkout lives as long as its 10-min quote lock, USD/USDT as long as the 30-min session
   const ttl = checkout.fx && checkout.fx.currency !== "USD" && checkout.fx.currency !== "USDT" ? QUOTE_TTL_MS : SESSION_TTL_MS;
@@ -202,8 +207,9 @@ export async function applyVoucher(merchant: string, code: string, sessionId: st
   const total = base - discount;
   if (total < MIN_PAYMENT) return { ok: false, reason: "The total after this code would be under 1 USDT." };
   // A hold counts against the usage limit for HOLD_MS from its checkout's start (security review H1: without this,
-  // one code with 1 use could be applied to many open checkouts and all of them paid at the discount). The advisory
-  // lock runs first in the same transaction, so the insert's snapshot sees every other session's committed hold.
+  // one code with 1 use could be applied to many open checkouts and all of them paid at the discount), and a frozen
+  // one for FREEZE_MS after its claim, or until it is confirmed once its checkout is paid (F2). The advisory lock runs
+  // first in the same transaction, so the insert's snapshot sees every other session's committed hold.
   const [, reserved] = await transaction([
     { text: "SELECT pg_advisory_xact_lock(hashtext($1))", params: [voucher.id] },
     {
@@ -211,18 +217,20 @@ export async function applyVoucher(merchant: string, code: string, sessionId: st
              SELECT $1, v.id, $3, $4, $5 FROM app_gw_vouchers v
              WHERE v.id = $2 AND v.times_redeemed + (
                SELECT count(*) FROM app_gw_redemptions r
-               WHERE r.voucher_id = v.id AND r.confirmed_at IS NULL AND r.session_id <> $1 AND (r.frozen_at IS NOT NULL OR r.created_at > $6)
+               WHERE r.voucher_id = v.id AND r.confirmed_at IS NULL AND r.session_id <> $1 AND (r.created_at > $6 OR r.frozen_at > $7
+                 OR (r.frozen_at IS NOT NULL AND EXISTS (SELECT 1 FROM app_gw_checkouts p WHERE p.session_id = r.session_id AND p.paid_at IS NOT NULL)))
              ) < v.max_redemptions
              AND NOT EXISTS (SELECT 1 FROM app_gw_checkouts c WHERE c.session_id = $1 AND c.paid_at IS NOT NULL)
              ON CONFLICT (session_id) DO UPDATE SET voucher_id = EXCLUDED.voucher_id, discount = EXCLUDED.discount,
-               usdt_amount = EXCLUDED.usdt_amount, created_at = EXCLUDED.created_at
-             WHERE app_gw_redemptions.confirmed_at IS NULL AND app_gw_redemptions.frozen_at IS NULL
+               usdt_amount = EXCLUDED.usdt_amount, created_at = EXCLUDED.created_at, frozen_at = NULL
+             WHERE app_gw_redemptions.confirmed_at IS NULL AND (app_gw_redemptions.frozen_at IS NULL OR app_gw_redemptions.frozen_at <= $7)
                AND NOT EXISTS (SELECT 1 FROM app_gw_checkouts c WHERE c.session_id = $1 AND c.paid_at IS NOT NULL)
              RETURNING session_id`,
       // NOT EXISTS (… paid_at …) in both places (batch 012 review N2): the read above can be stale if the payment was
       // recorded in between, so the statement itself refuses a paid checkout.
-      // the hold starts when the checkout did ($5), so re-applying can't keep a code locked (R2-M2)
-      params: [sessionId, voucher.id, discount.toString(), total.toString(), checkout.createdAt, now - HOLD_MS],
+      // the hold starts when the checkout did ($5), so re-applying can't keep a code locked (R2-M2); a re-apply after
+      // the freeze lapsed starts an unfrozen hold (its claimed payment can no longer land)
+      params: [sessionId, voucher.id, discount.toString(), total.toString(), checkout.createdAt, now - HOLD_MS, now - FREEZE_MS],
     },
   ]);
   if (reserved.length !== 1) return { ok: false, reason: "That code has been used up." }; // (a paid checkout returned above)
@@ -238,45 +246,78 @@ export async function amountDue(sessionId: string, now = Date.now()): Promise<bi
   const checkout = await checkoutOf(sessionId);
   if (!checkout) return null;
   const rows = await query<{ usdt_amount: string }>(
-    "SELECT usdt_amount::text FROM app_gw_redemptions WHERE session_id = $1 AND (confirmed_at IS NOT NULL OR frozen_at IS NOT NULL OR created_at > $2)",
-    [sessionId, now - HOLD_MS],
+    "SELECT usdt_amount::text FROM app_gw_redemptions WHERE session_id = $1 AND (confirmed_at IS NOT NULL OR frozen_at > $3 OR created_at > $2)",
+    [sessionId, now - HOLD_MS, now - FREEZE_MS],
   );
   return rows[0] ? BigInt(rows[0].usdt_amount) : checkout.usdtAmount;
 }
 
 /**
- * The pay route's price (security S1): freezes the session's live voucher hold and returns its total in one statement,
- * so no re-apply can switch the code while the payment relays; no live hold → the checkout's amount (nothing frozen);
- * null for a shop's own session. Idempotent: a second claim returns the same amount and keeps the first freeze time.
- * Relay exactly this amount and pass it to `confirmRedemption`.
+ * The pay route's price (security S1) and claim (M3), in one transaction under a per-link lock:
+ *   1. claims the checkout (claimed_at = now), refused with HttpError 410 when it is paid, or when it is a single-use
+ *      link's and another checkout of that link is paid or was claimed within FREEZE_MS (a page or a reusable link
+ *      never blocks another checkout);
+ *   2. only then freezes the session's live voucher hold and returns its total, so no re-apply can switch the code
+ *      while the payment relays; no live hold → the checkout's amount (nothing frozen).
+ * Null for a shop's own session. Idempotent: a second claim returns the same amount and keeps the first freeze time
+ * while it is inside FREEZE_MS; a claim after it freezes again from now. claimed_at always moves to the latest claim:
+ * a later attempt relays a new signature, valid up to 15 min after it. Relay exactly this amount and pass it to
+ * `confirmRedemption`; on a 410 relay nothing (and don't call releaseHold: the claim was never made).
  */
 export async function claimAmountDue(sessionId: string, now = Date.now()): Promise<bigint | null> {
   const checkout = await checkoutOf(sessionId);
   if (!checkout) return null;
-  const rows = await query<{ usdt_amount: string }>(
-    `UPDATE app_gw_redemptions SET frozen_at = COALESCE(frozen_at, $2)
-     WHERE session_id = $1 AND confirmed_at IS NULL AND (frozen_at IS NOT NULL OR created_at > $3)
-     RETURNING usdt_amount::text`,
-    [sessionId, now, now - HOLD_MS],
-  );
-  return rows[0] ? BigInt(rows[0].usdt_amount) : checkout.usdtAmount;
+  // the lock serializes claims of one link or page: under READ COMMITTED the claim's snapshot is taken after it, so it
+  // sees every other checkout's committed claim (two checkouts claiming at once: one wins). One statement claims and
+  // freezes, so a refused claim freezes nothing.
+  const [, rows] = await transaction([
+    { text: "SELECT pg_advisory_xact_lock(hashtext($1))", params: [`link:${checkout.refId}`] },
+    {
+      text: `WITH claim AS (
+               UPDATE app_gw_checkouts c SET claimed_at = $2
+               WHERE c.session_id = $1 AND c.paid_at IS NULL AND NOT EXISTS (
+                 SELECT 1 FROM app_gw_checkouts o JOIN app_gw_links l ON l.id = o.ref_id
+                 WHERE c.kind = 'link' AND o.kind = 'link' AND o.ref_id = c.ref_id AND l.single_use AND o.session_id <> $1
+                   AND (o.paid_at IS NOT NULL OR o.claimed_at > $3))
+               RETURNING c.session_id
+             ), frozen AS (
+               UPDATE app_gw_redemptions r SET frozen_at = CASE WHEN r.frozen_at > $3 THEN r.frozen_at ELSE $2 END
+               FROM claim WHERE r.session_id = claim.session_id AND r.confirmed_at IS NULL AND (r.frozen_at > $3 OR r.created_at > $4)
+               RETURNING r.usdt_amount
+             )
+             SELECT (SELECT usdt_amount::text FROM frozen) AS usdt_amount FROM claim`,
+      params: [sessionId, now, now - FREEZE_MS, now - HOLD_MS],
+    },
+  ]);
+  const claimed = rows[0] as { usdt_amount: string | null } | undefined;
+  if (!claimed) throw new HttpError(410, PAID_ONCE);
+  return claimed.usdt_amount === null ? checkout.usdtAmount : BigInt(claimed.usdt_amount);
 }
 
 /**
- * Unfreezes the hold of an UNPAID checkout so a failed payment doesn't keep a use locked. True if a hold was unfrozen.
- * Call it ONLY from the attempt that made the claim (under its lock), and only when (batch-009 review F1):
- *   - the attempt stops before relaying (bad signature, low balance, expired), or the relayer answers BUSY / 4xx;
- *   - the relayer answers 422 AND `findPayment` returned exactly null (anyone can call paySale, so a 422 alone isn't
- *     proof the order is unpaid);
+ * Gives back an UNPAID checkout's claim: clears claimed_at (another checkout of a single-use link may then claim) and
+ * unfreezes its voucher hold, so a failed payment doesn't keep a use locked. True if a hold was unfrozen.
+ * Call it ONLY from the attempt that made the claim (under its lock), and only when nothing can have been sent
+ * (batch-009 review F1, batch-013 P1), in `relaySale`'s result shape (lib/relay.ts):
+ *   - the attempt stops before relaySale is called (bad signature, low balance, expired, a too-long approval);
+ *   - `{ ok: false }` with neither `unknown` nor `refused`: BUSY (503: refused before sending, rate-limited, or the
+ *     connection never opened) or another relayer 4xx ("Nothing was charged");
+ *   - `{ ok: false, refused: true }` (the relayer's 422) AND `findPayment` returned exactly null: anyone can call
+ *     paySale, so a 422 alone isn't proof the order is unpaid (undefined = the chain read failed: don't release);
  *   - settlePending's "open" branch (the chain shows no payment and the authorization has expired).
- * NEVER on an unknown outcome (timeout, 5xx, dropped connection), a 409, STILL_PENDING, or a paid checkout: the chain
- * decides then, and the frozen hold must keep counting. A paid checkout is refused here anyway (F1).
+ * NEVER on `{ ok: false, unknown: true }` (timeout, 5xx, dropped connection: it may have been sent), on `{ ok: true }`,
+ * on the pay route's 409s (already being paid, STILL_PENDING), or on a paid checkout: the chain decides then, and the
+ * claim and the frozen hold must keep counting. A paid checkout is refused here anyway (F1).
  */
 export async function releaseHold(sessionId: string): Promise<boolean> {
-  // never on a paid checkout (batch-009 review F1): a late or mistaken release would free a use that was paid for
+  // never on a paid checkout (batch-009 review F1): a late or mistaken release would free a use that was paid for.
+  // The checkout row is unclaimed even without a hold, and a hold frozen before 048 (no claimed_at) still unfreezes.
   const rows = await query(
-    `UPDATE app_gw_redemptions r SET frozen_at = NULL FROM app_gw_checkouts c
-     WHERE r.session_id = $1 AND c.session_id = r.session_id AND c.paid_at IS NULL AND r.confirmed_at IS NULL AND r.frozen_at IS NOT NULL
+    `WITH released AS (
+       UPDATE app_gw_checkouts SET claimed_at = NULL WHERE session_id = $1 AND paid_at IS NULL RETURNING session_id
+     )
+     UPDATE app_gw_redemptions r SET frozen_at = NULL FROM released
+     WHERE r.session_id = released.session_id AND r.confirmed_at IS NULL AND r.frozen_at IS NOT NULL
      RETURNING r.session_id`,
     [sessionId],
   );
