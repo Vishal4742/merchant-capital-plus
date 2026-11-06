@@ -72,6 +72,25 @@ test("sessions.retrieve reads the session by id, and refuses anything that isn't
   assert.equal(calls.length, 1); // none of them reached the network
 });
 
+test("sameAmount compares money, not formatting (round 2 H2: '1,000.00' from the API vs '1000.00' from a webhook)", async () => {
+  const { sameAmount } = await import("../index.ts");
+  for (const [a, b] of [["1,000.00", "1000.00"], ["25", "25.00"], ["27.012345", "27.012345"], ["0.10", "0.1"], [" 25.00", "25.000000"]]) assert.ok(sameAmount(a, b), `${a} = ${b}`);
+  for (const [a, b] of [["1000.00", "100.00"], ["25.00", "25.01"], ["0.000001", "0"], ["", ""], ["abc", "abc"], ["1e3", "1000"], ["-1", "-1"], ["1.0000001", "1.0000001"]]) assert.ok(!sameAmount(a, b), `${a} != ${b}`);
+});
+
+test("a bare ? or # on baseUrl doesn't drop the path prefix", async () => {
+  for (const baseUrl of ["https://example.test/gw?", "https://example.test/gw#", "https://example.test/gw/"]) {
+    const { calls, fetch } = fakeFetch(ok({ id: "x", status: "open" }));
+    await gw(fetch, { baseUrl }).sessions.retrieve("abc");
+    assert.equal(calls[0].url, "https://example.test/gw/api/v1/sessions/abc", baseUrl);
+  }
+});
+
+test("the currency-mismatch error is scrubbed of the key too", async () => {
+  const { fetch } = fakeFetch(ok({ id: `x-${KEY}`, url: "u", amount: "1.00", currency: "USDT", expiresAt: "t" }, 201));
+  await assert.rejects(gw(fetch).sessions.create({ amount: "1.00", currency: "EUR" }), (err: unknown) => err instanceof GatewayError && !err.message.includes(KEY));
+});
+
 test("requests refuse redirects and keep a path prefix in baseUrl", async () => {
   const { calls, fetch } = fakeFetch(ok({ id: "x", url: "u", amount: "1.00", currency: "USDT", expiresAt: "t" }, 201));
   await gw(fetch, { baseUrl: "https://example.test/gateway" }).sessions.create({ amount: "1.00" });
@@ -124,10 +143,21 @@ test("a 4xx throws GatewayError with the status and the server's message, and is
   await assert.rejects(gw(fetch).sessions.retrieve("abc"), (err: unknown) => {
     assert.ok(err instanceof GatewayError);
     assert.equal(err.status, 401);
-    assert.equal(err.message, "Missing or wrong API key.");
+    assert.match(err.message, /^Missing or wrong API key\. Check GATEWAY_SECRET_KEY and that baseUrl is the right gateway\.$/);
     return true;
   });
   assert.equal(calls.length, 1);
+});
+
+test("a server error message that echoes the key is scrubbed too", async () => {
+  const { fetch } = fakeFetch(ok({ error: `Bad header: Bearer ${KEY}` }, 400));
+  await assert.rejects(gw(fetch).sessions.retrieve("abc"), (err: unknown) => err instanceof GatewayError && !err.message.includes(KEY) && /\[secret key\]/.test(err.message));
+});
+
+test("an orderId that isn't a string (from plain JS) is refused before any request", async () => {
+  const { calls, fetch } = fakeFetch(ok({ id: "x", url: "u", amount: "1.00", currency: "USDT", expiresAt: "t" }, 201));
+  await assert.rejects(gw(fetch).sessions.create({ amount: "1.00", orderId: 42 as unknown as string }), (err: unknown) => err instanceof GatewayError && /orderId/.test(err.message));
+  assert.equal(calls.length, 0);
 });
 
 test("a 5xx or a network failure is retried with the same idempotency key, then reported", async () => {
@@ -156,6 +186,9 @@ test("the constructor refuses a missing key, a publishable key, a bad base URL, 
   assert.throws(() => new Gateway(KEY, { baseUrl: "not a url" }), /baseUrl/);
   assert.throws(() => new Gateway(KEY, { baseUrl: "http://gateway.test" }), /https/); // the key would travel in cleartext
   assert.throws(() => new Gateway(KEY, { baseUrl: "ftp://gateway.test" }), /baseUrl/);
+  for (const odd of ["https://user:pass@gateway.test", "https://user@gateway.test", "https://gateway.test/gw?x=1", "https://gateway.test/#top"]) {
+    assert.throws(() => new Gateway(KEY, { baseUrl: odd }), /baseUrl/, odd); // credentials would leak into errors; a query or hash breaks the path join
+  }
   assert.ok(new Gateway(KEY, { baseUrl: "http://localhost:3000" }));
   assert.ok(new Gateway(KEY, { baseUrl: "http://127.0.0.1:3000" }));
   for (const pasted of [`${KEY}\n`, `\r${KEY}`, `${KEY} `, "sk test"]) {
@@ -198,14 +231,20 @@ test("constructEvent rejects a wrong secret, a changed body, and a missing or ma
   bad(() => constructEvent(body, "", SECRET), /header/);
   bad(() => constructEvent(body, "v1=abc", SECRET), /header/);
   bad(() => constructEvent(body, header.replace(/v1=.*/, "v1=zz"), SECRET), /header/);
-  bad(() => constructEvent(body, header, ""), /secret/);
   assert.throws(() => signWebhook(body, ""), /secret/);
 });
 
-test("a toleranceSec that is NaN, infinite or negative is refused, so the replay window can't switch off", () => {
+// A config mistake is the shop's bug, not a bad request: a plain Error, so the handler answers 500 and the shop notices.
+const configError = (why: RegExp) => (err: unknown) => err instanceof Error && !(err instanceof WebhookSignatureError) && why.test(err.message);
+
+test("a missing webhook secret is a config error (plain Error), not a bad signature", () => {
+  assert.throws(() => constructEvent(body, signWebhook(body, SECRET), ""), configError(/secret/));
+});
+
+test("a toleranceSec that is NaN, infinite or negative is refused as a config error, so the replay window can't switch off", () => {
   const old = signWebhook(body, SECRET, now() - 10 * 365 * 86400);
   for (const toleranceSec of [Number(undefined), Infinity, -1]) {
-    assert.throws(() => constructEvent(body, old, SECRET, { toleranceSec }), (err: unknown) => err instanceof WebhookSignatureError && /toleranceSec/.test(err.message));
+    assert.throws(() => constructEvent(body, old, SECRET, { toleranceSec }), configError(/toleranceSec/));
   }
 });
 

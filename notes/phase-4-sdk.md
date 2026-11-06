@@ -39,6 +39,44 @@
 - `Session.currency` optional?
 - `exports: ./index.ts` is raw TypeScript; apps/shop and the apps/web sender need it transpiled (batch 3).
 
-**Next:** batch 2 = the pay button.
-- `packages/sdk/button.js`, plus a copy at `apps/web/public/v1/button.js` (claude-frontend agreed 03:13).
-- `data-session` opens `<web>/checkout/<id>`; `data-link` opens `<web>/l/<slug>`. No `pk_` amount route (claude-research 02:55).
+## Batch 007-P4-sdk-button (closed 2026-11-06 ~04:13 IST)
+**Built:**
+- **`packages/sdk/button.js`** (2,248 bytes, no dependencies, no requests), with a byte-identical copy at `apps/web/public/v1/button.js`, served at `<web>/v1/button.js`.
+  - `<script … data-session=ID | data-link=SLUG [data-label]>` renders a button after itself.
+  - One delegated click listener handles every `data-mc-session` / `data-mc-link` element (React too) and goes to `<script origin>/checkout/<id>` or `/l/<slug>`.
+  - Bad ids render nothing and log one error.
+- **SDK additions:** `sameAmount(a, b)` (compares base units), key scrubbing on every error path, a `baseUrl` with no credentials, query or hash (rebuilt from origin + path), config errors as plain `Error`s, a 401 hint.
+
+**Found and fixed (round 1 HIGH, both reviewers):** DOM clobbering.
+- **The attack:** `<img name="currentScript">` replaced `document.currentScript` and sent the shop's pay buttons to the attacker's origin. It's the same class as webpack CVE-2024-43788.
+- **The fix:**
+  - `currentScript` is read from `Document.prototype`'s getter and must be an `HTMLScriptElement`;
+  - the guard flag is `!== true`;
+  - `defaultPrevented` is respected.
+- **Proof:** in real Chrome, against 12 clobbering shapes, every click lands on the gateway. The old file went to the attacker.
+
+**Also fixed:** amounts arrived as "1,000.00" from the sessions API and "1000.00" from webhooks.
+- `sameAmount` compares the money; the README uses it.
+- claude-frontend agreed one `plainUsdt` format for all routes (03:44).
+
+**Verified:**
+- `npm test` 47/47, tsc clean; CI run 42123543707 green;
+- a real EUR/USD run against the v2 sessions route: EUR 25.00 → 28.13 USDT at 0.88879 (frankfurter.dev), USD rate 1;
+- real-Chrome screenshots in `.batches/007-P4-sdk-button/round-{1,2}/shots/`.
+
+**Human gate (04:12):**
+- approve and merge;
+- the `sameAmount` comma laxity ("10,00" = "1000") goes to the next batch;
+- the user-content `data-mc-*` risk is accepted (README rule plus the merchant name on the checkout).
+
+**Open (next batch):**
+- make `sameAmount` allow commas only as thousands separators;
+- make the README's "Canceling" line precise (element handlers always run first; a document handler must be added before `button.js`), and mention `stopPropagation`;
+- the README poll path should say `sameAmount`;
+- name the exact DOMPurify config (`FORBID_ATTR: ["data-mc-session","data-mc-link"]` or `ALLOW_DATA_ATTR: false`);
+- a 2 px white focus ring;
+- a Safari spot-check of the getter;
+- re-check `/l/<slug>` and `GET /api/v1/payments` on main before AT-14;
+- add `sameAmount` to ARCHITECTURE §2 (claude-research).
+
+**Next:** batch 3, `apps/shop` on the SDK and the button in ≤ 20 lines (FR-PAY-11, AT-14), with the webhook verified.
