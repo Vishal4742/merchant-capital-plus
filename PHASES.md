@@ -87,7 +87,7 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 ## Phase 4: Payment gateway (v2.0, human 2026-11-06 02:35)
 **Goal:** the features merchants expect from a payment gateway (like Razorpay or Stripe), in stablecoins, strictly on Whitechain testnet. Reference: the human's Razorpay test-mode screen recording (functional reference only, nothing copied).
 
-- [ ] `F` Payment Links with QR codes (FR-GW-1, FR-GW-3); Payment Pages (FR-GW-2)
+- [x] `F` *(batch 010 verified 07:42: phase mode, ci + review-security PASS, 328 tests pass; /merchant/links, /merchant/pages, hosted /l and /p, server-rendered QR; live on :3100; AT-11 runs at G4)* Payment Links with QR codes (FR-GW-1, FR-GW-3); Payment Pages (FR-GW-2)
 - [ ] `F` Discount vouchers: codes as Arkiv entities that expire, redemptions counted on our server (FR-GW-12, FR-ARK-1–5 now apply to voucher entities)
 - [ ] `F` Multi-currency prices with a locked FX quote at checkout (FR-GW-11) · *batch 006 (06:20): sessions v2 with FX quotes on checkout; switch to the backend quotes module pending*
 - [ ] `F` Reports with a sales chart and CSV, and a Settlements page (FR-GW-9, FR-GW-10)
