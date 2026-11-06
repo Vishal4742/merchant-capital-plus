@@ -18,7 +18,7 @@ deny() {
   python3 -c 'import json,sys; print(json.dumps({"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":sys.argv[1]}}))' "$1"
   exit 0
 }
-is_product() { case "$1" in */contracts/*|*/apps/*|*/packages/*|contracts/*|apps/*|packages/*) return 0;; esac; return 1; }
+is_product() { set -- "${1//\\//}"; case "$1" in */contracts/*|*/apps/*|*/packages/*|contracts/*|apps/*|packages/*) return 0;; esac; return 1; }
 
 # Which repo? Walk up from the target (or cwd) to the folder that holds PIPELINE.md.
 find_root() {
@@ -32,9 +32,9 @@ find_root() {
 
 case "$tool" in
   Edit|Write|MultiEdit|NotebookEdit)
-    path=$(read_field path)
+    path=$(read_field path); path=${path//\\//}   # Windows: C:\a\b -> C:/a/b
     [ -n "$path" ] && is_product "$path" || exit 0
-    case "$path" in /*) ;; *) path="$PWD/$path";; esac
+    case "$path" in /*|[A-Za-z]:/*) ;; *) path="$PWD/$path";; esac
     root=$(find_root "$path")
     ;;
   Bash)
