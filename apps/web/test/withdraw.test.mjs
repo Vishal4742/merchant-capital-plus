@@ -127,11 +127,13 @@ function fakeWallet({ balance = 70_710_000n, wbt = 10n ** 18n, rejectSend = fals
         if (!lostReceipt) receipts.set(hash, { transactionHash: hash, status: "0x1", blockNumber: "0x10", blockHash: `0x${"01".repeat(32)}`, logs: [], transactionIndex: "0x0", from: MERCHANT, to: call.to, cumulativeGasUsed: "0x1", gasUsed: "0x1", effectiveGasPrice: "0x1", contractAddress: null, logsBloom: `0x${"00".repeat(256)}`, type: "0x2" });
         return hash;
       }
+      case "wallet_sendTransaction": // what MetaMask answers, so viem rethrows the eth_sendTransaction error
+        throw { code: -32601, message: "The method does not exist / is not available." };
       case "eth_getTransactionReceipt":
-        if (lostReceipt) throw new Error("receipt read failed");
+        if (lostReceipt) throw { code: -32603, message: "receipt read failed" };
         return receipts.get(params[0]) ?? null;
-      case "eth_getTransactionByHash":
-        return null;
+      case "eth_getTransactionByHash": // mined, so viem asks for the receipt again at once instead of waiting
+        return lostReceipt ? { hash: params[0], blockNumber: "0x10", blockHash: `0x${"01".repeat(32)}`, transactionIndex: "0x0", from: MERCHANT, to: USDT, nonce: "0x0", value: "0x0", gas: "0x30000", input: "0x", type: "0x2" } : null;
       case "eth_blockNumber":
         return "0x10";
       case "eth_estimateGas":
