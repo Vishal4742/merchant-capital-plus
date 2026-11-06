@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { paymentRows, confirmed, dailyGross, figures, change, chartPaths, istDay } = await import("../lib/dashboard.ts");
+const { paymentRows, confirmed, dailyGross, figures, change, chartPaths, istDay, formatWbt } = await import("../lib/dashboard.ts");
 
 const MERCHANT = "0x37F9315EDF71d9C27b0F650c59e4c96aD6a442B1";
 const OTHER = "0x9999999999999999999999999999999999999999";
@@ -29,6 +29,8 @@ test("our own checkout shows before the chain is read; it carries the shop's ref
   const rows = paymentRows([{ session, payment }], [log(4n, { gross: 25_000_000n })]);
   assert.equal(rows.length, 1, "one row per payment id");
   assert.deepEqual([rows[0].label, rows[0].ours, rows[0].txHash], ["A-1042", true, payment.txHash]);
+  assert.equal(rows[0].receiptId, "s-1", "the receipt page is keyed by our checkout id, not the payment number");
+  assert.equal(paymentRows([], [log(5n)])[0].receiptId, null, "a row only the log index knows has no receipt page");
   assert.equal(confirmed(rows, [null], MERCHANT).length, 1);
 });
 
@@ -72,4 +74,13 @@ test("the chart's line spans the box and ends at the last value; an all-zero ser
   assert.equal(last.x, 576);
   assert.ok(area.endsWith("L576.0 196 L24 196 Z"));
   assert.ok(chartPaths([0, 0], 600, 220, 24).line.endsWith("196.0"));
+});
+
+test("formatWbt: 6 decimals, half up, no exponent, and a tiny fee isn't shown as 0", () => {
+  assert.equal(formatWbt(21_000_000_000_000n), "0.000021");
+  assert.equal(formatWbt(123_456_789_012_345_678n), "0.123457");
+  assert.equal(formatWbt(1_500_000_000_000_000_000n), "1.5");
+  assert.equal(formatWbt(0n), "0");
+  assert.equal(formatWbt(1n), "<0.000001");
+  assert.equal(formatWbt(500_000_000_000n), "0.000001", "half a step rounds up");
 });
