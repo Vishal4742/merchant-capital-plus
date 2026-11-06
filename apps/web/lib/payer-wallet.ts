@@ -39,11 +39,11 @@ function plain(error: unknown): Error {
 
 async function toWhitechain(provider: EIP1193Provider, current: () => Promise<number>): Promise<void> {
   if ((await current()) === whitechainSepolia.id) return;
-  const params = [{ chainId: WHITECHAIN_TESTNET.chainId }] as const;
-  await provider.request({ method: "wallet_switchEthereumChain", params }).catch(async (error: unknown) => {
+  const switchChain = () => provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: WHITECHAIN_TESTNET.chainId }] });
+  await switchChain().catch(async (error: unknown) => {
     if (codeOf(error) !== UNKNOWN_CHAIN) throw error;
     await provider.request({ method: "wallet_addEthereumChain", params: [WHITECHAIN_TESTNET] });
-    await provider.request({ method: "wallet_switchEthereumChain", params });
+    await switchChain();
   });
   // the domain names chain 1874 and MetaMask refuses typed data for another chain: say so before the prompt
   if ((await current()) !== whitechainSepolia.id) throw new Plain(WRONG_NETWORK);
