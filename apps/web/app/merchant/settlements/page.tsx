@@ -1,13 +1,16 @@
 // Settlements (FR-GW-10) in the dashboard Shell. Behind sign-in; our server reads the signed-in merchant's settlements
 // from the gateway's own module (lib/server/settlements.ts), for the same India-day range as Reports (checked here first).
+// On top, the USDT already in the merchant's wallet and the Withdraw form (FR-GW-15), read apart from the history so
+// Withdraw still works when the log index is down.
 import { isHex } from "viem";
-import { readTxFee } from "@/lib/onchain";
+import { readTxFee, readUsdtBalance } from "@/lib/onchain";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { Account, EditorialHeader, Problem, SignedOut } from "@/components/gateway/Frame";
 import { RangeForm } from "@/components/gateway/Reports";
 import { SettlementsView } from "@/components/gateway/Settlements";
 import { Shell } from "@/components/dashboard/Shell";
+import { Withdraw } from "@/components/merchant/Withdraw";
 import { authSecret } from "@/lib/auth";
 import { reportRange, type Settlements } from "@/lib/gateway-money";
 import { merchantSettlements, readFailure } from "@/lib/gateway-server";
@@ -51,16 +54,20 @@ async function SettlementsLoader({ searchParams }: Pick<PageProps<"/merchant/set
   const query = await searchParams;
   const typed = { from: one(query.from), to: one(query.to) };
   const range = reportRange(typed.from, typed.to);
-  const result = range.ok
-    ? await merchantSettlements(merchant, range.value).then(
-        (data) => ({ data }),
-        (error: unknown) => ({ error: readFailure("Settlements", error) }),
-      )
-    : null;
+  const [result, balance] = await Promise.all([
+    range.ok
+      ? merchantSettlements(merchant, range.value).then(
+          (data) => ({ data }),
+          (error: unknown) => ({ error: readFailure("Settlements", error) }),
+        )
+      : null,
+    readUsdtBalance(merchant).then((units) => units.toString(), () => null),
+  ]);
   return (
     <Shell active="settlements" account={<Account merchant={merchant} />}>
       {header}
       <div className="grid gap-6 px-4 py-6 md:px-8 md:py-8">
+        <Withdraw merchant={merchant} balance={balance} />
         <RangeForm action="/merchant/settlements" value={range.ok ? range.value : typed} error={range.ok ? undefined : range.error} />
         {result && ("error" in result ? <Problem>{result.error}</Problem> : <SettlementsView data={result.data} merchant={merchant} fees={await coveredFees(result.data)} />)}
       </div>

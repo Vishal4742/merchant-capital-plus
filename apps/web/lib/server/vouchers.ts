@@ -1,6 +1,7 @@
 // Server-only vouchers (SRS FR-GW-12): percent or fixed USDT off, expiry, usage limit, minimum amount. Redemptions are
 // counted on our server: reserved when a payer applies a code, counted once when the session is paid. Each code is
-// mirrored to Arkiv as mcplus.voucher.v1 with only an HMAC of the code (FR-ARK-4: no plain code, no personal data).
+// published to Arkiv as mcplus.voucher.v1 with only an HMAC of the code (FR-ARK-4: no plain code, no personal data),
+// and the checkout reads that entity before it takes a published code (FR-ARK-7): missing or expired → refused.
 import { createHmac } from "node:crypto";
 import { ExpirationTime } from "@arkiv-network/sdk";
 import { eq } from "@arkiv-network/sdk/query";
@@ -250,9 +251,43 @@ export async function deactivateVoucher(merchant: Address, id: string): Promise<
   return rows.length === 1;
 }
 
+const NOT_VALID = "That code isn't valid.";
+const EXPIRED_CODE = "That code has expired.";
+const CANT_CHECK = "We couldn't check this code right now. You can pay without it.";
+const ARKIV_READ_MS = 2_000; // the most a code apply waits for Arkiv (FR-ARK-7)
+
+/** FR-ARK-7: a published code applies only while its Arkiv entity is live, read by its keyed hash from entities our
+ *  writer created AND owns (capital-arkiv's filter, security 023 F2). Null = apply it, else the refusal. Fails closed:
+ *  Arkiv unreachable, slow or not set up → the code is refused, and the checkout still pays at full price. A code never
+ *  published (no entity key: its mirror failed, the merchant sees "Not on Arkiv") keeps Postgres alone (spec 034). */
+async function arkivRefusal(v: Voucher, now: number): Promise<string | null> {
+  if (!v.arkivEntityKey) return null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const problem = arkivConfigProblem();
+    if (problem) throw new Error(problem);
+    const { reader, address } = arkivClients();
+    const hash = codeHash(v.merchant, v.code, process.env.VOUCHER_HASH_SECRET as string);
+    const read = reader.select({ $key: true, expires_at: true }).from(VoucherEntity).where(eq("code_hash", hash)).ownedBy(address).createdBy(address).limit(1).fetch();
+    const late = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Arkiv didn't answer in ${ARKIV_READ_MS} ms`)), ARKIV_READ_MS);
+    });
+    const [entity] = (await Promise.race([read, late])).entities;
+    if (!entity) return NOT_VALID;
+    const expiresS = entity.expires_at?.value;
+    return expiresS !== undefined && BigInt(expiresS) * 1000n > BigInt(now) ? null : EXPIRED_CODE;
+  } catch (err) {
+    // the voucher id and the redacted error only: never the code, the hash secret or a key
+    console.error(`voucher ${v.id}: Arkiv read failed, code refused: ${redactArkivError(err, process.env.ARKIV_ACCESS_KEY).slice(0, MAX_REASON)}`);
+    return CANT_CHECK;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function refusal(v: Voucher, base: bigint, now: number): string | null {
-  if (!v.active) return "That code isn't valid.";
-  if (v.expiresAt <= now) return "That code has expired.";
+  if (!v.active) return NOT_VALID;
+  if (v.expiresAt <= now) return EXPIRED_CODE;
   if (v.timesRedeemed >= v.maxRedemptions) return "That code has been used up.";
   if (v.minAmount !== null && base < v.minAmount) return `That code needs an order of at least ${usdt(v.minAmount)} USDT.`;
   return null;
@@ -279,7 +314,7 @@ export async function applyVoucher(merchant: string, code: string, sessionId: st
   if (!rows[0]) return { ok: false, reason: "That code isn't valid." };
   const voucher = fromRow(rows[0]);
   const base = checkout.usdtAmount;
-  const refused = refusal(voucher, base, now);
+  const refused = refusal(voucher, base, now) ?? (await arkivRefusal(voucher, now));
   if (refused) return { ok: false, reason: refused };
   const discount = voucher.kind === "percent" ? (base * voucher.value) / 100n : voucher.value; // floor: the merchant's favour
   const total = base - discount;
@@ -293,7 +328,7 @@ export async function applyVoucher(merchant: string, code: string, sessionId: st
     {
       text: `INSERT INTO app_gw_redemptions (session_id, voucher_id, discount, usdt_amount, created_at)
              SELECT $1, v.id, $3, $4, $5 FROM app_gw_vouchers v
-             WHERE v.id = $2 AND v.times_redeemed + (
+             WHERE v.id = $2 AND v.active AND v.expires_at > $8 AND v.times_redeemed + (
                SELECT count(*) FROM app_gw_redemptions r
                WHERE r.voucher_id = v.id AND r.confirmed_at IS NULL AND r.session_id <> $1 AND (r.created_at > $6 OR r.frozen_at > $7
                  OR (r.frozen_at IS NOT NULL AND EXISTS (SELECT 1 FROM app_gw_checkouts p WHERE p.session_id = r.session_id AND p.paid_at IS NOT NULL)))
@@ -307,8 +342,9 @@ export async function applyVoucher(merchant: string, code: string, sessionId: st
       // NOT EXISTS (… paid_at …) in both places (batch 012 review N2): the read above can be stale if the payment was
       // recorded in between, so the statement itself refuses a paid checkout.
       // the hold starts when the checkout did ($5), so re-applying can't keep a code locked (R2-M2); a re-apply after
-      // the freeze lapsed starts an unfrozen hold (its claimed payment can no longer land)
-      params: [sessionId, voucher.id, discount.toString(), total.toString(), checkout.createdAt, now - HOLD_MS, now - FREEZE_MS],
+      // the freeze lapsed starts an unfrozen hold (its claimed payment can no longer land). active + expiry again here
+      // (security 034 F2): the Arkiv read gives a deactivation up to 2 s to land after refusal() read the row.
+      params: [sessionId, voucher.id, discount.toString(), total.toString(), checkout.createdAt, now - HOLD_MS, now - FREEZE_MS, now],
     },
   ]);
   if (reserved.length !== 1) return { ok: false, reason: "That code has been used up." }; // (a paid checkout returned above)
