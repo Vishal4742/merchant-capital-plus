@@ -35,5 +35,5 @@ ETHGlobal asks teams to say where AI was used, down to files, and to commit spec
 | `packages/sdk/` pay button (`button.js`, DOM-clobbering guard) | claude-sdk | 5 checks PASS (round 2, after a HIGH) + human gate | 007-P4-sdk-button |
 | `apps/web/app/api/v1/{links,pages,vouchers,quotes,reports,settlements,keys,webhooks}`, `apps/web/lib/server`, `apps/web/db` | claude-contracts + 3 developer subagents | 5 checks PASS (round 2, after a voucher-oversell HIGH) + human gate | 007-P4-gateway-api |
 | `apps/web/` gateway shell: test-mode strip, sessions v2 + FX, payments API, checkout upgrades, dashboard shell, `/docs` | claude-frontend | 5 checks PASS (round 2) + human gate | 006-P4-web-gateway-shell |
-| gateway API follow-ups | claude-contracts | 5 checks PASS (round 1) + human gate | 008-P4-gateway-followups |
+| gateway API follow-ups | claude-contracts | phase mode: ci + reviewer-security PASS (round 1) + human gate; full review at the G4 phase gate | 008-P4-gateway-followups |
 | ⟨path⟩ | ⟨lane / agent⟩ | ⟨reviewers + human⟩ | ⟨NNN⟩ |
