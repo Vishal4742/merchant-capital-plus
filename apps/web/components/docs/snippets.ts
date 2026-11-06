@@ -1,6 +1,28 @@
 // The code blocks on /docs (FR-GW-8), written against packages/sdk's real exports (Gateway, sessions.create/retrieve,
 // payments.list, constructEvent, sameAmount, SIGNATURE_HEADER, WebhookSignatureError) and public/v1/button.js.
-// Lines stay within about 42 characters, so they fit a 375 px phone without wrapping.
+// Lines stay within about 42 characters, so they fit a 375 px phone without wrapping (curl's auth header wraps once).
+// The curl requests are built from lib/docs-reference.ts, whose example bodies the docs test sends to the real routes.
+import { ENDPOINTS, type Endpoint } from "../../lib/docs-reference.ts"; // relative, so the docs test can import this file
+
+/** The example request of a full endpoint page, as curl (GET, or POST with a JSON body: -d makes it a POST). */
+export function curl({ path, detail }: Endpoint): string {
+  const url = `"$GATEWAY_URL${path.replace("{id}", "$CHECKOUT_ID")}${detail?.query ?? ""}"`;
+  const lines = [`curl ${url}`, '-H "Authorization: Bearer $GATEWAY_SECRET_KEY"'];
+  if (detail?.body) lines.push('-H "Content-Type: application/json"');
+  for (const [name, value] of Object.entries(detail?.headers ?? {})) lines.push(`-H "${name}: ${value}"`);
+  if (detail?.body) lines.push(`-d '${JSON.stringify(detail.body, null, 2).replaceAll("\n", "\n  ")}'`);
+  return lines.join(" \\\n  ");
+}
+
+const endpoint = (method: string, path: string) => ENDPOINTS.find((e) => e.method === method && e.path === path)!;
+
+/** Create a checkout and read it back, with no SDK: the Quickstart's server step and the SDK section. */
+export const CURL = `# Create a checkout
+${curl(endpoint("POST", "/api/v1/sessions"))}
+
+# Read it back with the id it returned:
+# paid when "status" is "paid"
+${curl(endpoint("GET", "/api/v1/sessions/{id}"))}`;
 
 export const BUTTON = `<!-- SESSION_ID: from your server -->
 <script src="GATEWAY_URL/v1/button.js"

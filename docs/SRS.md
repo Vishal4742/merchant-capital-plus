@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Version | 2.0 (2026-11-06 02:35: pivot to a stablecoin payment gateway for international merchants; financing kept as the Capital tab) |
-| Changes | 1.1 (human approved 2026-11-05 19:50): FR-TOK-8 → M, Phase 4 (AT-8 needs it at G4); FR-PRIV-1 and FR-PRIV-4 reworded (pay and checkout pages make no browser chain reads); CON-8 added (demo funding by seed script); DEP-3 pass criteria (Privy then failed them, guest wallet); demo amounts divided by 10 in AT-3–AT-7 to fit the test USDT we can collect; FR-PRIV-4 lists the Nym worker's own traffic (human 21:18); NFR-12–14 speed budgets for web and relayer (human 22:28: "the system should be fast"); FR-PAY-15 merchant wallet sign-in (human asked in the frontend session, 22:5x); FR-PAY-16 owner sweep of stray USDT (human 23:40, contracts gate); demo amounts ÷100 in AT-3–AT-7 (human 23:58: ~110 test USDT available); FR-ADV-7 and FR-INV-6 cut (human 00:34); FR-KYC-2/3, FR-PAY-13/14 and FR-INV-7 cut, contracts freeze after G4 (human 02:02); FR-GW-10 network-fee column (claude-research, delegated by the human 06:43) |
+| Changes | 1.1 (human approved 2026-11-05 19:50): FR-TOK-8 → M, Phase 4 (AT-8 needs it at G4); FR-PRIV-1 and FR-PRIV-4 reworded (pay and checkout pages make no browser chain reads); CON-8 added (demo funding by seed script); DEP-3 pass criteria (Privy then failed them, guest wallet); demo amounts divided by 10 in AT-3–AT-7 to fit the test USDT we can collect; FR-PRIV-4 lists the Nym worker's own traffic (human 21:18); NFR-12–14 speed budgets for web and relayer (human 22:28: "the system should be fast"); FR-PAY-15 merchant wallet sign-in (human asked in the frontend session, 22:5x); FR-PAY-16 owner sweep of stray USDT (human 23:40, contracts gate); demo amounts ÷100 in AT-3–AT-7 (human 23:58: ~110 test USDT available); FR-ADV-7 and FR-INV-6 cut (human 00:34); FR-KYC-2/3, FR-PAY-13/14 and FR-INV-7 cut, contracts freeze after G4 (human 02:02); FR-GW-10 network-fee column (claude-research, delegated by the human 06:43); FR-ARK-4 debtor left out, FR-PRIV-4 lists the Capital server reads, AT-8 pass by dry run + the recorded revert (claude-research from the Capital build pack, delegated, 10:42) |
 | Status | Approved scope, locked by the human 2026-11-05 |
 | Related | ARCHITECTURE.md (design and ABI), PHASES.md (delivery plan), `research_notes/Mumbai hackathon idea validation/build_H1_merchant_capital.md` (design detail and sources), HANDOFF.md (decisions, event facts) |
 | Change control | Requirements change only through HANDOFF.md + an agentbus message; IDs are never reused |
@@ -169,7 +169,7 @@ Priority: **M** = must (never cut), **S** = should, **C** = could (first to cut)
 | FR-ARK-1 | Each open offer is written to Arkiv with its terms, expiring at the offer deadline | M | 4 |
 | FR-ARK-2 | The investor offer book and the merchant's "my live offers" read from Arkiv | M | 4 |
 | FR-ARK-3 | The Buy button is enabled only if the Arkiv offer matches the on-chain offer | M | 4 |
-| FR-ARK-4 | Offers contain no personal data (debtor identity hashed) | M | 4 |
+| FR-ARK-4 | Offers contain no personal data (the debtor is left out of the entity entirely) | M | 4 |
 | FR-ARK-5 | An offer's status is updated when it is funded | S | 4 |
 | FR-ARK-6 | A merchant stats entity (30-day sales, unique payers) refreshes hourly | C | 5 |
 
@@ -179,7 +179,7 @@ Priority: **M** = must (never cut), **S** = should, **C** = could (first to cut)
 | FR-PRIV-1 | Every chain read the app makes in the browser goes through Anon-RPC by default (Nym, Tor fallback); the customer pay and checkout pages make no browser chain reads (amount and merchant come from our server) | M | 4 |
 | FR-PRIV-2 | Arkiv reads use the same private transport | S | 4 |
 | FR-PRIV-3 | A visible meter shows the share of reads that were private | S | 4 |
-| FR-PRIV-4 | Exclusions (relayer writes, the two mainnet bootstrap reads, explorer history, the server-side read behind the pay and checkout pages, the Nym worker's own plain traffic (directory lookups to validator.nymtech.net, one WSS to a Nym entry gateway, bundle fallbacks unpkg.com / raw.githubusercontent.com after jsDelivr)) are listed in the README | M | 6 |
+| FR-PRIV-4 | Exclusions (relayer writes, the two mainnet bootstrap reads, explorer history, the server-side read behind the pay and checkout pages, the Capital tab's server-side chain and Arkiv reads behind /api/v1/capital (no wallet data from the browser), the Nym worker's own plain traffic (directory lookups to validator.nymtech.net, one WSS to a Nym entry gateway, bundle fallbacks unpkg.com / raw.githubusercontent.com after jsDelivr)) are listed in the README | M | 6 |
 
 ---
 
@@ -255,7 +255,7 @@ Priority: **M** = must (never cut), **S** = should, **C** = could (first to cut)
 | AT-5 | The advance reaches its cap | Lien removed; the next sale pays the merchant 100% minus the fee |
 | AT-6 | Two investors fund a 100 USDT invoice at 12% APR, 60 days (60 / 40 split) | Prices ≈58.84 and ≈39.23 (exact 6-decimal values from the contract); merchant receives their sum |
 | AT-7 | The debtor pays the invoice (100.10: face + relay fee) | Investors receive 60 and 40 in the same tx; claim settled |
-| AT-8 | An investor tries to send a claim to a non-eligible wallet | Transaction reverts; the UI showed the reason first |
+| AT-8 | An investor tries to send a claim to a non-eligible wallet | The UI shows the reason before signing and the transfer's dry run (`eth_call`) reverts; the on-chain revert is recorded once (G4: 0x08f45d4b…56f8). Investors never pay gas, so the demo ships no Send button (claude-research, delegated by the human, 10:42) |
 | AT-9 | The investor offer book loads | Offers come from Arkiv; expired offers are gone; meter shows private reads |
 | AT-10 | The relayer is asked to submit an invalid or unprofitable call | Rejected before sending; no gas spent |
 | AT-11 | A customer pays a 25 USD payment link with 0 WBT | One tx on the explorer; the link shows Paid; the merchant's report and settlement list include it |
