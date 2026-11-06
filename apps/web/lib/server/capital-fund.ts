@@ -1,12 +1,12 @@
 // POST /api/v1/capital/fund (FR-ADV-3): gasless investor funding through the relayer's fund action (claude-relayer
 // batch 010). Checked before relaying, like the pay routes: the window, a verified investor, an open offer, the per-kind
-// holder cap, units left,
+// holder cap, units left and a fundable remainder,
 // the relayer's 1 USDT minimum, and the investor's signature over exactly this funding (security 023 F1).
 import { after } from "next/server.js"; // the .js path resolves under Node's test runner too
 import { verifyTypedData, type Hex } from "viem";
 import { payConfig } from "../config.ts";
 import { BUSY, NOT_FUNDED, UNKNOWN } from "../relay.ts";
-import { receiveTypes, usdtDomain } from "../usdt.ts";
+import { plainUsdt, receiveTypes, usdtDomain } from "../usdt.ts";
 import { syncOffer } from "./capital-arkiv.ts";
 import { CAPITAL_MARKET, HOLDER_CAP, claimHolders, holderCapMessage, fundingNonce, isVerifiedInvestor, offerStatus, parseFundBody, quoteUnits, readOffer, type Deps, type FundBody } from "./capital.ts";
 import { HttpError, MIN_PAYMENT } from "./http.ts";
@@ -52,6 +52,12 @@ export async function fundOffer(raw: Record<string, unknown>, deps: FundDeps = {
   // slice can't lock an advance (or an invoice) against every other investor until it repays
   if (!holding && holders.length === HOLDER_CAP[offer.kind] - 1 && f.units !== left) {
     throw new HttpError(400, `You're the last investor this ${offer.kind} can take: buy all ${left} remaining units.`);
+  }
+  // UX review #33 M1: a part buy must leave a remainder that still costs the minimum, or the next investor (who must
+  // buy everything left) is refused and the claim can never fill
+  const minLeft = ((MIN_PAYMENT - 1n) * offer.face) / offer.price + 1n; // smallest units with quote >= MIN_PAYMENT
+  if (f.units < left && left - f.units < minLeft) {
+    throw new HttpError(400, `Buy all ${plainUsdt(left)} USDT, or leave at least ${plainUsdt(minLeft)} USDT for the next investor.`);
   }
   const message = { from: f.investor, to: CAPITAL_MARKET, value, validAfter: 0n, validBefore: f.validBefore, nonce: fundingNonce(f.claimId, f.investor, f.units, f.salt) };
   const valid = await verifyTypedData({ address: f.investor, domain: usdtDomain, types: receiveTypes, primaryType: "ReceiveWithAuthorization", message, signature: f.sig }).catch(() => false);
