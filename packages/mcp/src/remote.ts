@@ -55,7 +55,9 @@ export interface RemoteOptions {
   journal: JournalPort;
   log: Logger;
   now?: () => number;
-  onEvent?: (event: RemoteEvent) => void;
+  /** Awaited before the tool's answer goes back, so a recorded success is stored by the time the caller sees it. A failure
+   *  to record is logged and never fails the tool call. */
+  onEvent?: (event: RemoteEvent) => void | Promise<void>;
   /** Strings to scrub from every output and log line (the request's credential). */
   secrets?: string[];
 }
@@ -69,7 +71,13 @@ function denied(scope: string) {
 
 export function createRemoteServer(opts: RemoteOptions): McpServer {
   const { principal } = opts;
-  const emit = opts.onEvent ?? (() => undefined);
+  const emit = async (event: RemoteEvent): Promise<void> => {
+    try {
+      await opts.onEvent?.(event);
+    } catch (error) {
+      opts.log.error("recording a tool event failed", error);
+    }
+  };
   const real = new McpServer(
     { name: "whiteflow", version: "0.3.0" },
     {
@@ -91,11 +99,11 @@ export function createRemoteServer(opts: RemoteOptions): McpServer {
             const args = (config.inputSchema ? params[0] : {}) as Record<string, unknown>;
             const scope = typeof scopeOf === "function" ? scopeOf(args ?? {}) : scopeOf;
             if (!principal.scopes.includes(scope)) {
-              emit({ type: "tool_denied", grantId: principal.grantId, tool: name, scope });
+              await emit({ type: "tool_denied", grantId: principal.grantId, tool: name, scope });
               return denied(scope);
             }
             const result = await handler(...params);
-            emit(result.isError ? { type: "tool_error", grantId: principal.grantId, tool: name, category: "tool_error" } : { type: "tool_ok", grantId: principal.grantId, tool: name });
+            await emit(result.isError ? { type: "tool_error", grantId: principal.grantId, tool: name, category: "tool_error" } : { type: "tool_ok", grantId: principal.grantId, tool: name });
             return result;
           };
           return (target.registerTool as (...a: unknown[]) => unknown)(name, config, wrapped);

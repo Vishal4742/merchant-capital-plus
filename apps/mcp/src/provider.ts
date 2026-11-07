@@ -1,0 +1,194 @@
+// The OAuth authorization server's storage and rules (batch 058; FR-MCP-1..3; SRS-CHANGE FR-MCP-19 proposed), implementing the
+// MCP SDK's OAuthServerProvider (whose handlers do the HTTP, PKCE S256 checks, redirect matching and metadata). Everything here
+// is decided against Postgres, never process memory, so any instance gives the same answer:
+//  - codes are single-use (one atomic UPDATE) and a replayed code revokes the grant it produced;
+//  - refresh tokens rotate, and presenting a used one (reuse) revokes the whole grant;
+//  - tokens are opaque 256-bit values stored only as SHA-256, bound to the grant's audience (the MCP URL);
+//  - a token is valid only while its grant is live: revocation, expiry and scopes are read from the grant on every request.
+import { createHash, randomBytes } from "node:crypto";
+import type { Response } from "express";
+import type { OAuthRegisteredClientsStore } from "@modelcontextprotocol/sdk/server/auth/clients.js";
+import { InvalidClientMetadataError, InvalidGrantError, InvalidScopeError, InvalidTargetError, InvalidTokenError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
+import type { AuthorizationParams, OAuthServerProvider } from "@modelcontextprotocol/sdk/server/auth/provider.js";
+import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
+import type { OAuthClientInformationFull, OAuthTokenRevocationRequest, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
+import type { SqlRunner } from "../../../packages/mcp/src/journal-pg.ts";
+import type { ServiceConfig } from "./config.ts";
+import { signConsentRequest } from "./internal.ts";
+
+export const ACCESS_TTL_S = 600;
+export const SCOPES = ["account:read", "links:read", "payments:read", "reports:read", "links:write"] as const;
+const DEFAULT_SCOPES = ["account:read", "links:read", "payments:read", "reports:read"]; // never write by default
+const MAX_REDIRECTS = 10;
+const MAX_NAME = 100;
+
+const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
+const opaque = () => randomBytes(32).toString("base64url");
+const sameUrl = (a: string | URL, b: string | URL) => String(a).replace(/\/$/, "") === String(b).replace(/\/$/, "");
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+interface GrantRow {
+  id: string;
+  client_id: string;
+  merchant: string;
+  scopes: string;
+  resource: string;
+  expires_at: string;
+  revoked_at: string | null;
+}
+
+export class PgOAuthProvider implements OAuthServerProvider {
+  readonly #sql: SqlRunner;
+  readonly #config: ServiceConfig;
+  readonly #now: () => number;
+
+  constructor(opts: { sql: SqlRunner; config: ServiceConfig; now: () => number }) {
+    this.#sql = opts.sql;
+    this.#config = opts.config;
+    this.#now = opts.now;
+  }
+
+  // ── clients (dynamic registration) ──
+  get clientsStore(): OAuthRegisteredClientsStore {
+    return {
+      getClient: async (clientId) => {
+        const [row] = await this.#sql.query("SELECT client_id, metadata, created_at::text AS created_at FROM app_mcp_clients WHERE client_id = $1", [clientId]);
+        if (!row) return undefined;
+        const metadata = (typeof row.metadata === "string" ? JSON.parse(row.metadata) : row.metadata) as Record<string, unknown>;
+        return { ...metadata, client_id: row.client_id as string, client_id_issued_at: Math.floor(Number(row.created_at) / 1000) } as OAuthClientInformationFull;
+      },
+      registerClient: async (client) => {
+        // Public clients only: PKCE protects the code, and a confidential client would mean storing a secret.
+        if (client.token_endpoint_auth_method !== undefined && client.token_endpoint_auth_method !== "none") throw new InvalidClientMetadataError("Only public clients (token_endpoint_auth_method none) are supported; PKCE is required.");
+        const grants = client.grant_types ?? ["authorization_code", "refresh_token"];
+        if (!grants.every((g) => g === "authorization_code" || g === "refresh_token")) throw new InvalidClientMetadataError("grant_types may only be authorization_code and refresh_token.");
+        const uris = client.redirect_uris ?? [];
+        if (uris.length < 1 || uris.length > MAX_REDIRECTS) throw new InvalidClientMetadataError(`Give between 1 and ${MAX_REDIRECTS} redirect URIs.`);
+        for (const raw of uris.map(String)) {
+          const url = URL.canParse(raw) ? new URL(raw) : null;
+          const safe = url && !url.hash && !url.username && !url.password && (url.protocol === "https:" || (url.protocol === "http:" && LOOPBACK.has(url.hostname)));
+          if (!safe) throw new InvalidClientMetadataError("Every redirect URI must be https (http only for localhost), with no credentials or fragment.");
+        }
+        const clientId = `client_${randomBytes(16).toString("base64url")}`;
+        const now = this.#now();
+        const name = String(client.client_name ?? "An AI assistant").replace(/[\u0000-\u001f\u007f]/g, "").slice(0, MAX_NAME) || "An AI assistant";
+        const metadata = { client_name: name, redirect_uris: uris.map(String), grant_types: grants, response_types: ["code"], token_endpoint_auth_method: "none", scope: SCOPES.join(" ") };
+        await this.#sql.query("INSERT INTO app_mcp_clients (client_id, metadata, created_at) VALUES ($1, $2::jsonb, $3)", [clientId, JSON.stringify(metadata), now]);
+        return { ...metadata, client_id: clientId, client_id_issued_at: Math.floor(now / 1000) } as OAuthClientInformationFull;
+      },
+    };
+  }
+
+  // ── authorization: hand the request to the dashboard, where the signed-in merchant approves it ──
+  async authorize(client: OAuthClientInformationFull, params: AuthorizationParams, res: Response): Promise<void> {
+    const resource = params.resource ?? this.#config.mcpUrl;
+    if (!sameUrl(resource, this.#config.mcpUrl)) throw new InvalidTargetError("This server only issues tokens for its own MCP endpoint.");
+    const scopes = params.scopes?.length ? params.scopes : DEFAULT_SCOPES;
+    for (const scope of scopes) if (!(SCOPES as readonly string[]).includes(scope)) throw new InvalidScopeError(`Unknown scope ${scope}.`);
+    const request = signConsentRequest(
+      { clientId: client.client_id, redirectUri: params.redirectUri, codeChallenge: params.codeChallenge, scopes: [...new Set(scopes)], ...(params.state !== undefined ? { state: params.state } : {}), resource: this.#config.mcpUrl.href },
+      this.#config.internalSecret,
+      this.#now(),
+    );
+    const target = new URL("/merchant/ai/authorize", this.#config.webOrigin);
+    target.searchParams.set("request", request);
+    res.redirect(302, target.toString());
+  }
+
+  async challengeForAuthorizationCode(client: OAuthClientInformationFull, authorizationCode: string): Promise<string> {
+    const [row] = await this.#sql.query("SELECT code_challenge, grant_id, used_at::text AS used_at, expires_at::text AS expires_at FROM app_mcp_codes WHERE code_hash = $1 AND client_id = $2", [sha256(authorizationCode), client.client_id]);
+    if (!row) throw new InvalidGrantError("The authorization code is invalid.");
+    if (row.used_at !== null) {
+      await this.#revokeGrant(row.grant_id as string); // a replayed code: whoever holds the first tokens loses them
+      throw new InvalidGrantError("The authorization code was already used.");
+    }
+    if (Number(row.expires_at) <= this.#now()) throw new InvalidGrantError("The authorization code expired.");
+    return row.code_challenge as string;
+  }
+
+  async exchangeAuthorizationCode(client: OAuthClientInformationFull, authorizationCode: string, _codeVerifier?: string, redirectUri?: string, resource?: URL): Promise<OAuthTokens> {
+    const now = this.#now();
+    // one atomic statement spends the code: of two concurrent redemptions exactly one gets a row
+    const [spent] = await this.#sql.query(
+      "UPDATE app_mcp_codes SET used_at = $2 WHERE code_hash = $1 AND client_id = $3 AND used_at IS NULL AND expires_at > $2 AND ($4::text IS NULL OR redirect_uri = $4) AND ($5::text IS NULL OR resource = $5) RETURNING grant_id",
+      [sha256(authorizationCode), now, client.client_id, redirectUri ?? null, resource ? resource.href : null],
+    );
+    if (!spent) throw new InvalidGrantError("The authorization code, redirect URI or resource doesn't match, or it was already used or expired.");
+    const grant = await this.#liveGrant(spent.grant_id as string);
+    if (!grant || grant.client_id !== client.client_id) throw new InvalidGrantError("This authorization was revoked or has expired.");
+    return this.#issue(grant, `family_${randomBytes(9).toString("base64url")}`);
+  }
+
+  async exchangeRefreshToken(client: OAuthClientInformationFull, refreshToken: string, scopes?: string[], resource?: URL): Promise<OAuthTokens> {
+    const now = this.#now();
+    const hash = sha256(refreshToken);
+    const [spent] = await this.#sql.query(
+      "UPDATE app_mcp_tokens t SET used_at = $2 FROM app_mcp_grants g WHERE t.token_hash = $1 AND t.kind = 'refresh' AND t.used_at IS NULL AND t.revoked_at IS NULL AND t.expires_at > $2 AND g.id = t.grant_id AND g.client_id = $3 RETURNING t.grant_id, t.family_id",
+      [hash, now, client.client_id],
+    );
+    if (!spent) {
+      const [seen] = await this.#sql.query("SELECT t.grant_id, t.used_at::text AS used_at FROM app_mcp_tokens t JOIN app_mcp_grants g ON g.id = t.grant_id WHERE t.token_hash = $1 AND t.kind = 'refresh' AND g.client_id = $2", [hash, client.client_id]);
+      if (seen && seen.used_at !== null) await this.#revokeGrant(seen.grant_id as string); // reuse: assume the token leaked
+      throw new InvalidGrantError("The refresh token is invalid, expired or was already used.");
+    }
+    const grant = await this.#liveGrant(spent.grant_id as string);
+    if (!grant) throw new InvalidGrantError("This authorization was revoked or has expired.");
+    if (resource && !sameUrl(resource, grant.resource)) throw new InvalidTargetError("That resource isn't the one this authorization was issued for.");
+    const granted = grant.scopes.split(" ");
+    if (scopes?.some((s) => !granted.includes(s))) throw new InvalidScopeError("A refresh can't widen the approved permissions.");
+    return this.#issue(grant, spent.family_id as string);
+  }
+
+  async verifyAccessToken(token: string): Promise<AuthInfo> {
+    const now = this.#now();
+    const [row] = await this.#sql.query(
+      `SELECT t.expires_at::text AS token_expires, g.id, g.client_id, g.merchant, g.scopes, g.resource
+         FROM app_mcp_tokens t JOIN app_mcp_grants g ON g.id = t.grant_id
+        WHERE t.token_hash = $1 AND t.kind = 'access' AND t.revoked_at IS NULL AND t.expires_at > $2 AND g.revoked_at IS NULL AND g.expires_at > $2`,
+      [sha256(token), now],
+    );
+    if (!row) throw new InvalidTokenError("The access token is invalid, expired or was revoked.");
+    return {
+      token,
+      clientId: row.client_id as string,
+      scopes: (row.scopes as string).split(" ").filter(Boolean),
+      expiresAt: Math.floor(Number(row.token_expires) / 1000),
+      resource: new URL(row.resource as string), // the audience this grant was issued for; the middleware compares it with ours
+      extra: { grantId: row.id, merchant: row.merchant },
+    };
+  }
+
+  async revokeToken(client: OAuthClientInformationFull, request: OAuthTokenRevocationRequest): Promise<void> {
+    const now = this.#now();
+    const hash = sha256(request.token);
+    // RFC 7009: revoking a refresh token ends its whole family; an unknown token is not an error
+    await this.#sql.query(
+      "UPDATE app_mcp_tokens t SET revoked_at = $2 FROM app_mcp_grants g WHERE g.id = t.grant_id AND g.client_id = $3 AND t.revoked_at IS NULL AND (t.token_hash = $1 OR t.family_id IN (SELECT family_id FROM app_mcp_tokens WHERE token_hash = $1 AND kind = 'refresh'))",
+      [hash, now, client.client_id],
+    );
+  }
+
+  // ── internals ──
+  async #liveGrant(id: string): Promise<GrantRow | undefined> {
+    const now = this.#now();
+    const [row] = await this.#sql.query("SELECT id, client_id, merchant, scopes, resource, expires_at::text AS expires_at, revoked_at::text AS revoked_at FROM app_mcp_grants WHERE id = $1 AND revoked_at IS NULL AND expires_at > $2", [id, now]);
+    return row as unknown as GrantRow | undefined;
+  }
+
+  async #revokeGrant(grantId: string): Promise<void> {
+    const now = this.#now();
+    await this.#sql.query("UPDATE app_mcp_grants SET revoked_at = $2 WHERE id = $1 AND revoked_at IS NULL", [grantId, now]);
+    await this.#sql.query("UPDATE app_mcp_tokens SET revoked_at = $2 WHERE grant_id = $1 AND revoked_at IS NULL", [grantId, now]);
+  }
+
+  async #issue(grant: GrantRow, family: string): Promise<OAuthTokens> {
+    const now = this.#now();
+    const [access, refresh] = [opaque(), opaque()];
+    await this.#sql.query(
+      "INSERT INTO app_mcp_tokens (token_hash, kind, grant_id, family_id, expires_at) VALUES ($1, 'access', $3, $4, $5), ($2, 'refresh', $3, $4, $6)",
+      [sha256(access), sha256(refresh), grant.id, family, now + ACCESS_TTL_S * 1000, Number(grant.expires_at)],
+    );
+    return { access_token: access, token_type: "Bearer", expires_in: ACCESS_TTL_S, refresh_token: refresh, scope: grant.scopes };
+  }
+}
+

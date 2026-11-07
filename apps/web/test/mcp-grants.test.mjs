@@ -100,3 +100,13 @@ test("revoking disconnects at once: the grant and every token of it, only for it
   assert.equal(grantState((await listGrants(MERCHANT))[0], NOW + 20), "revoked");
   assert.equal(await revokeGrant(MERCHANT, grantId, NOW + 30), false, "already revoked");
 });
+
+test("a loopback redirect may use any port (RFC 8252: Claude Code picks one), but nothing else may differ", async () => {
+  const loop = "http://localhost:3118/callback";
+  await query("UPDATE app_mcp_clients SET metadata = $1::jsonb WHERE client_id = 'client_1'", [JSON.stringify({ client_name: "Claude Code", redirect_uris: [loop, REDIRECT] })]);
+  const ok = await approve({ request: { ...REQUEST, redirectUri: "http://localhost:51234/callback" } });
+  assert.equal(new URL(ok.redirect).origin, "http://localhost:51234");
+  await assert.rejects(approve({ request: { ...REQUEST, redirectUri: "http://localhost:51234/other" } }), /redirect/i, "another path");
+  await assert.rejects(approve({ request: { ...REQUEST, redirectUri: "http://evil.example:51234/callback" } }), /redirect/i, "another host");
+  await assert.rejects(approve({ request: { ...REQUEST, redirectUri: "https://claude.ai:8443/api/mcp/auth_callback" } }), /redirect/i, "a non-loopback address needs an exact match");
+});

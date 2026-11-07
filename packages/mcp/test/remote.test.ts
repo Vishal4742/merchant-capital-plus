@@ -51,7 +51,7 @@ async function connectAs(principal: RemotePrincipal, sql: SqlRunner, extra: { to
     return { status: 404, body: { error: "not found" } };
   });
   const client = new WhiteflowClient({ baseUrl: new URL(BASE), apiKey: token, fetch, sleep: async () => {} });
-  const server = createRemoteServer({ principal, client, journal: new PgJournal(sql, () => NOW), now: () => NOW, log: memoryLog(), onEvent: (e) => extra.events?.push(e) });
+  const server = createRemoteServer({ principal, client, journal: new PgJournal(sql, () => NOW), now: () => NOW, log: memoryLog(), onEvent: (e) => { extra.events?.push(e); } });
   const mcp = new Client({ name: "test", version: "0" });
   const [c, s] = InMemoryTransport.createLinkedPair();
   await server.connect(s);

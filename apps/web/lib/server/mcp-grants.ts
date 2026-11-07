@@ -60,6 +60,17 @@ export function denyRedirect(request: ConsentRequest, issuer: string): string {
   return url.toString();
 }
 
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/** The MCP SDK's own rule (RFC 8252 §7.3), kept identical so the dashboard never refuses what the service accepted:
+ *  exact match, except that a loopback address may use any port. */
+export function redirectMatches(requested: string, registered: string): boolean {
+  if (requested === registered) return true;
+  if (!URL.canParse(requested) || !URL.canParse(registered)) return false;
+  const [a, b] = [new URL(requested), new URL(registered)];
+  return LOOPBACK.has(a.hostname) && LOOPBACK.has(b.hostname) && a.protocol === b.protocol && a.hostname === b.hostname && a.pathname === b.pathname && a.search === b.search;
+}
+
 export interface ApproveInput {
   /** the SIWE address that approved */
   owner: string;
@@ -82,7 +93,7 @@ export async function approveGrant(input: ApproveInput): Promise<{ redirect: str
   const [client] = await query<{ metadata: { redirect_uris?: string[] } | string }>("SELECT metadata FROM app_mcp_clients WHERE client_id = $1", [request.clientId]);
   if (!client) throw new Error("This assistant isn't registered with WhiteFlow. Start the connection again from your assistant.");
   const metadata = typeof client.metadata === "string" ? (JSON.parse(client.metadata) as { redirect_uris?: string[] }) : client.metadata;
-  if (!metadata.redirect_uris?.includes(request.redirectUri)) throw new Error("This request's redirect address isn't one the assistant registered. Start again from your assistant.");
+  if (!metadata.redirect_uris?.some((registered) => redirectMatches(request.redirectUri, registered))) throw new Error("This request's redirect address isn't one the assistant registered. Start again from your assistant.");
 
   const grantId = `grant_${randomBytes(12).toString("base64url")}`;
   const code = randomBytes(32).toString("base64url");

@@ -1,0 +1,2 @@
+# npm run build output: rebuild it, never commit it
+dist/
