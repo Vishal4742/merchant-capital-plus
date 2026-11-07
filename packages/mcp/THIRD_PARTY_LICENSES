@@ -1,7 +1,8 @@
-packages/mcp adapts code from Pixa (https://github.com/soumyacodes007/Pixa, commit a06fae5):
-the MCP server and tools layout (src/index.ts, src/server.ts, src/tools/*), the budget limiter (src/spending.ts)
-and the spending report (src/tools/spending-report.ts). Each adapted file says "Adapted from Pixa (MIT)" in its
-header. Pixa is Algorand; the Algorand, Tinyman and NFD code was not taken. Pixa's licence follows.
+WhiteFlow Merchant MCP (packages/mcp). Its stdio entry and server layout (src/index.ts, src/server.ts: one McpServer
+with modular register functions) started from Pixa (https://github.com/soumyacodes007/Pixa, commit a06fae5).
+Since batch 052 none of Pixa's wallet, payment, spending-limit or report code is in this package: the spending
+limiter, the pay tool and the spending report that were adapted from it were removed. The notice is kept for the
+layout's provenance. Pixa's licence follows.
 
 --------------------------------------------------------------------------------
 

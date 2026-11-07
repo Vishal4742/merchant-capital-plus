@@ -1,0 +1,2 @@
+# npm run pack output: the staged bundle, whiteflow.mcpb and its checksums (rebuild them; never commit them)
+dist/
