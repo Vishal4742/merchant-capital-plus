@@ -2,7 +2,7 @@
 
 **A stablecoin payment gateway for merchants who sell internationally: payment links, payment pages, invoices, QR codes, discount vouchers, multi-currency prices, sales reports and instant settlement in USDT on Whitechain, with a one-line payment button and an SDK. Customers pay with zero gas. Plus Capital: get paid early from future sales.** Testnet only (Whitechain Sepolia).
 
-> Status (Nov 6, 06:50 IST): gates G0–G3 passed and verified on-chain; Phase 4 (gateway screens) is being built. Slots marked `⟨…⟩` are filled as each acceptance test passes. Requirements: `docs/SRS.md`. Design: `ARCHITECTURE.md`. How we built it: `PIPELINE.md`, `AI_USAGE.md`.
+> Status (Nov 7, submission): live on Whitechain testnet at [whiteflow.org](https://whiteflow.org); every acceptance test below links its on-chain transaction. Requirements: `docs/SRS.md`. Design: `ARCHITECTURE.md`. How we built it: `PIPELINE.md`, `AI_USAGE.md`.
 
 ## What makes it different
 - **Zero gas for the payer:** the customer signs once; our relayer pays the gas.
@@ -53,11 +53,14 @@ Private-read proof (Phase 1): the app read Whitechain blocks through Nym (e.g. b
 **CROPS:** C: payment functions are permissionless, so anyone can submit a signed authorization if our relayer is down · O: MIT ([`LICENSE`](LICENSE)) · P: private reads by default, no personal data on-chain or on Arkiv · S: non-custodial, keys stay on the user's device.
 
 ## AI assistant (MCP)
-`packages/mcp` is a local MCP server for Claude Code or Claude Desktop. Merchant tools (`create_checkout`, `get_checkout`, `list_payments`, `sales_summary`) use the merchant's own `sk_test_` key and can't move money. An optional payer tool (`pay_checkout`, only with `MCP_PAYER_KEY`) lets an agent pay a checkout without gas, capped at 10 USDT per payment and 25 per day, with `spending_report` listing every payment.
+`packages/mcp` is a local MCP server (stdio, also packaged as `whiteflow.mcpb` for Claude Desktop) that manages payment collection from an AI assistant. It has 14 tools: payment links, invoices, customers, `list_payments`, `get_collection_summary` and reminders. It can't move money.
+- **Sandbox (the default):** a simulator on your computer, with no account and no network. Try it with no key.
+- **Testnet:** the live gateway with your `sk_test_` key. The key's merchant must belong to a Whiteflow workspace: sign in on whiteflow.org, then link the wallet in Settings.
 ```
-cd packages/mcp && npm ci
-claude mcp add whiteflow --transport stdio --env MCP_SECRET_KEY=sk_test_YOUR_KEY -- node "$PWD/src/index.ts"
+cd packages/mcp && npm ci && npm run pack
+claude mcp add whiteflow --env WHITEFLOW_MODE=testnet --env WHITEFLOW_API_KEY=sk_test_YOUR_KEY -- node "$PWD/dist/bundle/server/index.mjs"
 ```
+Leave out both `--env` flags for sandbox mode. Details, the Claude Desktop install and the full tool list: [`packages/mcp/README.md`](packages/mcp/README.md).
 Parts of it are adapted from [Pixa](https://github.com/soumyacodes007/Pixa) (MIT; licence in `packages/mcp/THIRD_PARTY_LICENSES`; ETHGlobal mentors confirmed this reuse is within Start Fresh).
 
 ## Architecture
@@ -87,7 +90,7 @@ cp .env.example .env          # fill in the values; never commit .env
 # Contracts (Foundry; fork tests run against Whitechain Sepolia with the real USDT)
 cd contracts && forge build && forge test -vv && cd ..
 
-# Relayer: http://127.0.0.1:8787 locally; production https://relayer.whiteflow.org
+# Relayer: http://127.0.0.1:8787 locally; production https://relayer.whiteflow.org/health
 cd apps/relayer && npm ci && npm test && npm run dev        # GET /health, POST /relay
 
 # Web app (merchant, investor, customer pages): http://localhost:3000
@@ -120,7 +123,6 @@ The default checkout uses a guest key kept in the browser (no email recovery) an
 
 ## What's next (after Mumbai)
 - Pay from another chain: one tested corridor (Ethereum Sepolia USDC into Whitechain USDT) with an exact destination amount and a refund path, before any "any chain" claim.
-- An assistant connector (MCP) that drafts invoices and answers "has Acme paid?" from chain evidence. It can't move money.
 - Business accounts with roles, and settlement-address changes that need a second approval.
 
 ## Team and AI usage
