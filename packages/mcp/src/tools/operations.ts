@@ -64,15 +64,15 @@ export function registerOperationTools(server: McpServer, ctx: Ctx): void {
           };
         };
         if (idempotency_key) {
-          const entry = ctx.journal.find(profile.scope, idempotency_key);
+          const entry = await ctx.journal.find(profile.scope, idempotency_key);
           if (!entry) throw new ToolRefusal("The connector has no record of that idempotency_key for this business.");
           if (acknowledge) {
-            ctx.journal.settle(profile.scope, entry.key, "acknowledged", "the merchant checked the record");
+            await ctx.journal.settle(profile.scope, entry.key, "acknowledged", "the merchant checked the record");
             return { summary: `Marked ${entry.key} as checked by the merchant.`, operation: await describe({ ...entry, outcome: "acknowledged" }) };
           }
           return { summary: `Operation ${entry.key}: ${entry.outcome}.`, operation: await describe(entry) };
         }
-        const unresolved = await Promise.all(ctx.journal.unresolved(profile.scope).map(describe));
+        const unresolved = await Promise.all((await ctx.journal.unresolved(profile.scope)).map(describe));
         return {
           summary: unresolved.length ? `${unresolved.length} write(s) with an unsettled outcome.` : "No unresolved writes.",
           unresolved,

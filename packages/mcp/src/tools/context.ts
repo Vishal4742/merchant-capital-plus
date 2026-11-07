@@ -5,7 +5,7 @@
 import { ApiError, type Result, type WhiteflowClient } from "../client.ts";
 import type { Account } from "../contract.ts";
 import { dateIn, labelled } from "../dates.ts";
-import { Journal, JournalRefusal, SERVER_RETENTION_MS } from "../journal.ts";
+import { Journal, JournalRefusal, SERVER_RETENTION_MS, type JournalPort } from "../journal.ts";
 import type { Mode } from "../config.ts";
 import { ToolRefusal, type Logger, type Reply } from "../safety.ts";
 
@@ -39,7 +39,7 @@ export interface Written<T> extends Result<T> {
 export interface Ctx {
   mode: Mode;
   client: WhiteflowClient;
-  journal: Journal;
+  journal: JournalPort;
   reply: Reply;
   log: Logger;
   now: () => number;
@@ -95,7 +95,7 @@ export function makeContext(base: Omit<Ctx, "profile" | "require" | "write" | "t
       const { scope } = await ctx.profile();
       let claim;
       try {
-        claim = base.journal.claim(scope, op, payload, { callerKey: opts.key, createAnother: opts.createAnother });
+        claim = await base.journal.claim(scope, op, payload, { callerKey: opts.key, createAnother: opts.createAnother });
       } catch (error) {
         if (!(error instanceof JournalRefusal)) throw error;
         const e = error.entry;
@@ -111,14 +111,14 @@ export function makeContext(base: Omit<Ctx, "profile" | "require" | "write" | "t
           // leaves the write for reconciliation: the server may have created it, so it must never be settled "refused"
           // and then re-created under a fresh key (round-2 security probe)
           const reason = error instanceof Mismatch ? error.message : "a reply the connector couldn't verify";
-          base.journal.settle(scope, claim.key, "needs_reconciliation", reason);
+          await base.journal.settle(scope, claim.key, "needs_reconciliation", reason);
           throw new ToolRefusal(`WhiteFlow's reply doesn't match what was asked: ${reason}. Don't share or use this record; the operation is marked for reconciliation.`, {
             outcome: "needs_reconciliation",
             idempotency_key: claim.key,
             next_action: "Tell the merchant. Check the record in the WhiteFlow dashboard before doing anything else with it.",
           });
         }
-        base.journal.settle(scope, claim.key, "done");
+        await base.journal.settle(scope, claim.key, "done");
         return { ...result, key: claim.key, source: claim.source };
       } catch (error) {
         if (error instanceof ToolRefusal) throw error;
@@ -129,7 +129,7 @@ export function makeContext(base: Omit<Ctx, "profile" | "require" | "write" | "t
             { outcome: "unknown", idempotency_key: claim.key, resumable_until: until },
           );
         }
-        base.journal.settle(scope, claim.key, "refused");
+        await base.journal.settle(scope, claim.key, "refused");
         throw error;
       }
     },
