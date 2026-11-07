@@ -6,12 +6,16 @@ import { Button, buttonClasses } from "@/components/Button";
 import { HeroScene } from "./HeroScene";
 import { HeroSheet } from "./HeroSheet";
 import { IstClock } from "./Live";
+import { WhiteFlowMark } from "@/components/WhiteFlowMark";
 
 export function Nav() {
   return (
     <header className="lp-nav">
       <div className="wrap">
-        <span className="lp-word">WhiteFlow</span>
+        <span className="lp-word inline-flex items-center gap-2">
+          <WhiteFlowMark />
+          WhiteFlow
+        </span>
         <nav className="links" aria-label="Product">
           <a href="#accept">Payments</a>
           <a href="#settle">Settlement</a>
