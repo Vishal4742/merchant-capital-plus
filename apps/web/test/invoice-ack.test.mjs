@@ -245,13 +245,13 @@ function book(offers) {
   return offerBook({ read, arkiv: { rows: async () => [], create: async () => "0x", patch: async () => {} } });
 }
 
-test("offers: a pay-link holder's ack is shown unverified (debtor_acknowledged false); a named customer's is true (H1)", async () => {
+test("offers: a pay-link holder's ack never reaches investors (round 2 M); a named customer's is true (H1)", async () => {
   await call(await signed());
   await tick();
   await call(await signed({ signer: someoneElse }));
   const [linkHolders, notYet, advance] = await book({ 1: offer(), 2: offer({ claimId: 2n, invoiceId: 8n }), 3: offer({ claimId: 3n, kind: "advance", invoiceId: 0n, bps: 2000 }) });
   assert.equal(linkHolders.debtor_acknowledged, false, "nobody's identity was checked");
-  assert.deepEqual({ ...linkHolders.debtor_ack, signed_at: typeof linkHolders.debtor_ack.signed_at }, { verified: false, debtor: short(debtor.address), signed_at: "string", count: 2 });
+  assert.equal(linkHolders.debtor_ack, null, "anyone can ack an invoice with no named customer: the book shows only a verified ack");
   assert.deepEqual([notYet.debtor_acknowledged, notYet.debtor_ack], [false, null]);
   assert.deepEqual([advance.debtor_acknowledged, advance.debtor_ack], [false, null], "an advance has no debtor");
   assert.doesNotMatch(JSON.stringify([linkHolders, notYet, advance]), new RegExp(`${debtor.address.slice(2)}|signature`, "i"), "the short address only, never the signature");
@@ -261,16 +261,19 @@ test("offers: a pay-link holder's ack is shown unverified (debtor_acknowledged f
   await call(await signed());
   const [bound] = await book({ 1: offer() });
   assert.equal(bound.debtor_acknowledged, true);
-  assert.equal(bound.debtor_ack.verified, true);
+  assert.deepEqual({ ...bound.debtor_ack, signed_at: typeof bound.debtor_ack.signed_at }, { verified: true, debtor: short(debtor.address), signed_at: "string", count: 1 });
 });
 
 test("offers L1: an ack joins only our shop's offer with the same face and maturity as the signed invoice", async () => {
+  invoice = { ...invoice, customer: debtor.address }; // a verified ack, so only the terms can keep it out of the book
   await call(await signed());
-  const [other, face, maturity] = await book({
-    1: offer({ merchant: someoneElse.address }),
-    2: offer({ claimId: 2n, face: 30_000_000n, price: 29_000_000n }),
-    3: offer({ claimId: 3n, maturity: Number(DUE) + 60 }),
+  const [same, other, face, maturity] = await book({
+    1: offer(),
+    2: offer({ claimId: 2n, merchant: someoneElse.address }),
+    3: offer({ claimId: 3n, face: 30_000_000n, price: 29_000_000n }),
+    4: offer({ claimId: 4n, maturity: Number(DUE) + 60 }),
   });
+  assert.equal(same.debtor_ack?.verified, true, "the control: same terms, shown");
   for (const [name, o] of Object.entries({ other, face, maturity })) assert.equal(o.debtor_ack, null, name);
 });
 
