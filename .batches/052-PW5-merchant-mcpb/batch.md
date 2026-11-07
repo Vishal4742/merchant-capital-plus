@@ -35,3 +35,4 @@ Log:
 - 00:50 batch started in its own worktree from origin/main e7e41bf (P:/WhiteFlow holds another lane's uncommitted batch 050).
 - round 1 closed with security PASS, code PASS and CI PASS (afd5a07).
 - round 2: production review findings, decisions above.
+- round-3 fixes by claude-contracts (owner 05:34: fix the PRs, then merge): untrusted() strips tag characters U+E0000-U+E007F, U+2028/2029, U+061C; invoice/link ids match /^[\w-]{1,64}$/ before any fetch; package.json 0.3.0; MCP_SECRET_KEY alone is a startup error; README 46 tests; merged origin/main.
