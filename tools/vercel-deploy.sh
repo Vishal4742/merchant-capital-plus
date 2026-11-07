@@ -31,7 +31,9 @@ url=$(vercel deploy --prebuilt --prod)
 echo "$name: deployed $url"
 
 # `vercel inspect` resolves a domain to the deployment it serves; its "id" line is that deployment's id.
-id_of() { vercel inspect "$1" 2>&1 | awk '$1 == "id" { print $2; exit }'; }
+# awk reads all of it (an early exit would SIGPIPE the CLI) and `|| true` keeps a CLI error from ending the script
+# under `set -e -o pipefail`: an empty id is handled below, with a message.
+id_of() { { vercel inspect "$1" 2>&1 || true; } | awk '$1 == "id" && !id { id = $2 } END { print id }'; }
 want=$(id_of "$url")
 [ -n "$want" ] || { echo "::error::$name: can't read the new deployment's id from $url"; exit 1; }
 status=0
