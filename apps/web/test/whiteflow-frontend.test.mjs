@@ -52,13 +52,16 @@ test("Invoices route exists and is backed by on-chain reads", () => {
 });
 
 test("Connections route exists and discloses honest MCP status", () => {
-  const connPage = readFileSync(join(ROOT, "app/merchant/connections/page.tsx"), "utf8");
+  // the MCP block lives in a component shared with the public /mcp page
+  const connPage =
+    readFileSync(join(ROOT, "app/merchant/connections/page.tsx"), "utf8") + readFileSync(join(ROOT, "components/McpInstall.tsx"), "utf8");
   assert.match(connPage, /Model Context Protocol \(MCP\)/);
   assert.match(connPage, /Stage 6/);
   assert.match(connPage, /2025-11-25/);
   // the working connector is offered as a download, and no made-up hosted URL is shown
   assert.match(connPage, /href="\/downloads\/whiteflow\.mcpb" download/);
   assert.doesNotMatch(connPage, /api\.whiteflow\.io/);
+  assert.match(readFileSync(join(ROOT, "app/mcp/page.tsx"), "utf8"), /<McpInstall /);
   assert.match(connPage, /listKeys/);
   assert.match(connPage, /listWebhooks/);
 });
