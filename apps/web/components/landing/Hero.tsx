@@ -1,18 +1,21 @@
 // Home hero (gateway v2 design): nav, the dithered Marine Drive night, headline, CTAs, the tilted checkout sheet,
-// mono corners, then the FX ticker. Server-rendered; the scene, the sheet's hold demo and the clock are islands.
+// no corner labels or FX ticker (batch 061, the human's call). Server-rendered; the scene and the sheet's hold demo are islands.
 // Links to /merchant and /docs are plain <a>: a full load, so those pages run under their own CSP (security review
 // 005 F-N4), and no prefetch pulls their JS into the home page.
 import { Button, buttonClasses } from "@/components/Button";
 import { HeroScene } from "./HeroScene";
 import { HeroSheet } from "./HeroSheet";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { IstClock } from "./Live";
+import { WhiteFlowMark } from "@/components/WhiteFlowMark";
 
 export function Nav() {
   return (
     <header className="lp-nav">
       <div className="wrap">
-        <span className="lp-word">WhiteFlow</span>
+        <span className="lp-word inline-flex items-center gap-2">
+          <WhiteFlowMark />
+          WhiteFlow
+        </span>
         <nav className="links" aria-label="Product">
           <a href="#accept">Invoices &amp; Payments</a>
           <a href="#settle">Settlement</a>
@@ -39,19 +42,6 @@ export function Hero() {
     <section className="lp-hero" aria-label="Introduction">
       <HeroScene />
       <div className="wash" aria-hidden="true" />
-      <div className="lp-corner tl mono" aria-hidden="true">
-        18.94° N · 72.82° E
-        <br />
-        Marine Drive, Mumbai
-      </div>
-      <div className="lp-corner tr mono" aria-hidden="true">
-        Whitechain testnet
-        <br />
-        <IstClock /> IST
-      </div>
-      <div className="lp-corner br mono" aria-hidden="true">
-        Fig. 01 — Atomic settlement
-      </div>
       <div className="wrap">
         <div>
           <span className="mono kicker">Business Payments Workspace</span>
@@ -76,44 +66,6 @@ export function Hero() {
           </div>
         </div>
         <HeroSheet />
-      </div>
-    </section>
-  );
-}
-
-const RATES = [
-  ["USD", "1.0000"],
-  ["EUR", "1.1235"],
-  ["GBP", "1.3472"],
-  ["INR", "0.0106"],
-  ["AED", "0.2723"],
-  ["SGD", "0.7828"],
-] as const;
-
-function Rates() {
-  return (
-    <>
-      {RATES.map(([code, rate]) => (
-        <span key={code}>
-          1 {code} <b className="num">{rate}</b> USDT
-        </span>
-      ))}
-      <span>rates of 5 Nov · display and quote only</span>
-    </>
-  );
-}
-
-/** Scrolls by in CSS; the second copy makes the loop seamless and is hidden from screen readers. */
-export function Ticker() {
-  return (
-    <section className="lp-ticker" aria-label="Exchange rates shown at checkout">
-      <div className="track mono">
-        <span>
-          <Rates />
-        </span>
-        <span aria-hidden="true">
-          <Rates />
-        </span>
       </div>
     </section>
   );
