@@ -98,25 +98,36 @@ export class Journal {
       const refuse = (refusal: JournalRefusal, next?: Entry[]) => ({ next, result: refusal });
       const record = (key: string, at: number): Entry => ({ key, scope, op, hash, at, last: now, outcome: "pending", note: null });
 
-      if (opts.callerKey) {
-        const prior = mine.find((e) => e.key === opts.callerKey);
-        // a caller key already used for a different request keeps its own entry; the server would answer 422 anyway
-        if (prior && (prior.op !== op || prior.hash !== hash)) return refuse(new JournalRefusal(`idempotency_key ${opts.callerKey} was already used for a different request. Use a new key for a new record.`, prior));
-        const entry = prior ? { ...prior, last: now } : record(opts.callerKey, now);
-        return keep({ key: entry.key, source: "caller", since: entry.at }, [...entries.filter((e) => e !== prior), entry]);
+      const prior = opts.callerKey ? mine.find((e) => e.key === opts.callerKey) : undefined;
+      // a caller key already used for a different request keeps its own entry; the server would answer 422 anyway
+      if (prior && (prior.op !== op || prior.hash !== hash)) return refuse(new JournalRefusal(`idempotency_key ${opts.callerKey} was already used for a different request. Use a new key for a new record.`, prior));
+      if (prior && opts.createAnother && UNRESOLVED.includes(prior.outcome)) return refuse(new JournalRefusal(`create_another needs a new idempotency_key: ${opts.callerKey} belongs to an unresolved write.`, prior));
+
+      // The guards below apply to explicit and generated keys alike (batch 058): they act on the entry this call would
+      // continue: the caller's own unresolved key, else the identical unresolved write (whatever key it was sent with).
+      const unresolved = mine.filter((e) => e.op === op && e.hash === hash && UNRESOLVED.includes(e.outcome)).at(-1);
+      const target = prior && UNRESOLVED.includes(prior.outcome) ? prior : unresolved;
+      if (target && !opts.createAnother) {
+        if (target.outcome === "needs_reconciliation") {
+          return refuse(new JournalRefusal("An earlier identical request needs reconciliation before this one can be sent.", target));
+        }
+        if (now - target.at > RESUME_LIMIT_MS) {
+          const flagged = { ...target, last: now, outcome: "needs_reconciliation" as const, note: "outcome unknown and past the server's 24-hour retention: it can no longer be settled by a retry" };
+          // stored with the refusal: a caller that ignores it still can't slip a fresh key past it
+          return refuse(new JournalRefusal("An earlier identical request's outcome is still unknown, and WhiteFlow no longer keeps its key, so it can't be safely retried.", flagged), entries.map((e) => (e === target ? flagged : e)));
+        }
+        if (opts.callerKey && target.key !== opts.callerKey) {
+          return refuse(new JournalRefusal(`An identical request is still unresolved under idempotency_key ${target.key}. Retry with that key (or leave idempotency_key out) so it can't be created twice; create_another: true makes a second one on purpose.`, target));
+        }
+        return keep({ key: target.key, source: opts.callerKey ? "caller" : "resumed", since: target.at }, entries.map((e) => (e === target ? { ...e, last: now } : e)));
       }
 
-      const unresolved = mine.filter((e) => e.op === op && e.hash === hash && UNRESOLVED.includes(e.outcome)).at(-1);
-      if (unresolved && !opts.createAnother) {
-        if (unresolved.outcome === "needs_reconciliation") {
-          return refuse(new JournalRefusal("An earlier identical request needs reconciliation before this one can be sent.", unresolved));
+      if (opts.callerKey) {
+        if (!prior && entries.filter((e) => UNRESOLVED.includes(e.outcome)).length >= MAX_UNRESOLVED) {
+          return refuse(new JournalRefusal(`There are ${MAX_UNRESOLVED} writes whose outcome is still unknown. Reconcile them (get_operation_status) before creating more.`));
         }
-        if (now - unresolved.at > RESUME_LIMIT_MS) {
-          const flagged = { ...unresolved, last: now, outcome: "needs_reconciliation" as const, note: "outcome unknown and past the server's 24-hour retention: it can no longer be settled by a retry" };
-          // stored with the refusal: a caller that ignores it still can't slip a fresh key past it
-          return refuse(new JournalRefusal("An earlier identical request's outcome is still unknown, and WhiteFlow no longer keeps its key, so it can't be safely retried.", flagged), entries.map((e) => (e === unresolved ? flagged : e)));
-        }
-        return keep({ key: unresolved.key, source: "resumed", since: unresolved.at }, entries.map((e) => (e === unresolved ? { ...e, last: now } : e)));
+        const entry = prior ? { ...prior, last: now } : record(opts.callerKey, now);
+        return keep({ key: entry.key, source: "caller", since: entry.at }, [...entries.filter((e) => e !== prior), entry]);
       }
 
       const recent = mine.filter((e) => e.op === op && e.hash === hash && e.outcome === "done" && now - e.last < REPLAY_WINDOW_MS).at(-1);

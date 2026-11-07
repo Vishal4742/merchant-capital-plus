@@ -41,10 +41,16 @@ export function registerOperationTools(server: McpServer, ctx: Ctx): void {
             try {
               const { data } = await ctx.client.operation(entry.key);
               server = { state: data.state, http_status: data.http_status, record_id: data.result_id, at: data.created_at };
-              if (data.state === "succeeded" && entry.outcome === "pending") ctx.journal.settle(profile.scope, entry.key, "done", data.result_id);
+              // A bare "succeeded" is not settled here: the record it names must pass the same semantic checks as a fresh
+              // write (price, currency, URL on a trusted origin). The next identical call resumes with this key, gets the
+              // replayed record and verifies it; until then the entry stays unresolved (batch 058).
+              if (data.state === "succeeded" && entry.outcome === "pending") {
+                server = { ...server, note: "WhiteFlow says it succeeded. Verify the record itself (get_payment_link) or repeat the same request: it replays this record and checks it before reporting success." };
+              }
             } catch (error) {
               if (!(error instanceof ApiError) || error.status !== 404) throw error;
-              server = { state: "not_found", note: "WhiteFlow has no record of this key: if it's still within 24 hours, the write never happened" };
+              // A missing record is not proof of anything: the lookup can lag the write, forget it, or not cover it.
+              server = { state: "not_found", note: "WhiteFlow has no operation record under this key. That is not proof the write didn't happen: check the record itself (get_payment_link, list_payments) before creating another." };
             }
           }
           return {
