@@ -157,7 +157,7 @@
       "type": "string",
       "title": "Gateway URL (testnet only)",
       "description": "The WhiteFlow gateway's https origin.",
-      "default": "https://whiteflow-app.vercel.app",
+      "default": "https://whiteflow.org",
       "required": false
     },
     "timezone": {
