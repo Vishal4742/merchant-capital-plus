@@ -157,7 +157,7 @@
       "type": "string",
       "title": "Gateway URL (testnet only)",
       "description": "The WhiteFlow gateway's https origin.",
-      "default": "https://merchant-capital.vercel.app",
+      "default": "https://whiteflow-app.vercel.app",
       "required": false
     },
     "timezone": {
