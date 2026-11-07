@@ -14,6 +14,24 @@ export const CONSENT_TTL_MS = 10 * 60_000;
 export const CODE_TTL_MS = 60_000;
 export const GRANT_TTL_MS = 30 * 24 * 60 * 60_000;
 
+/** The authorization server's issuer (the MCP endpoint's origin, https), or null when the service isn't configured here. */
+export const issuerOf = (): string | null => {
+  const url = process.env.WHITEFLOW_MCP_PUBLIC_URL;
+  return url && URL.canParse(url) && new URL(url).protocol === "https:" ? new URL(url).origin : null;
+};
+
+/** A refusal worded for the merchant (safe to show); anything else thrown here is an internal failure. */
+export class GrantRefusal extends Error {}
+
+/** A token proving a state-changing post came from our own page for THIS merchant and THIS subject (a consent request or a
+ *  grant id). The session cookie is SameSite=Lax; this is the second, independent check. */
+export const csrfToken = (merchant: string, subject: string, secret: string): string => mac(`csrf1|${merchant.toLowerCase()}|${subject}`, secret).toString("base64url");
+export function csrfOk(given: unknown, merchant: string, subject: string, secret: string): boolean {
+  if (typeof given !== "string") return false;
+  const a = Buffer.from(given), b = Buffer.from(csrfToken(merchant, subject, secret));
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 const mac = (payload: string, secret: string) => createHmac("sha256", secret).update(payload).digest();
 
@@ -87,13 +105,13 @@ export interface ApproveInput {
 export async function approveGrant(input: ApproveInput): Promise<{ redirect: string; grantId: string }> {
   const { request, now = Date.now() } = input;
   const approved = [...new Set(input.approved)];
-  if (approved.length === 0) throw new Error("Approve at least one permission, or deny the request.");
+  if (approved.length === 0) throw new GrantRefusal("Approve at least one permission, or deny the request.");
   const known = GRANT_SCOPES as readonly string[];
-  for (const scope of approved) if (!request.scopes.includes(scope) || !known.includes(scope)) throw new Error(`The permission ${scope} was not requested by this assistant.`);
+  for (const scope of approved) if (!request.scopes.includes(scope) || !known.includes(scope)) throw new GrantRefusal(`The permission ${scope} was not requested by this assistant.`);
   const [client] = await query<{ metadata: { redirect_uris?: string[] } | string }>("SELECT metadata FROM app_mcp_clients WHERE client_id = $1", [request.clientId]);
-  if (!client) throw new Error("This assistant isn't registered with WhiteFlow. Start the connection again from your assistant.");
+  if (!client) throw new GrantRefusal("This assistant isn't registered with WhiteFlow. Start the connection again from your assistant.");
   const metadata = typeof client.metadata === "string" ? (JSON.parse(client.metadata) as { redirect_uris?: string[] }) : client.metadata;
-  if (!metadata.redirect_uris?.some((registered) => redirectMatches(request.redirectUri, registered))) throw new Error("This request's redirect address isn't one the assistant registered. Start again from your assistant.");
+  if (!metadata.redirect_uris?.some((registered) => redirectMatches(request.redirectUri, registered))) throw new GrantRefusal("This request's redirect address isn't one the assistant registered. Start again from your assistant.");
 
   const grantId = `grant_${randomBytes(12).toString("base64url")}`;
   const code = randomBytes(32).toString("base64url");
