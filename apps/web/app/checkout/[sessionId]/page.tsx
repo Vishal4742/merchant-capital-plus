@@ -9,6 +9,7 @@ import { Checkout } from "@/components/Checkout";
 import { HostedNotice } from "@/components/gateway/Hosted";
 import { StaticScene } from "@/components/StaticScene";
 import { payConfig } from "@/lib/config";
+import { merchantVerified } from "@/lib/server/http";
 import { amountDue } from "@/lib/server/vouchers";
 import { getSession, type Session } from "@/lib/sessions";
 import { gatewayCheckout, pageState, settlePending } from "@/lib/settle";
@@ -90,6 +91,7 @@ async function CheckoutLoader({ params }: Pick<PageProps<"/checkout/[sessionId]"
     <Checkout
       sessionId={session.id}
       merchantName={session.merchantName}
+      verified={merchantVerified(session.merchant)}
       reference={session.reference}
       // a priced checkout's items are in the shop's currency; the total is the USDT to pay
       items={session.items.map((item) => ({ name: item.name, qty: item.qty, price: session.priced ? `${formatUsdt(item.price)} ${session.priced.currency}` : formatUsdt(item.price) }))}

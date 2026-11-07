@@ -13,6 +13,8 @@ import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "rea
 import type { Address, Hex } from "viem";
 import { Confirming } from "@/components/Confirming";
 import { HoldButton } from "@/components/HoldButton";
+import { MerchantName } from "@/components/MerchantName";
+import { WhiteFlowWordmark } from "@/components/WhiteFlowLogo";
 import { GuestShort, WalletOption, endWalletSession, loadSigner, useGuestFunds, walletPayer, type WalletVia } from "@/components/WalletPay";
 import { FAILED, errorTone, outcome, type PayAnswer } from "@/lib/outcome";
 import { EXPLORER } from "@/lib/usdt";
@@ -33,6 +35,8 @@ const mmss = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.floor(ms 
 interface CheckoutProps {
   sessionId: string;
   merchantName: string;
+  /** our server checked this shop: a verified tick after its name (batch 056) */
+  verified: boolean;
   reference: string;
   items: { name: string; qty: number; price: string }[];
   /** What the customer pays now (after any discount code), or paid. */
@@ -76,7 +80,7 @@ const isDue = (data: { amountDue?: unknown; discount?: unknown; amountUnits?: un
 const grouped = (plain: string) => plain.replace(/^\d+/, (whole) => Number(whole).toLocaleString("en-US"));
 const dueFrom = (data: DueReply): Due => ({ amountText: grouped(data.amountDue), discountText: /^0+(\.0+)?$/.test(data.discount) ? null : grouped(data.discount), amountUnits: data.amountUnits });
 
-export function Checkout({ sessionId, merchantName, reference, items, amountText, code, fxLine, returnUrl, sale, expiresAt, paid, pending }: CheckoutProps) {
+export function Checkout({ sessionId, merchantName, verified, reference, items, amountText, code, fxLine, returnUrl, sale, expiresAt, paid, pending }: CheckoutProps) {
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [due, setDue] = useState<Due>({ amountText, discountText: code?.discountText ?? null, amountUnits: sale?.amount ?? "" });
   const [codeError, setCodeError] = useState<string | null>(null);
@@ -175,7 +179,11 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
     </a>
   );
   return (
-    <section className="relative w-full max-w-[420px] rounded-[28px] bg-surface p-8 text-ink shadow-float" aria-live="polite">
+    <section className="relative w-full max-w-[420px] rounded-[24px] bg-surface p-7 text-ink shadow-float border border-hairline" aria-live="polite">
+      <div className="flex items-center justify-between border-b border-hairline pb-3 mb-4">
+        <WhiteFlowWordmark className="text-xs" />
+        <span className="eyebrow text-xs text-ink-muted">Whitechain Sepolia</span>
+      </div>
       {paidId ? (
         <div className="grid gap-4">
           <h1 className="sr-only">Paid to {merchantName}</h1>
@@ -233,7 +241,9 @@ export function Checkout({ sessionId, merchantName, reference, items, amountText
                 </span>
               ) : null}
             </div>
-            <h1 className="title">{merchantName}</h1>
+            <h1 className="title">
+              <MerchantName name={merchantName} verified={verified} />
+            </h1>
           </div>
           {items.length > 0 && (
             <ul className="grid gap-2 border-y border-hairline py-4">

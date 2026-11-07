@@ -125,9 +125,13 @@ test("public render info has no merchant-private fields; unknown slug is a 404",
   const { data } = await newLink({ amount: "25.00", reference_id: "secret-ref" });
   const res = await publicLink(req("GET", `/api/v1/public/links/${data.slug}`), params({ slug: data.slug }));
   assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { slug: data.slug, merchant_name: "Bandra Beans", amount: "25", currency: "USDT", description: "Cold brew", status: "active", paid_at: null });
+  assert.deepEqual(await res.json(), { slug: data.slug, merchant_name: "Bandra Beans", merchant_verified: true, amount: "25", currency: "USDT", description: "Cold brew", status: "active", paid_at: null });
   assert.equal((await publicLink(req("GET", "/api/v1/public/links/nope"), params({ slug: "nope" }))).status, 404);
   assert.equal((await pay("nope")).status, 404);
+  // batch 056: only the configured shop is verified (FR-BIZ-5); another merchant's link carries no tick
+  const other = await newLink({ amount: "5.00" }, OTHER_MERCHANT);
+  const theirs = await (await publicLink(req("GET", `/api/v1/public/links/${other.data.slug}`), params({ slug: other.data.slug }))).json();
+  assert.equal(theirs.merchant_verified, false);
 });
 
 test("checkout on a fixed link: 303 to the session, the stored price wins over the request", async () => {

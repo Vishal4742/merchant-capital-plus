@@ -7,7 +7,10 @@
   },
   "scripts": {
     "dev": "node --env-file=.env dev.ts",
+    "db:migrate": "node --env-file=../../.env db/migrate.ts",
+    "payer:unblock": "node --env-file=../../.env db/unblock-payer.ts",
     "test": "node --test",
+    "test:pg": "node test-pg/run.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

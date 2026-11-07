@@ -6,25 +6,29 @@ import { Button, buttonClasses } from "@/components/Button";
 import { HeroScene } from "./HeroScene";
 import { HeroSheet } from "./HeroSheet";
 import { IstClock } from "./Live";
+import { WhiteFlowMark } from "@/components/WhiteFlowMark";
 
 export function Nav() {
   return (
     <header className="lp-nav">
       <div className="wrap">
-        <span className="lp-word">Merchant Capital+</span>
+        <span className="lp-word inline-flex items-center gap-2">
+          <WhiteFlowMark />
+          WhiteFlow
+        </span>
         <nav className="links" aria-label="Product">
-          <a href="#accept">Payments</a>
+          <a href="#accept">Invoices &amp; Payments</a>
           <a href="#settle">Settlement</a>
           <a href="#grow">Vouchers &amp; FX</a>
           <a href="#dev">Developers</a>
-          <a href="#capital">Capital</a>
+          <a href="#capital">Advances</a>
         </nav>
         <div className="right">
           <a className={buttonClasses("glass", "h-10! px-4! text-sm")} href="/merchant">
             Sign in
           </a>
           <a className={buttonClasses("primary", "h-10! px-4! text-sm max-sm:hidden")} href="/merchant">
-            Start accepting USDT
+            Open workspace
           </a>
         </div>
       </div>
@@ -48,23 +52,22 @@ export function Hero() {
         <IstClock /> IST
       </div>
       <div className="lp-corner br mono" aria-hidden="true">
-        Fig. 01 — Night shift, settled
+        Fig. 01 — Atomic settlement
       </div>
       <div className="wrap">
         <div>
-          <span className="mono kicker">A payment gateway in USDT</span>
+          <span className="mono kicker">Business Payments Workspace</span>
           <h1>
-            Get paid in <span className="em">dollars,</span>
+            One invoice.
             <br />
-            from anywhere.
+            <span className="em">Clear settlement.</span>
           </h1>
           <p className="lede">
-            Payment links, pages, a checkout and a one-line button. Customers pay in USDT with no gas and no app; the money is in your wallet in
-            the same second.
+            Request business payments, accept supported crypto, and settle exact USDT directly to your Whitechain wallet. Customers pay with zero gas friction on Whitechain testnet.
           </p>
           <div className="cta">
             <a className={buttonClasses("primary")} href="/merchant">
-              Start accepting USDT
+              Open workspace
             </a>
             {/* a plain form POST answered with 303: a full load, so the checkout runs under its own CSP */}
             <form method="post" action="/api/demo-checkout">

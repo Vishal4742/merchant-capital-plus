@@ -172,7 +172,7 @@ export function invoicePriceLine(price: bigint, face: bigint, days: number, aprB
 }
 
 export type MerchantAdvance = Awaited<ReturnType<typeof merchantAdvance>>;
-export type MerchantOffer = Pick<OfferJson, "id" | "kind" | "face" | "price" | "units_left" | "status" | "holdback_pct" | "offer_deadline" | "maturity" | "arkiv">;
+export type MerchantOffer = Pick<OfferJson, "id" | "kind" | "face" | "price" | "units_left" | "status" | "holdback_pct" | "offer_deadline" | "maturity" | "arkiv" | "debtor_ack">;
 /** An offer as the page hands it to the browser: dates formatted once on the server, so hydration sees one string. */
 export type OfferRow = MerchantOffer & { deadlineText: string };
 

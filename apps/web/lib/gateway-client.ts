@@ -51,6 +51,8 @@ export interface Page extends PageFields {
 export interface PublicLink {
   slug: string;
   merchant_name: string;
+  /** the pay pages show a verified tick after the name (batch 056) */
+  merchant_verified: boolean;
   amount: string | null;
   currency: Currency;
   description: string;
@@ -61,6 +63,7 @@ export interface PublicLink {
 export interface PublicPage extends PageFields {
   slug: string;
   merchant_name: string;
+  merchant_verified: boolean;
 }
 
 export interface LinkBody {
@@ -157,7 +160,7 @@ export const pageOf = (v: unknown): Page => {
 };
 export const publicPageOf = (v: unknown): PublicPage => {
   const r = record(v);
-  return { slug: slug(r.slug), ...pageFields(r), merchant_name: text(r.merchant_name) };
+  return { slug: slug(r.slug), ...pageFields(r), merchant_name: text(r.merchant_name), merchant_verified: r.merchant_verified === true };
 };
 
 /** One sentence for a failed answer: the gateway's own (its errors are plain sentences by contract), else by status. */

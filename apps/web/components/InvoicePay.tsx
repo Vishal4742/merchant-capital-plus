@@ -9,15 +9,21 @@ import { useRef, useState } from "react";
 import type { Hex } from "viem";
 import { Confirming } from "@/components/Confirming";
 import { HoldButton } from "@/components/HoldButton";
+import { InvoiceAck } from "@/components/InvoiceAck";
+import { MerchantName } from "@/components/MerchantName";
+import { WhiteFlowWordmark } from "@/components/WhiteFlowLogo";
 import { GuestShort, WalletOption, endWalletSession, loadSigner, useGuestFunds, walletPayer, type WalletVia } from "@/components/WalletPay";
 import { FAILED, errorTone, outcome, type PayAnswer } from "@/lib/outcome";
-import type { InvoicePayTerms } from "@/lib/sign-sale";
+import type { AckEntry } from "@/lib/server/invoice-acks";
+import type { AckTermsText, InvoicePayTerms } from "@/lib/sign-sale";
 import { EXPLORER } from "@/lib/usdt";
 
 export interface InvoicePayProps {
   invoiceId: string;
   /** The shop's name (/pay serves only the shop's own invoices). */
   merchantName: string;
+  /** our server checked this shop: a verified tick after its name (batch 056) */
+  verified: boolean;
   dueText: string;
   /** The whole invoice, what was paid before (null if nothing), what is still owed, the fee, and owed + fee. */
   invoiceText: string;
@@ -30,6 +36,12 @@ export interface InvoicePayProps {
   terms: InvoicePayTerms | null;
   /** The payment id of a paid invoice, when our server knows it. */
   receiptId: string | null;
+  /** What the debtor acknowledges (batch 047, FR-INV-8): the invoice as our server read it on chain. */
+  ackTerms: AckTermsText;
+  /** Every key's acknowledgement of this invoice, oldest first (short address and time). */
+  acks: AckEntry[];
+  /** The customer wallet the invoice names on chain (short), or null. */
+  ackCustomer: string | null;
 }
 
 type Paid = { receiptId: string | null; txHash: Hex | null };
@@ -58,7 +70,7 @@ function Row({ term, children }: { term: string; children: React.ReactNode }) {
   );
 }
 
-export function InvoicePay({ invoiceId, merchantName, dueText, invoiceText, paidSoFarText, owedText, feeText, totalText, state, terms, receiptId }: InvoicePayProps) {
+export function InvoicePay({ invoiceId, merchantName, verified, dueText, invoiceText, paidSoFarText, owedText, feeText, totalText, state, terms, receiptId, ackTerms, acks, ackCustomer }: InvoicePayProps) {
   const [paid, setPaid] = useState<Paid | null>(state === "paid" ? { receiptId, txHash: null } : null);
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>(state === "pending" ? "confirming" : state === "cancelled" ? "cancelled" : "ready");
@@ -109,17 +121,25 @@ export function InvoicePay({ invoiceId, merchantName, dueText, invoiceText, paid
   const pill = PILL[paid ? "paid" : phase === "ready" && paidSoFarText ? "partPaid" : phase];
   const payable = !paid && phase === "ready";
   return (
-    <section className="relative grid w-full max-w-[420px] gap-6 rounded-[28px] bg-surface p-8 text-ink shadow-float" aria-live="polite">
+    <section className="relative grid w-full max-w-[420px] gap-5 rounded-[24px] bg-surface p-7 text-ink shadow-float border border-hairline" aria-live="polite">
+      <div className="flex items-center justify-between border-b border-hairline pb-3">
+        <WhiteFlowWordmark className="text-xs" />
+        <span className="eyebrow text-xs text-ink-muted">Whitechain Sepolia</span>
+      </div>
       <div className="flex items-start justify-between gap-4">
         <div className="grid gap-1">
-          <span className="label text-ink-muted">Invoice {invoiceId}</span>
-          <h1 className="title first-letter:uppercase">{merchantName}</h1>
+          <span className="label text-ink-muted">Invoice #{invoiceId}</span>
+          <h1 className="title first-letter:uppercase">
+            <MerchantName name={merchantName} verified={verified} />
+          </h1>
         </div>
         <span className={`shrink-0 rounded-pill border border-current px-3 py-0.5 text-xs font-medium tracking-wide ${pill.tone}`}>{pill.label}</span>
       </div>
       <dl className="grid gap-2 border-y border-hairline py-4 text-sm">
         <Row term="Due">{dueText}</Row>
         <Row term="Invoice">{invoiceText} USDT</Row>
+        <Row term="Network">Whitechain Sepolia (Testnet)</Row>
+        <Row term="Network fee">0.00 WBT (Sponsored)</Row>
         {!paid && paidSoFarText && <Row term="Already paid">{paidSoFarText} USDT</Row>}
         {payable && <Row term="Payment fee">{feeText} USDT</Row>}
         {paid?.receiptId && (
@@ -184,6 +204,8 @@ export function InvoicePay({ invoiceId, merchantName, dueText, invoiceText, paid
           {error}
         </p>
       )}
+      {/* the debtor confirms it owes this invoice, for investors (batch 047): a message, no money moves */}
+      {payable && terms && <InvoiceAck terms={ackTerms} acks={acks} customer={ackCustomer} guest={guest.address} />}
     </section>
   );
 }

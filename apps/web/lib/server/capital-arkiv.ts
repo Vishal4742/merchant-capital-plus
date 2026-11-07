@@ -6,8 +6,10 @@ import { addr, defineSchema, str, u64 } from "@arkiv-network/sdk/schema";
 import type { Address, Hex } from "viem";
 import { whitechainSepolia } from "viem/chains";
 import { arkivClients, redactArkivError } from "../arkiv.ts";
+import { merchantConfig, payConfig } from "../config.ts";
 import { CAPITAL_MARKET, chainOffers, offerJson, offerStatus, readOffer, type ChainOffer, type Deps, type OfferJson } from "./capital.ts";
 import { HttpError } from "./http.ts";
+import { ackView, acksFor, type InvoiceAck } from "./invoice-acks.ts";
 
 export const OFFER_TYPE = "mcplus.offer.v1";
 // The Arkiv attribute "chainId" (ARCHITECTURE §5) is quoted below: it names the offer's chain, always
@@ -149,15 +151,38 @@ function rowFor(o: ChainOffer, rows: OfferRow[]): OfferRow | undefined {
 
 const sameTerms = (a: Partial<OfferTerms>, b: OfferTerms) => (Object.keys(COLUMN_KINDS) as (keyof OfferTerms)[]).every((k) => a[k] === b[k]);
 
-/** GET /offers: the chain's offers in the book (AT-9 filtering), each with its Arkiv entity and the Buy gate. */
+/** Invoice offers that can have acks: our shop's (the pay page serves only its invoices, security 047 L1). */
+const ackable = (o: ChainOffer, shop: Address | undefined) => o.kind === "invoice" && shop !== undefined && o.merchant.toLowerCase() === shop.toLowerCase();
+
+/** The acks for these invoice offers (FR-INV-8), from our database. Unreadable: none, so the book still shows, every
+ *  invoice as "Not acknowledged yet" (the safe side for an investor), and the log says why. */
+async function debtorAcks(offers: ChainOffer[], shop: Address | undefined): Promise<Map<string, InvoiceAck[]>> {
+  const merchantPay = payConfig()?.merchantPay;
+  const ids = offers.filter((o) => ackable(o, shop)).map((o) => o.invoiceId);
+  if (!merchantPay || ids.length === 0) return new Map();
+  try {
+    return await acksFor(merchantPay, ids);
+  } catch (err) {
+    console.error(`capital: debtor acks unreadable: ${err instanceof Error ? err.name : "error"}`); // never the message: it can hold SQL
+    return new Map();
+  }
+}
+
+/** GET /offers: the chain's offers in the book (AT-9 filtering), each with its Arkiv entity, the Buy gate and, for an
+ *  invoice, its acks: only those signed for this offer's merchant, face and maturity (= the invoice's amount and due
+ *  date, CapitalMarket.listInvoice), so an ack never attaches to terms it didn't sign (security 047 L1). Only the named
+ *  customer wallet's ack reaches the book: anyone can ack an invoice that names no customer (ids are sequential), so an
+ *  unchecked one never shows to investors (security round 2, M). The merchant's invoice list still shows those. */
 export async function offerBook(deps: CapitalDeps = {}, now = Math.floor(Date.now() / 1000)): Promise<OfferJson[]> {
   const [offers, rows] = await Promise.all([chainOffers(deps), offerRows(deps)]);
-  return offers
-    .filter((o) => offerStatus(o, now) !== null)
-    .map((o) => {
-      const row = rowFor(o, rows);
-      return offerJson(o, now, row && { entityKey: row.entityKey, matches: matches(o, row.terms), terms: row.terms as Record<string, string> });
-    });
+  const listed = offers.filter((o) => offerStatus(o, now) !== null);
+  const shop = merchantConfig()?.merchant;
+  const acks = await debtorAcks(listed, shop);
+  return listed.map((o) => {
+    const row = rowFor(o, rows);
+    const ack = ackable(o, shop) ? ackView(acks.get(o.invoiceId.toString()) ?? [], { merchant: o.merchant, amount: o.face, dueDate: BigInt(o.maturity) }) : null;
+    return offerJson(o, now, row && { entityKey: row.entityKey, matches: matches(o, row.terms), terms: row.terms as Record<string, string> }, ack?.verified ? ack : undefined);
+  });
 }
 
 /** Writes the offer's current chain state to Arkiv: patches our entity if anything changed (F5), or, for publish only,

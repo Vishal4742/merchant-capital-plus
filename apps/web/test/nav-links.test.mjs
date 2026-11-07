@@ -5,7 +5,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const nav = readFileSync(new URL("../components/dashboard/Nav.tsx", import.meta.url), "utf8");
-const items = [...nav.matchAll(/\{ key: "(\w+)", label: "[^"]+"(, href: "([^"]+)")? \}/g)].map((m) => ({ key: m[1], href: m[3] }));
+// batch 049: the WhiteFlow destinations also carry an icon after the href
+const items = [...nav.matchAll(/\{ key: "(\w+)", label: "[^"]+"(, href: "([^"]+)")?(, icon: "\w+")? \}/g)].map((m) => ({ key: m[1], href: m[3] }));
 
 test("nav: every menu item has an href", () => {
   assert.ok(items.length >= 12, `found ${items.length} items`);

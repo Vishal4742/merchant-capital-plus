@@ -4,7 +4,7 @@ import { getAddress, type Address } from "viem";
 import type { LineItem } from "../sessions.ts";
 import { paidCounts } from "./checkouts.ts";
 import { query } from "./db.ts";
-import { HttpError, currencyField, httpsUrl, merchantName, newId, newSlug, textField, type Currency } from "./http.ts";
+import { HttpError, currencyField, httpsUrl, merchantName, merchantVerified, newId, newSlug, textField, type Currency } from "./http.ts";
 import { MAX_LIST, decimal, given, iso, limitCheckouts, openCheckout, payablePrices, priceField, readCheckoutBody } from "./links.ts";
 import { dispatchSoon } from "./webhooks.ts";
 
@@ -68,7 +68,7 @@ const render = (page: Page) => ({
 export const pageJson = (page: Page) => ({ id: page.id, slug: page.slug, url: `/p/${page.slug}`, ...render(page), created_at: iso(page.createdAt), payments: page.payments });
 
 /** What a payer sees: render info only, nothing merchant-private. */
-export const publicPageJson = (page: Page) => ({ slug: page.slug, ...render(page), merchant_name: merchantName(getAddress(page.merchant)) });
+export const publicPageJson = (page: Page) => ({ slug: page.slug, ...render(page), merchant_name: merchantName(getAddress(page.merchant)), merchant_verified: merchantVerified(page.merchant) });
 
 function itemsField(value: unknown): PageItem[] {
   if (!Array.isArray(value) || value.length < 1 || value.length > MAX_ITEMS) throw new HttpError(400, `items must be a list of 1 to ${MAX_ITEMS} {name, price}.`);
@@ -145,7 +145,7 @@ function openAmount(page: Page, value: unknown): bigint {
 
 /** A payer opens a checkout from a page: `{items: [{name, qty}]}` for an items page, `{amount}` for an open one. */
 export async function payPage(request: Request, slug: string): Promise<Response> {
-  limitCheckouts(request);
+  await limitCheckouts(request);
   const page = await pageBySlug(slug);
   if (!page) throw new HttpError(404, "No such payment page.");
   const body = await readCheckoutBody(request);

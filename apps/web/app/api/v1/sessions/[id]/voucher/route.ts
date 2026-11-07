@@ -5,7 +5,7 @@
 // claims from the hold. No code changes while a payment is in flight, pending or done (batch-009 security F5).
 import { amountDue, applyVoucher, removeVoucher } from "../../../../../../lib/server/vouchers.ts";
 import type { Checkout } from "../../../../../../lib/server/checkouts.ts";
-import { HttpError, clientIp, handle, ok, rateLimit, readJson } from "../../../../../../lib/server/http.ts";
+import { HttpError, clientIp, handle, ok, sharedRateLimit, readJson } from "../../../../../../lib/server/http.ts";
 import { gatewayCheckout } from "../../../../../../lib/settle.ts";
 import { getSession, isInFlight, type Session } from "../../../../../../lib/sessions.ts";
 import { plainUsdt } from "../../../../../../lib/usdt.ts";
@@ -35,7 +35,7 @@ async function checkoutFor(params: Params["params"]): Promise<{ id: string; sess
 
 /** A code may change only on an open checkout: not paid, no payment in flight or pending (F5), not expired (F4). */
 async function assertChangeable(request: Request, { id, session, checkout }: { id: string; session: Session; checkout: Checkout }): Promise<void> {
-  rateLimit(`voucher:${clientIp(request)}:${id}`, CHANGES_PER_MINUTE, 60_000);
+  await sharedRateLimit(`voucher:${clientIp(request)}:${id}`, CHANGES_PER_MINUTE, 60_000, "closed");
   if (session.payment || checkout.paidAt !== null) throw new HttpError(410, PAID);
   if ((await isInFlight(id)) || session.pending) throw new HttpError(409, IN_PROGRESS);
   if (Date.now() > session.expiresAt) throw new HttpError(410, EXPIRED);
