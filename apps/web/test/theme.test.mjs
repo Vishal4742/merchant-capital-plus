@@ -41,8 +41,8 @@ test("the switch is labelled for both directions and saved under the key the scr
   assert.match(toggle, /localStorage\.setItem\(THEME_KEY/);
 });
 
-test("the landing, the dashboard (both frames) and the docs show the switch", () => {
-  for (const path of ["components/landing/Hero.tsx", "components/dashboard/Shell.tsx", "components/gateway/Frame.tsx", "app/docs/page.tsx"]) {
+test("the landing, the dashboard (both frames), the docs and the investor pages show the switch", () => {
+  for (const path of ["components/landing/Hero.tsx", "components/dashboard/Shell.tsx", "components/gateway/Frame.tsx", "app/docs/page.tsx", "components/capital/investor/InvestorApp.tsx"]) {
     assert.match(src(path), /<ThemeToggle\b/, path);
   }
 });

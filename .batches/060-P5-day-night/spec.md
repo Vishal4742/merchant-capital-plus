@@ -6,7 +6,7 @@
 - Tokens already define both themes (`[data-theme="light"|"dark"]`, else the device's prefers-color-scheme). The night scene keeps its night colours in both (the approved demo's rule).
 
 ## Acceptance criteria
-- [ ] The toggle sits in the landing nav, the dashboard sidebar (signed-in screens), PlainPage (signed-out dashboard and capital pages) and the docs top bar.
+- [ ] The toggle sits in the landing nav, the dashboard sidebar (signed-in screens), PlainPage (signed-out dashboard), the investor top bar (/capital, /capital/holdings) and the docs top bar.
 - [ ] Clicking it flips <html data-theme>, the page restyles at once, and the choice survives a reload and other pages (localStorage `mcplus.theme`).
 - [ ] With nothing saved, the site follows the device; a bad or unreadable stored value is ignored, and a throwing localStorage (private mode) breaks nothing.
 - [ ] Pay pages (/l, /p, /checkout, /pay) show no toggle but honour the saved choice.
@@ -15,7 +15,7 @@
 
 ## Files to touch
 - apps/web/lib/theme.ts (new: key + pre-paint script), components/ThemeToggle.tsx (new), app/layout.tsx
-- apps/web/components/landing/Hero.tsx, components/dashboard/Shell.tsx, components/gateway/Frame.tsx, app/docs/page.tsx
+- apps/web/components/landing/Hero.tsx, components/dashboard/Shell.tsx, components/gateway/Frame.tsx, app/docs/page.tsx, components/capital/investor/InvestorApp.tsx
 - apps/web/test/theme.test.mjs (new)
 
 ## Ponytail ladder

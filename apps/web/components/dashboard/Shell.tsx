@@ -3,7 +3,9 @@
 import type { ReactNode } from "react";
 import { Nav, type NavKey } from "@/components/dashboard/Nav";
 import { PrivateReads } from "@/components/dashboard/PrivateReads";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { WhiteFlowWordmark } from "@/components/WhiteFlowLogo";
+import { plainToggle } from "@/components/gateway/Frame";
 
 export function Shell({
   active,
@@ -21,15 +23,15 @@ export function Shell({
       {/* Sidebar column with restrained border and clean surface */}
       <aside className="border-b border-hairline bg-surface md:border-r md:border-b-0 shadow-[1px_0_0_0_var(--hairline)]">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-3 px-4 py-3 md:sticky md:top-0 md:h-dvh md:flex-col md:flex-nowrap md:items-stretch md:gap-2 md:overflow-y-auto md:px-4 md:py-5">
-          {/* Brand Wordmark linking to Home */}
-          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
-          <a
-            href="/"
-            className="order-1 inline-flex min-h-10 items-center whitespace-nowrap rounded-lg px-2 py-1 transition-colors hover:bg-surface-sunk md:mb-2"
-            aria-label="WhiteFlow home"
-          >
-            <WhiteFlowWordmark />
-          </a>
+          {/* Brand Wordmark linking to Home, and the day/night switch (batch 060) */}
+          <div className="order-1 flex items-center justify-between gap-2 md:mb-2">
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+            <a href="/" className="inline-flex min-h-10 items-center whitespace-nowrap rounded-lg px-2 py-1 transition-colors hover:bg-surface-sunk" aria-label="WhiteFlow home">
+              <WhiteFlowWordmark />
+            </a>
+            {/* from md up it sits by the wordmark; on a phone it ends the menu row, so the address and Sign out keep the top row */}
+            <ThemeToggle className={`${plainToggle} max-md:hidden`} />
+          </div>
 
           {/* Account profile & network badge (at top on mobile, at bottom on desktop) */}
           {account && (
@@ -53,6 +55,7 @@ export function Shell({
             <div className="min-w-0 grow md:order-3 md:grow-0">
               <Nav active={active} />
             </div>
+            <ThemeToggle className={`${plainToggle} md:hidden`} />
           </div>
         </div>
       </aside>
