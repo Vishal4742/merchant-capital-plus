@@ -59,8 +59,8 @@ const call = (body, id = ID, ip = "203.0.113.7") =>
   acknowledge(req("POST", `/api/v1/invoices/${id}/acknowledge`, { body, headers: { "x-forwarded-for": ip } }), params({ id }));
 const rows = () => query("SELECT invoice_id, debtor, merchant, amount::text AS amount, due_date::text AS due_date, customer_bound, signature, signed_at::text AS signed_at FROM app_gw_invoice_acks ORDER BY signed_at");
 
-test("the typed data: Merchant Capital+ v1 on chain 1874, CapitalMarket from packages/shared, MerchantPay and the invoice", () => {
-  assert.deepEqual(ackDomain, { name: "Merchant Capital+", version: "1", chainId: 1874, verifyingContract: ackDomain.verifyingContract });
+test("the typed data: WhiteFlow v1 on chain 1874, CapitalMarket from packages/shared, MerchantPay and the invoice", () => {
+  assert.deepEqual(ackDomain, { name: "WhiteFlow", version: "1", chainId: 1874, verifyingContract: ackDomain.verifyingContract });
   assert.equal(ackDomain.verifyingContract.toLowerCase(), shared.addresses.capitalMarket.toLowerCase());
   assert.deepEqual(ackTypes.InvoiceAck.map((f) => `${f.type} ${f.name}`), ["address merchantPay", "uint256 invoiceId", "address merchant", "uint256 amount", "uint64 dueDate", "address debtor"]);
   const t = ackTypedData(terms(), debtor.address);
