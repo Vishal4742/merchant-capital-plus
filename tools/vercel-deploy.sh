@@ -27,7 +27,9 @@ fi
 rm -rf .vercel
 vercel pull --yes --environment=production
 vercel build --prod
-url=$(vercel deploy --prebuilt --prod)
+# One .tgz upload, not one per file: the Hobby plan caps file uploads at 5000 a day ("api-upload-free"),
+# and a prebuilt web deploy alone is thousands of files (07 Nov 08:08 IST: web refused, relayer and shop fine).
+url=$(vercel deploy --prebuilt --prod --archive=tgz)
 echo "$name: deployed $url"
 
 # `vercel inspect` resolves a domain to the deployment it serves; its "id" line is that deployment's id.
