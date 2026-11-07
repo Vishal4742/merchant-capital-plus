@@ -6,12 +6,13 @@ import { HttpError, handle, readJson } from "./http.ts";
 export const DB_DOWN = "WhiteFlow can't reach its database right now. Nothing changed. Try again in a minute.";
 
 /** Connection-level failures (not SQL errors): unset DATABASE_URL, the Neon driver's fetch failure, Postgres classes
- *  08 (connection), 53 (resources), 57P0x (shutdown). */
+ *  08 (connection), 53 (resources), 57P0x (shutdown). Not 08P01 (protocol violation): that is our bug (e.g. a wrong
+ *  parameter count), and calling it an outage hid one (round 3, review C-L4); it stays a 500. */
 export function isDbDown(err: unknown): boolean {
   if (err instanceof DbUnavailable) return true;
   const e = (typeof err === "object" && err !== null ? err : {}) as { name?: unknown; code?: unknown; sourceError?: unknown };
   if (e.name === "NeonDbError" && e.sourceError !== undefined) return true;
-  return typeof e.code === "string" && /^(08...|53...|57P0[123])$/.test(e.code);
+  return typeof e.code === "string" && e.code !== "08P01" && /^(08...|53...|57P0[123])$/.test(e.code);
 }
 
 export function v2(run: () => Promise<Response>): Promise<Response> {

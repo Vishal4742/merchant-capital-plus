@@ -58,16 +58,21 @@ const policyFrom = (r: Record<string, unknown>): SettlementPolicy => ({
 const POLICY_COLUMNS = "version, chain_id, token_address, recipient, policy_hash, approved_by, approval_wallet, v1_obligations, created_at::text";
 
 /** The workspace's current policy, or null before activation (FR-BIZ-5: collection starts only with one). */
+/** Owners see the approving wallet in full; other roles a short form (round 3, review S-L2: an approval wallet is an
+ *  Owner's security credential, not team information). */
+const shownTo = (ctx: AuthContext) => (p: SettlementPolicy): SettlementPolicy =>
+  ctx.role === "owner" ? p : { ...p, approvalWallet: `${p.approvalWallet.slice(0, 6)}...${p.approvalWallet.slice(-4)}` };
+
 export async function currentPolicy(ctx: AuthContext): Promise<SettlementPolicy | null> {
   requireScope(ctx, "account:read");
   const [row] = await query(`SELECT ${POLICY_COLUMNS} FROM wf_settlement_policies WHERE business_id = $1 ORDER BY version DESC LIMIT 1`, [ctx.businessId]);
-  return row ? toPolicy(row) : null;
+  return row ? shownTo(ctx)(toPolicy(row)) : null;
 }
 
 /** Every version, newest first (immutable history). */
 export async function policyHistory(ctx: AuthContext): Promise<SettlementPolicy[]> {
   requireScope(ctx, "account:read");
-  return (await query(`SELECT ${POLICY_COLUMNS} FROM wf_settlement_policies WHERE business_id = $1 ORDER BY version DESC`, [ctx.businessId])).map(toPolicy);
+  return (await query(`SELECT ${POLICY_COLUMNS} FROM wf_settlement_policies WHERE business_id = $1 ORDER BY version DESC`, [ctx.businessId])).map(toPolicy).map(shownTo(ctx));
 }
 
 async function currentVersion(businessId: string): Promise<number> {
@@ -134,7 +139,7 @@ const NOT_ENROLLED =
  *  for the workspace's first activation (no policy, none enrolled: that activation pins it). SQL_ACTIVATE re-checks. */
 async function approvalWalletAllowed(businessId: string, principalId: string, wallet: string): Promise<boolean> {
   const [r] = await query<{ ok: boolean }>(
-    `SELECT EXISTS (SELECT 1 FROM wf_approval_wallets WHERE business_id = $1 AND principal_id = $2 AND wallet = $3)
+    `SELECT EXISTS (SELECT 1 FROM wf_approval_wallets WHERE business_id = $1 AND principal_id = $2 AND wallet = $3 AND revoked_at IS NULL)
        OR (NOT EXISTS (SELECT 1 FROM wf_approval_wallets WHERE business_id = $1)
            AND NOT EXISTS (SELECT 1 FROM wf_settlement_policies WHERE business_id = $1)) AS ok`,
     [businessId, principalId, wallet],
@@ -205,7 +210,7 @@ const SQL_ACTIVATE = `WITH actor AS (
                   AND consumed_at IS NULL AND expires_at > $6 AND payload->>'proofNonce' = $4 AND address = $11)
       AND EXISTS (SELECT 1 FROM wf_principal_wallets WHERE principal_id = $2 AND address = $11)
       -- H1: the approver is an enrolled approval wallet of this Owner, or this is the first activation (none enrolled)
-      AND (EXISTS (SELECT 1 FROM wf_approval_wallets WHERE business_id = $1 AND principal_id = $2 AND wallet = $11)
+      AND (EXISTS (SELECT 1 FROM wf_approval_wallets WHERE business_id = $1 AND principal_id = $2 AND wallet = $11 AND revoked_at IS NULL)
            OR ((SELECT v FROM cur) = 0 AND NOT EXISTS (SELECT 1 FROM wf_approval_wallets WHERE business_id = $1)))
   ), used AS (
     UPDATE wf_challenges SET consumed_at = $6 WHERE nonce IN ($4, $5) AND consumed_at IS NULL AND EXISTS (SELECT 1 FROM ok) RETURNING nonce
@@ -218,6 +223,12 @@ const SQL_ACTIVATE = `WITH actor AS (
     -- H1: the first activation pins its approval wallet (later ones need an endorsement: approval-wallets.ts)
     INSERT INTO wf_approval_wallets (business_id, wallet, principal_id, enrolled_at, endorsed_by)
     SELECT $1, $11, $2, $6, NULL FROM pol WHERE (SELECT v FROM cur) = 0 ON CONFLICT DO NOTHING
+    RETURNING wallet
+  ), pinn AS (
+    -- round 3 (review S-M1): the pin is announced to every Owner, the actor included
+    INSERT INTO wf_notifications (id, business_id, principal_id, kind, detail, created_at)
+    SELECT $13 || '_pin_' || m.principal_id, $1, m.principal_id, 'approval_wallet.pinned', jsonb_build_object('wallet', $11::text), $6
+    FROM wf_memberships m WHERE m.business_id = $1 AND m.role = 'owner' AND EXISTS (SELECT 1 FROM pin)
   ), n AS (
     INSERT INTO wf_notifications (id, business_id, principal_id, kind, detail, created_at)
     SELECT $13 || '_' || m.principal_id, $1, m.principal_id, 'policy.activated', jsonb_build_object('version', $3::int + 1, 'policyHash', $10::text), $6
