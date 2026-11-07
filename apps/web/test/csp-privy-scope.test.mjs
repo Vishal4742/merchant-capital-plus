@@ -9,11 +9,13 @@ const { default: config } = await import("../next.config.ts");
 const rules = await config.headers();
 const csp = (rule) => rule.headers.find((h) => h.key === "Content-Security-Policy")?.value;
 
-test("only /sign-in, /checkout and /pay allow Privy; every other CSP (dashboard, receipts, links, pages, docs) does not", () => {
+// P5 Privy onboarding (commit 507ee09) deliberately also allows Privy on the merchant and capital pages; receipts, links,
+// the developers page (shows secrets once) and docs keep the strict policy.
+test("Privy is allowed only on /sign-in, the pay sheet, /merchant, /merchant/pages and /capital; receipts, links, developers and docs stay strict", () => {
   const withCsp = rules.filter((r) => csp(r));
   const privy = withCsp.filter((r) => /auth\.privy\.io/.test(csp(r))).map((r) => r.source).sort();
-  assert.deepEqual(privy, ["/checkout/:path*", "/pay/:path*", "/sign-in"]);
-  for (const source of ["/merchant/:path*", "/merchant/developers", "/merchant/pages", "/capital/:path*", "/r/:path*", "/l/:path*", "/p/:path*", "/docs"]) {
+  assert.deepEqual(privy, ["/capital/:path*", "/checkout/:path*", "/merchant/:path*", "/merchant/pages", "/pay/:path*", "/sign-in"]);
+  for (const source of ["/merchant/developers", "/r/:path*", "/l/:path*", "/p/:path*", "/docs"]) {
     const rule = withCsp.find((r) => r.source === source);
     assert.ok(rule, `${source} keeps its own CSP`);
     assert.doesNotMatch(csp(rule), /privy/, `${source} must not allow Privy`);
