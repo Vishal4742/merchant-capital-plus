@@ -23,10 +23,15 @@ Neither has dependencies.
 
 ## Server SDK
 
+**Install:**
+- It isn't on npm. Copy [`index.ts`](index.ts) into your server code, for example as `lib/gateway.ts`, and import from that file. It's one file with no dependencies, and it's how our own demo shop uses it (`apps/shop/lib/sdk.ts`).
+- Node 22.18+ runs the `.ts` file directly. With a TypeScript build (Next.js, `tsc`, a bundler), any Node 20+ works.
+- Don't `npm install` it from a tarball: Node refuses to strip types under `node_modules` (`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`).
+
 The server SDK holds your **secret** key. It refuses to run in a browser and refuses a `pk_` key. It talks only to an `https` gateway: plain `http` is allowed only for localhost, and a `baseUrl` with `user:pass`, `?query` or `#hash` is refused.
 
 ```ts
-import { Gateway, WebhookSignatureError, constructEvent, sameAmount, SIGNATURE_HEADER } from "@merchant-capital/sdk";
+import { Gateway, WebhookSignatureError, constructEvent, sameAmount, SIGNATURE_HEADER } from "./lib/gateway.ts"; // your copy of index.ts
 // saveOrderSession, orderBySessionId and markPaidOnce are YOUR shop's own database helpers.
 
 const gateway = new Gateway(process.env.GATEWAY_SECRET_KEY!, { baseUrl: process.env.GATEWAY_URL! });
@@ -45,6 +50,7 @@ export async function POST(request: Request) {
     if (err instanceof WebhookSignatureError) return new Response("bad signature", { status: 400 });
     throw err; // a config mistake (no secret, bad toleranceSec): let it be a 500
   }
+  if (event.data.test) return new Response("ok"); // the dashboard's "Send test event": signed, but no order behind it
   const order = await orderBySessionId(event.data.id); // the id YOU stored in step 1
   if (order && event.type === "payment.succeeded" && event.data.status === "paid" && sameAmount(event.data.amount, order.amount)) {
     await markPaidOnce(order, event.id); // one transaction: mark paid + record event.id; skip if event.id was seen
@@ -68,9 +74,14 @@ const session = await gateway.sessions.retrieve(order.sessionId);
   - The secret is the signing secret shown when you add your endpoint under the dashboard's webhook settings. The gateway's sender uses this package's `signWebhook`.
 - **Errors:** `GatewayError` carries `status` (0 = unreachable) and the server's message, with your key always replaced by `[secret key]`.
   - A 401 adds a hint to check `GATEWAY_SECRET_KEY` and `baseUrl`.
-  - Network errors and 5xx are retried twice (`maxRetries`) with the same `idempotencyKey`; 4xx never are.
+  - Network errors and 5xx are retried twice (`maxRetries`); 4xx never are.
+  - `sessions.create` always sends an idempotency key: yours, or a random one per call. The gateway returns the same session for a repeated key, so a retry never makes a second checkout.
   - Redirects are refused: use the gateway's final URL as `baseUrl`.
-- **Currency:** a price in a currency other than USDT is accepted only when the gateway returns a locked quote (`priced`) in that currency. USD is 1:1 and still comes back as a quote. So a server without FX can't charge 25 EUR as 25 USDT. Send amounts as strings (`"0.30"`, not `0.1 + 0.2`).
+- **Amounts and currency:** `amount` is always USDT, the money that moves.
+  - On a session, `currency` is the currency you priced in, and `priced` holds your original price and the locked rate. So a 20 EUR checkout reads `amount: "22.51", currency: "EUR", priced: { amount: "20.00", … }`.
+  - Webhook data says `currency: "USDT"`, and its `amount` is what was actually paid (after any voucher).
+  - Print `priced.amount priced.currency` to show the price, and `amount USDT` to show the charge.
+- **Currency guard:** a price in a currency other than USDT is accepted only when the gateway returns a locked quote (`priced`) in that currency. USD is 1:1 and still comes back as a quote. So a server without FX can't charge 25 EUR as 25 USDT. Send amounts as strings (`"0.30"`, not `0.1 + 0.2`).
 - `payments.list({ limit, cursor })` reads `GET /api/v1/payments`.
 
 Tests: `npm test` (node:test, Node 26 type stripping; `button.js` runs in `node:vm` on a fake DOM) · `npm run typecheck`.

@@ -46,7 +46,19 @@ test("sessions.create sends a number amount as a string and leaves out fields th
   await gw(fetch, { baseUrl: `${BASE}/` }).sessions.create({ amount: 25 });
   assert.equal(calls[0].url, `${BASE}/api/v1/sessions`);
   assert.deepEqual(JSON.parse(String(calls[0].init.body)), { amount: "25" });
-  assert.equal(new Headers(calls[0].init.headers).get("idempotency-key"), null);
+  // no key given: the SDK makes one, so a retry can't create a second checkout (audit 7 Nov, D LOW)
+  assert.match(new Headers(calls[0].init.headers).get("idempotency-key") ?? "", /^[0-9a-f-]{36}$/);
+});
+
+test("without an idempotencyKey, every retry of one create reuses the same generated key", async () => {
+  const flaky = fakeFetch(ok({ error: "busy" }, 503), ok({ id: "x", url: "u", amount: "1.00", currency: "USDT", expiresAt: "t" }, 201));
+  await gw(flaky.fetch).sessions.create({ amount: "1.00" });
+  const keys = flaky.calls.map((c) => new Headers(c.init.headers).get("idempotency-key"));
+  assert.equal(keys.length, 2);
+  assert.ok(keys[0] && keys[0] === keys[1]);
+  const other = fakeFetch(ok({ id: "y", url: "u", amount: "1.00", currency: "USDT", expiresAt: "t" }, 201));
+  await gw(other.fetch).sessions.create({ amount: "1.00" });
+  assert.notEqual(new Headers(other.calls[0].init.headers).get("idempotency-key"), keys[0]); // a new create, a new key
 });
 
 test("a non-USDT price is refused if the gateway doesn't echo the currency, so 25 EUR is never charged as 25 USDT (FR-GW-11)", async () => {
@@ -76,6 +88,9 @@ test("sameAmount compares money, not formatting (round 2 H2: '1,000.00' from the
   const { sameAmount } = await import("../index.ts");
   for (const [a, b] of [["1,000.00", "1000.00"], ["25", "25.00"], ["27.012345", "27.012345"], ["0.10", "0.1"], [" 25.00", "25.000000"]]) assert.ok(sameAmount(a, b), `${a} = ${b}`);
   for (const [a, b] of [["1000.00", "100.00"], ["25.00", "25.01"], ["0.000001", "0"], ["", ""], ["abc", "abc"], ["1e3", "1000"], ["-1", "-1"], ["1.0000001", "1.0000001"]]) assert.ok(!sameAmount(a, b), `${a} != ${b}`);
+  // commas only as thousands separators (audit 7 Nov LOW-4): a decimal comma is refused, never read as thousands
+  for (const [a, b] of [["10,00", "1000"], ["1,0,0,0", "1000"], ["1,00", "100"], ["1.000,00", "1"], ["1,000,0", "10000"], [",100", "100"]]) assert.ok(!sameAmount(a, b), `${a} != ${b}`);
+  for (const [a, b] of [["12,345,678.50", "12345678.5"], ["999", "999.000000"], ["1,000", "1000.00"]]) assert.ok(sameAmount(a, b), `${a} = ${b}`);
 });
 
 test("a bare ? or # on baseUrl doesn't drop the path prefix", async () => {
