@@ -4,11 +4,10 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 import { CopyButton } from "@/components/CopyButton";
 import { Shell } from "@/components/dashboard/Shell";
-import { Account, EditorialHeader, SignedOut } from "@/components/gateway/Frame";
-import { SignOut } from "@/components/merchant/SignIn";
+import { Account, EditorialHeader } from "@/components/gateway/Frame";
 import { StatusBadge } from "@/components/ui/Badge";
+import { LegacyAccess } from "@/components/workspace/LegacyAccess";
 import { WorkspaceSettings } from "@/components/workspace/WorkspaceSettings";
-import { authSecret } from "@/lib/auth";
 import { merchantConfig, payConfig } from "@/lib/config";
 import { currentMerchant } from "@/lib/merchant-session";
 import { relayerHealth } from "@/lib/relay";
@@ -46,17 +45,19 @@ export default function SettingsPage() {
 async function SettingsLoader() {
   await connection();
   const merchant = await currentMerchant();
-  // batch 050: the WhiteFlow workspace (Privy sign-in, team, receiving wallet) shows with or without the legacy wallet session
+  // the WhiteFlow workspace (Privy sign-in, team, receiving wallet) shows whether or not a merchant wallet is linked;
+  // without a linked wallet, the link step (batch 051) sits right under it
   if (!merchant) {
     return (
       <Shell active="settings" privateReads={false}>
         {header}
         <div className="grid max-w-4xl gap-8 px-4 py-6 md:px-8 md:py-8">
           <WorkspaceSettings />
-          <details className="text-sm text-ink-muted">
-            <summary className="cursor-pointer">Legacy dashboard sign-in (wallet)</summary>
-            <SignedOut available={Boolean(authSecret())} />
-          </details>
+          <section aria-labelledby="link-heading" className="grid gap-3 rounded-[16px] border border-hairline bg-surface p-5 md:p-6 shadow-card">
+            <h2 id="link-heading" className="text-[17px] font-semibold text-ink">Link your existing merchant wallet</h2>
+            <p className="text-xs text-ink-muted">If you used the merchant dashboard with a wallet before, link it once: its links, keys and payments come with it.</p>
+            <LegacyAccess />
+          </section>
         </div>
       </Shell>
     );
@@ -98,26 +99,20 @@ async function SettingsLoader() {
               <dd className="font-mono text-ink">Asia/Kolkata (IST · UTC+05:30)</dd>
             </div>
             <div className="grid gap-1 sm:col-span-2">
-              <dt className="eyebrow text-ink-muted">Authenticated Wallet Address</dt>
+              <dt className="eyebrow text-ink-muted">Linked merchant wallet</dt>
               <dd className="flex items-center gap-2 font-mono text-xs text-ink bg-surface-sunk/60 p-2.5 rounded-[8px] border border-hairline break-all">
                 <span>{merchant}</span>
-                <CopyButton text={merchant} name="authenticated wallet address" label="Copy" />
+                <CopyButton text={merchant} name="linked merchant wallet" label="Copy" />
               </dd>
             </div>
             <div className="grid gap-1 sm:col-span-2">
-              <dt className="eyebrow text-ink-muted">Authentication Mechanism</dt>
+              <dt className="eyebrow text-ink-muted">Sign-in</dt>
               <dd className="text-xs text-ink-muted leading-relaxed">
-                Sign-In with Ethereum (SIWE) on Whitechain Sepolia.
-                <span className="block mt-1 text-amber-800 dark:text-amber-300">
-                  Notice (Decision D12): Single-wallet SIWE session for testnet. Account recovery and passkeys are planned prior to production pilots.
-                </span>
+                WhiteFlow sign-in (Privy: email or wallet) with roles per workspace. This workspace manages the merchant wallet above; changing where it is paid
+                needs an approval wallet. Sign out from the Workspace section or the account menu.
               </dd>
             </div>
           </dl>
-
-          <div className="border-t border-hairline pt-3">
-            <SignOut />
-          </div>
         </section>
 
         {/* Receiving Wallet & Settlement Policy */}
@@ -228,18 +223,6 @@ async function SettingsLoader() {
           </dl>
         </section>
 
-        {/* Team & Roles Roadmap Disclosure */}
-        <section aria-labelledby="roles-heading" className="grid gap-4 rounded-[16px] border border-dashed border-hairline bg-surface/40 p-5 shadow-xs">
-          <div className="flex items-center gap-2">
-            <h2 id="roles-heading" className="text-sm font-semibold text-ink">
-              Multi-Role Access &amp; Approvals
-            </h2>
-            <span className="eyebrow text-xs text-accent">Stage 3 Planned</span>
-          </div>
-          <p className="text-xs text-ink-muted leading-relaxed">
-            Support for role-based workspace permissions (Owner, Operator, Viewer, Independent Approver) and dual-control approval policies is scheduled for <strong>Stage 3 (Business Identity &amp; Receiving Policies)</strong>. Currently operating in authenticated single-operator mode.
-          </p>
-        </section>
       </div>
     </Shell>
   );

@@ -4,7 +4,7 @@
 // Run from apps/web: node --experimental-test-module-mocks --test test/gw-mcp-api.test.mjs
 import { test, before, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
-import { setupDb, resetDb, signedIn, req, params, MERCHANT, OTHER_MERCHANT } from "./gw-helpers.mjs";
+import { setupDb, resetDb, seedWorkspace, signedIn, req, params, MERCHANT, OTHER_MERCHANT } from "./gw-helpers.mjs";
 
 process.env.MERCHANT_PAY_ADDRESS = "0xab817593253a0a37de723072827d88fe0ca54251";
 process.env.RELAYER_URL = "https://relayer.test";
@@ -26,6 +26,9 @@ before(async () => {
 let sk, otherSk, pk;
 beforeEach(async () => {
   await resetDb();
+  // batch 051: a secret key acts once its wallet is linked to a WhiteFlow workspace (the key takes it in its INSERT)
+  await seedWorkspace(MERCHANT);
+  await seedWorkspace(OTHER_MERCHANT);
   sk = (await createKey(MERCHANT, "mcp", "sk")).key;
   otherSk = (await createKey(OTHER_MERCHANT, "mcp", "sk")).key;
   pk = (await createKey(MERCHANT, "browser", "pk")).key;
