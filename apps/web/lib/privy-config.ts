@@ -45,7 +45,7 @@ export function privyConfig(wcProjectId: string | null) {
       showWalletLoginFirst: true,
     },
     // the modal's footer links what we share with Privy (security 046 M2); /docs has no #privacy anchor yet
-    legal: { privacyPolicyUrl: "https://whiteflow-app.vercel.app/docs" },
+    legal: { privacyPolicyUrl: "https://whiteflow.org/docs" },
     ...(wcProjectId ? { walletConnectCloudProjectId: wcProjectId } : {}),
   };
 }
