@@ -69,7 +69,9 @@ export async function connectPayer(provider: EIP1193Provider | undefined): Promi
     return {
       address,
       // eth_signTypedData_v4 (viem serializes the typed data and adds EIP712Domain): a message, not a transaction
-      signTypedData: (typedData) => wallet.signTypedData({ account: address, ...typedData }).catch((error: unknown) => Promise.reject(plain(error))),
+      // (the cast: TS can't carry Payer's generic typed data through the spread; the shape is viem's own TypedDataDefinition)
+      signTypedData: (typedData) =>
+        wallet.signTypedData({ account: address, ...typedData } as Parameters<typeof wallet.signTypedData>[0]).catch((error: unknown) => Promise.reject(plain(error))),
     };
   } catch (error) {
     throw plain(error);
