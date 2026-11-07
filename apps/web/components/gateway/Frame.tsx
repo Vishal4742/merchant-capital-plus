@@ -58,7 +58,7 @@ export function PlainPage({ children }: { children: ReactNode }) {
         {/* a full load: home must not run inside this page's CSP (security review 005 F-N4) */}
         {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
         <a href="/" className="title inline-flex min-h-11 items-center whitespace-nowrap">
-          Merchant Capital+
+          WhiteFlow
         </a>
         <span className="label text-ink-muted">
           <span className="max-sm:hidden">Merchant </span>Dashboard

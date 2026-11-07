@@ -135,7 +135,7 @@ export function constructEvent(rawBody: string | Uint8Array, header: string | nu
 }
 
 export interface GatewayOptions {
-  /** The gateway's https origin, like https://whiteflow-app.vercel.app (http only for localhost). */
+  /** The gateway's https origin, like https://whiteflow.org (http only for localhost). */
   baseUrl: string;
   fetch?: typeof globalThis.fetch;
   timeoutMs?: number;
@@ -162,7 +162,7 @@ export class Gateway {
     const secure = base && (base.protocol === "https:" || (base.protocol === "http:" && LOCAL_HOSTS.has(base.hostname)));
     // No user:pass (it would leak into fetch errors) and no ?query or #hash (they break the path join).
     if (!base || !secure || base.username || base.password || base.search || base.hash) {
-      throw new Error("Gateway needs baseUrl, the gateway's https origin, like https://whiteflow-app.vercel.app (http only for localhost; no user:pass, ?query or #hash).");
+      throw new Error("Gateway needs baseUrl, the gateway's https origin, like https://whiteflow.org (http only for localhost; no user:pass, ?query or #hash).");
     }
     this.#key = secretKey;
     // origin + path only (a bare "?" or "#" leaves no search/hash but would break the join); keeps a path prefix.
