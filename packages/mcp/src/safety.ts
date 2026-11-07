@@ -5,8 +5,9 @@
 // - diagnostics go to stderr only (stdout is the MCP protocol), through the same redaction.
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
-// C0/C1 controls except tab and newline, zero-widths, bidi embeddings, overrides and isolates
-const UNSAFE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f​-‏‪-‮⁠-⁤⁦-⁩﻿]/g;
+// C0/C1 controls except tab and newline, the Arabic letter mark, zero-widths, line/paragraph separators, bidi
+// embeddings, overrides and isolates, the BOM, and Unicode tag characters (invisible text that can hide instructions)
+const UNSAFE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\ufeff\u{e0000}-\u{e007f}]/gu;
 
 /** Customer or merchant text as plain, bounded data. */
 export function untrusted(value: unknown, max = 200): string {

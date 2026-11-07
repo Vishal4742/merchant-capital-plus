@@ -12,6 +12,9 @@ import { ToolRefusal, type Logger, type Reply } from "../safety.ts";
 const PROFILE_TTL_MS = 60_000;
 export const EXPLORER_TX = "https://explorer.testnet.whitechain.io/tx/";
 export const IDEMPOTENCY_KEY = /^[A-Za-z0-9_.:-]{8,100}$/;
+/** A record id that goes into a URL path (the same rule as the sandbox routes): "." or ".." would make it another
+ *  same-origin path, sent with the Bearer key. */
+export const RECORD_ID = /^[\w-]{1,64}$/;
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 export type Capability = Exclude<keyof Account["capabilities"], "operations" | "approvals">;
@@ -107,9 +110,12 @@ export function makeContext(base: Omit<Ctx, "profile" | "require" | "write" | "t
         try {
           verify?.(result.data);
         } catch (error) {
-          if (!(error instanceof Mismatch)) throw error;
-          base.journal.settle(scope, claim.key, "needs_reconciliation", error.message);
-          throw new ToolRefusal(`WhiteFlow's reply doesn't match what was asked: ${error.message}. Don't share or use this record; the operation is marked for reconciliation.`, {
+          // ANY failure while checking a write's reply (a mismatch, or a value the connector's own arithmetic can't read)
+          // leaves the write for reconciliation: the server may have created it, so it must never be settled "refused"
+          // and then re-created under a fresh key (round-2 security probe)
+          const reason = error instanceof Mismatch ? error.message : "a reply the connector couldn't verify";
+          base.journal.settle(scope, claim.key, "needs_reconciliation", reason);
+          throw new ToolRefusal(`WhiteFlow's reply doesn't match what was asked: ${reason}. Don't share or use this record; the operation is marked for reconciliation.`, {
             outcome: "needs_reconciliation",
             idempotency_key: claim.key,
             next_action: "Tell the merchant. Check the record in the WhiteFlow dashboard before doing anything else with it.",

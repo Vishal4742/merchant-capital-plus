@@ -176,6 +176,24 @@ test("list_payments and get_payment_link: verified records with explorer links; 
   assert.equal((await call("get_payment_link", { link_id: "../../etc/passwd" })).isError, true);
 });
 
+test('ids "." and ".." are refused before any fetch: they would be another same-origin path, sent with the key', async () => {
+  const { calls, fetch } = gateway();
+  const { call } = await connect(ENV, { fetch });
+  for (const id of [".", ".."]) {
+    for (const [tool, args] of [
+      ["get_payment_link", { link_id: id }],
+      ["get_invoice", { invoice: id }],
+      ["finalize_invoice", { invoice: id }],
+      ["prepare_invoice_reminder", { invoice: id }],
+    ] as const) {
+      const r = await call(tool, args);
+      assert.equal(r.isError, true, `${tool} ${id}`);
+      assert.match(r.text, /letters, digits, _ or -/, `${tool} ${id}`);
+    }
+  }
+  assert.deepEqual(calls, []);
+});
+
 test("a dashboard link priced finer than its currency's minor unit (10.555 INR) is shown as stored, not rounded or refused", async () => {
   const { fetch } = gateway({ "GET /api/v1/links/lnk_AbCdEfGhIjKlMnOp": () => ({ status: 200, body: { ...LINK, amount: "10.555", paid_checkouts: [] } }) });
   const { call } = await connect(ENV, { fetch });
@@ -196,4 +214,12 @@ test("startup refuses bad settings without repeating the key; sandbox is the def
   assert.throws(make({ WHITEFLOW_TIMEZONE: "Mars/Olympus" }), /IANA/);
   assert.throws(make({ WHITEFLOW_API_KEY: TESTNET_KEY }), (e: Error) => /WHITEFLOW_MODE=testnet/.test(e.message) && !e.message.includes(TESTNET_KEY));
   assert.doesNotThrow(make({}));
+});
+
+test("the old MCP_SECRET_KEY alone stops startup, naming WHITEFLOW_API_KEY, instead of silently starting the sandbox", () => {
+  const make = (env: Record<string, string>) => () => createServer({ env, stateDir: tempDir(), now: () => NOW });
+  for (const env of [{ MCP_SECRET_KEY: TESTNET_KEY }, { MCP_SECRET_KEY: TESTNET_KEY, WHITEFLOW_MODE: "testnet" }] as Record<string, string>[]) {
+    assert.throws(make(env), (e: Error) => /WHITEFLOW_API_KEY/.test(e.message) && !e.message.includes(TESTNET_KEY));
+  }
+  assert.doesNotThrow(make({ ...ENV, MCP_SECRET_KEY: TESTNET_KEY }));
 });

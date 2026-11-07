@@ -204,3 +204,37 @@ test("operations: a settled write is visible by key in the sandbox; an unknown k
   assert.deepEqual((await call("get_operation_status", {})).json.unresolved, []);
   assert.equal((await call("get_operation_status", { idempotency_key: "no-such-key-0001" })).isError, true);
 });
+
+test("round-2 probe: a write reply the connector can't verify is flagged for reconciliation, never re-sent under a new key", async () => {
+  // a backend that offers invoices and answers with a schema-valid draft whose discount the connector can't read back
+  const account = { ...ACCOUNT, capabilities: { ...ACCOUNT.capabilities, customers: true, invoices: true } };
+  const reply = {
+    id: "inv_test0001", number: null, status: "draft", revision: 1, overdue: false, customer: { id: "cus_test0001", name: "Priya" }, currency: "USDT",
+    line_items: [{ description: "x", quantity: 1, unit_price: "10.00", amount: "10.00" }], subtotal: "10.00", discount: { type: "percent", percent: "abc", amount: "1.00" }, tax: null,
+    total: "9.00", amount_paid: "0.00", amount_due: "9.00", overpaid: "0.00", due_date: "2026-11-13", timezone: "Asia/Kolkata", memo: null, hosted_url: null, pdf_url: null,
+    created_at: "2026-11-06T12:00:00.000Z", finalized_at: null, paid_at: null, approval: null, payments: [],
+  };
+  const { calls, fetch } = fakeFetch((call) => {
+    const { pathname } = new URL(call.url);
+    if (pathname === "/api/v1/account") return { status: 200, body: account };
+    if (call.method === "POST" && pathname === "/api/v1/invoices") return { status: 201, body: reply };
+    return { status: 404, body: "<html>404</html>" };
+  });
+  const { call } = await connect(ENV, { fetch, stateDir: tempDir() });
+  const ask = { customer_id: "cus_test0001", currency: "USDT", line_items: [{ description: "x", quantity: 1, unit_price: "10.00" }], due_date: "2026-11-13", discount: { type: "percent", percent: "10" } };
+  const first = await call("create_invoice_draft", ask);
+  assert.equal(first.isError, true);
+  assert.equal(first.json.outcome, "needs_reconciliation", first.text);
+  const second = await call("create_invoice_draft", ask);
+  assert.equal(second.json.outcome, "needs_reconciliation");
+  assert.equal(calls.filter((c) => c.method === "POST").length, 1, "not re-sent under a fresh key");
+});
+
+test("round-2 probe: the sandbox operation lookup finds a key that contains ':' and '.'", async () => {
+  const { call } = await sandbox();
+  const link = await call("create_payment_link", { amount: "25", currency: "USDT", description: "Beans", idempotency_key: "order:2026.11:a1" });
+  assert.equal(link.isError, false, link.text);
+  const status = await call("get_operation_status", { idempotency_key: "order:2026.11:a1" });
+  assert.equal(status.json.operation.whiteflow_record.state, "succeeded", status.text);
+  assert.equal(status.json.operation.whiteflow_record.record_id, link.json.link.id);
+});

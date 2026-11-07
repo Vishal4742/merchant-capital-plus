@@ -177,7 +177,7 @@ Testnet mode needs the gateway routes from [PR #48](https://github.com/Vishal474
 
 ```bash
 npm ci
-npm run typecheck && npm test   # 41 tests, offline; includes building and launching the .mcpb
+npm run typecheck && npm test   # 46 tests, offline; includes building and launching the .mcpb
 npm run manifest                # rewrite manifest.json from the server (a test fails if you forget)
 npm run pack                    # dist/whiteflow.mcpb + checksums (+ sbom.cdx.json inside)
 node scripts/icon.mjs           # redraw icon.png
