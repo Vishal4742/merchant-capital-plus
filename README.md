@@ -60,7 +60,7 @@ Private-read proof (Phase 1): the app read Whitechain blocks through Nym (e.g. b
 cd packages/mcp && npm ci && npm run pack
 claude mcp add whiteflow --env WHITEFLOW_MODE=testnet --env WHITEFLOW_API_KEY=sk_test_YOUR_KEY -- node "$PWD/dist/bundle/server/index.mjs"
 ```
-Leave out both `--env` flags for sandbox mode. Details, the Claude Desktop install and the full tool list: [`packages/mcp/README.md`](packages/mcp/README.md).
+Or install it from the website: whiteflow.org → Connections → **Add to Claude Desktop**, **Add to Cursor** or **Add to VS Code**, or run `npx -y --package=https://whiteflow.org/downloads/whiteflow-mcp.tgz whiteflow-mcp` in any MCP client (Codex, Gemini CLI, Windsurf, Cline, Zed). Leave out both `--env` flags for sandbox mode. Details, the Claude Desktop install and the full tool list: [`packages/mcp/README.md`](packages/mcp/README.md).
 Parts of it are adapted from [Pixa](https://github.com/soumyacodes007/Pixa) (MIT; licence in `packages/mcp/THIRD_PARTY_LICENSES`; ETHGlobal mentors confirmed this reuse is within Start Fresh).
 
 ## Architecture

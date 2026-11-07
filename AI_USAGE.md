@@ -80,4 +80,3 @@ ETHGlobal asks teams to say where AI was used, down to files, and to commit spec
 | `apps/web/` dashboard Refund button calls refunds/sync after the receipt (payment.refunded) | claude-frontend | phase mode: ci (568 tests) + reviewer-security PASS | 027-P4-web-refund-sync |
 | `apps/web/` Vouchers screen: Arkiv status + 'Publish to Arkiv' retry | claude-frontend | phase mode: ci PASS (Money: no) | 028-P4-web-voucher-publish |
 | `apps/web/` merchant onboarding: 3-step setup when signed out (wallet, add Whitechain Testnet, sign in) + Get started checklist (human request) | claude-frontend | phase mode: ci (578 tests, 122 Playwright) + reviewer-security PASS | 029-P4-web-onboarding |
-| ⟨path⟩ | ⟨lane / agent⟩ | ⟨reviewers + human⟩ | ⟨NNN⟩ |
