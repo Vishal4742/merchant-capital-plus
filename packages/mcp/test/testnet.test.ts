@@ -176,6 +176,24 @@ test("list_payments and get_payment_link: verified records with explorer links; 
   assert.equal((await call("get_payment_link", { link_id: "../../etc/passwd" })).isError, true);
 });
 
+test('ids "." and ".." are refused before any fetch: they would be another same-origin path, sent with the key', async () => {
+  const { calls, fetch } = gateway();
+  const { call } = await connect(ENV, { fetch });
+  for (const id of [".", ".."]) {
+    for (const [tool, args] of [
+      ["get_payment_link", { link_id: id }],
+      ["get_invoice", { invoice: id }],
+      ["finalize_invoice", { invoice: id }],
+      ["prepare_invoice_reminder", { invoice: id }],
+    ] as const) {
+      const r = await call(tool, args);
+      assert.equal(r.isError, true, `${tool} ${id}`);
+      assert.match(r.text, /letters, digits, _ or -/, `${tool} ${id}`);
+    }
+  }
+  assert.deepEqual(calls, []);
+});
+
 test("a dashboard link priced finer than its currency's minor unit (10.555 INR) is shown as stored, not rounded or refused", async () => {
   const { fetch } = gateway({ "GET /api/v1/links/lnk_AbCdEfGhIjKlMnOp": () => ({ status: 200, body: { ...LINK, amount: "10.555", paid_checkouts: [] } }) });
   const { call } = await connect(ENV, { fetch });

@@ -10,13 +10,13 @@ import { DateError, calendarDate, daysBetween, labelled } from "../dates.ts";
 import { MoneyError, decimal, display, fromApi, invoiceTotals, type Currency, type DiscountInput, type TaxInput } from "../money.ts";
 import { DATA_NOTICE, ToolRefusal, untrusted } from "../safety.ts";
 import { createAnother, idempotencyKey } from "./business.ts";
-import { Mismatch, dueLabel, replayNote, type Ctx, type Profile } from "./context.ts";
+import { Mismatch, RECORD_ID, dueLabel, replayNote, type Ctx, type Profile } from "./context.ts";
 
 const REF = /^(inv_[A-Za-z0-9_-]{1,40}|WF-\d{1,9})$/i;
 const READ = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 const WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 
-const invoiceRef = z.string().max(64).describe("The invoice id (inv_…) or its number (WF-1042).");
+const invoiceRef = z.string().regex(RECORD_ID, "letters, digits, _ or -").describe("The invoice id (inv_…) or its number (WF-1042).");
 const lineItems = z
   .array(
     z.object({
