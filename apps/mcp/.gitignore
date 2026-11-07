@@ -1,2 +1,3 @@
-# npm run build output: rebuild it, never commit it
+# npm run build output (the Vercel function): rebuild it, never commit it
+api/
 dist/

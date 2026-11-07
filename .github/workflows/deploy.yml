@@ -6,7 +6,8 @@ name: deploy
 #
 # After main changes it waits for a quiet spell: a later push cancels this run, so a
 # burst of merges deploys once. Then it builds main here and deploys it (prebuilt) to
-# production, only for the projects whose folders changed since the last successful run.
+# production, only for the projects whose folders changed since the last successful run. The hosted MCP service is a
+# fourth project that deploys only when the repository variable VERCEL_MCP_PROJECT_ID is set.
 on:
   push:
     branches: [main]
@@ -45,4 +46,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FORCE: ${{ inputs.force && '1' || '0' }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_MCP_PROJECT_ID: ${{ vars.VERCEL_MCP_PROJECT_ID }}
         run: bash tools/vercel-deploy.sh

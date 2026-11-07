@@ -1,0 +1,61 @@
+name: staging
+
+# Deploys the AI-connection work (batch 058) to the isolated STAGING projects, never to production.
+#
+# Isolation, by construction:
+#  - it runs only for a push to the dedicated branch wf/ai-staging (a push to any other branch, or to main, does nothing here);
+#  - every secret and variable it reads belongs to the GitHub environment "staging", and the staging Vercel projects and the
+#    staging database are different resources from the three production projects and the shared database;
+#  - the database guard (apps/web/db/staging-guard.mjs) refuses to migrate a database that holds gateway tables but no
+#    staging marker, so a production DATABASE_URL pasted here by mistake stops before anything is written;
+#  - tools/staging-deploy.sh refuses the three production project ids.
+# Production deploys stay exactly as before (deploy.yml: main only, after a quiet spell).
+on:
+  push:
+    branches: [wf/ai-staging]
+
+concurrency:
+  group: staging-deploy
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  staging:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+      - name: Install (the migration runner and the guard live in apps/web; the bundle needs apps/mcp and packages/mcp)
+        run: |
+          (cd apps/web && npm ci)
+          (cd packages/mcp && npm ci)
+          (cd apps/mcp && npm ci)
+      - name: Guard the staging database
+        working-directory: apps/web
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: node db/staging-guard.mjs
+      - name: Apply migrations to the staging database only
+        working-directory: apps/web
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: node db/migrate.mjs
+      - name: Deploy the staging web and MCP projects
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_STAGING_WEB_PROJECT_ID: ${{ vars.VERCEL_STAGING_WEB_PROJECT_ID }}
+          VERCEL_STAGING_MCP_PROJECT_ID: ${{ vars.VERCEL_STAGING_MCP_PROJECT_ID }}
+        run: bash tools/staging-deploy.sh
+      - name: Smoke-check the hosted staging service
+        env:
+          STAGING_WEB_URL: ${{ vars.STAGING_WEB_URL }}
+          STAGING_MCP_URL: ${{ vars.STAGING_MCP_URL }}
+        run: bash tools/staging-smoke.sh

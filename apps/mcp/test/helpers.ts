@@ -47,6 +47,7 @@ export interface GatewayCall {
   path: string;
   merchant: string | null;
   grantId: string | null;
+  idempotencyKey: string | null;
 }
 
 export async function start(opts: { clock?: { now: number }; gatewayDown?: boolean } = {}) {
@@ -68,7 +69,7 @@ export async function start(opts: { clock?: { now: number }; gatewayDown?: boole
     const u = new URL(String(url));
     const auth = new Headers(init.headers).get("authorization") ?? "";
     const claim = auth.startsWith("Bearer ") ? verifyInternal(auth.slice(7), SECRET, clock.now) : null;
-    gatewayCalls.push({ method: init.method ?? "GET", path: u.pathname, merchant: claim?.merchant ?? null, grantId: claim?.grantId ?? null });
+    gatewayCalls.push({ method: init.method ?? "GET", path: u.pathname, merchant: claim?.merchant ?? null, grantId: claim?.grantId ?? null, idempotencyKey: new Headers(init.headers).get("idempotency-key") });
     if (opts.gatewayDown) return new Response("down", { status: 503 });
     if (!claim) return Response.json({ error: "no" }, { status: 401 });
     if (u.pathname === "/api/v1/account") return Response.json(ACCOUNT(claim.merchant));

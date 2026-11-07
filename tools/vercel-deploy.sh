@@ -29,4 +29,11 @@ status=0
 deploy web prj_qf25l7Cwd8u2Ye9tL1Rlfi6dBjNS apps/web packages || status=1
 deploy relayer prj_UyTxbpvs4friw4Jt2JsQv6EadHY0 apps/relayer packages || status=1
 deploy shop prj_KpTcfBJexGJA6yP2EeIxIC9xFmmv apps/shop packages || status=1
+# The hosted MCP service (batch 058) deploys only once its Vercel project exists and the repository variable
+# VERCEL_MCP_PROJECT_ID names it; until then merging changes nothing for it. It imports packages/mcp, so both paths count.
+if [ -n "${VERCEL_MCP_PROJECT_ID:-}" ]; then
+  deploy mcp "$VERCEL_MCP_PROJECT_ID" apps/mcp packages/mcp || status=1
+else
+  echo "mcp: no VERCEL_MCP_PROJECT_ID, not deployed"
+fi
 exit $status

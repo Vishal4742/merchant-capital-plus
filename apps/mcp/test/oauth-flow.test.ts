@@ -287,3 +287,19 @@ test("liveness is separate from readiness: /health never touches the database; /
   assert.equal((await s.json("/health")).status, 200);
   assert.equal((await s.json("/ready")).status, 503);
 });
+
+test("20 simultaneous identical creates through the endpoint all carry ONE idempotency key and leave one journal entry (PGlite; the hosted run is staging-concurrency.mjs)", async () => {
+  const s = await boot();
+  const c = await s.connect(MERCHANT_A);
+  const args = { amount: "25", currency: "USDT", description: "Beans", idempotency_key: "order-race-0001" };
+  const clients = await Promise.all(Array.from({ length: 20 }, () => s.mcpClient(c.tokens.access_token)));
+  const results = await Promise.all(clients.map((client) => client.callTool({ name: "create_payment_link", arguments: args }) as Promise<{ isError?: boolean; content: { text: string }[] }>));
+  const posts = s.gatewayCalls.filter((g) => g.method === "POST");
+  assert.ok(posts.length >= 1);
+  assert.deepEqual([...new Set(posts.map((p) => p.idempotencyKey))], ["order-race-0001"], "every attempt that reached the gateway used the caller's key");
+  assert.equal((await s.sql.query("SELECT jsonb_array_length(entries) AS n FROM app_mcp_journal"))[0].n, 1);
+  // each caller got either the link or a plain refusal, never a different link
+  const links = new Set(results.filter((r) => !r.isError).map((r) => JSON.parse(r.content[0].text).link.id));
+  assert.equal(links.size, 1);
+  await Promise.all(clients.map((client) => client.close()));
+});
