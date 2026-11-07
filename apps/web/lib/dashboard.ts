@@ -114,3 +114,11 @@ export function formatWbt(wei: bigint): string {
   const steps = (wei + WEI_PER_STEP / 2n) / WEI_PER_STEP;
   return `${steps / 1_000_000n}.${(steps % 1_000_000n).toString().padStart(6, "0")}`;
 }
+
+/** What the merchant keeps from `gross` after the relayer's fee on each of `count` payments (batch 058, FR-GW-9). The fee
+ *  is read on chain; null when it couldn't be, and then there is no net to show. Never below zero. */
+export function netAfterFees(gross: bigint, fee: bigint | null, count: number): bigint | null {
+  if (fee === null) return null;
+  const net = gross - fee * BigInt(count);
+  return net < 0n ? 0n : net;
+}

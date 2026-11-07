@@ -7,6 +7,7 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 import type { Address } from "viem";
 import { GrossChart, type GrossRange } from "@/components/dashboard/GrossChart";
+import { buttonClasses } from "@/components/Button";
 import { Reveal } from "@/components/dashboard/Reveal";
 import { GetStarted } from "@/components/dashboard/GetStarted";
 import { Shell } from "@/components/dashboard/Shell";
@@ -17,7 +18,7 @@ import { StaticScene } from "@/components/StaticScene";
 import { authSecret } from "@/lib/auth";
 import { currentMerchant } from "@/lib/merchant-session";
 import { merchantConfig, payConfig } from "@/lib/config";
-import { change, confirmed, dailyGross, figures, paymentRows, type Confirmed } from "@/lib/dashboard";
+import { change, confirmed, dailyGross, figures, netAfterFees, paymentRows, type Confirmed } from "@/lib/dashboard";
 import { vouchersUsed, type Voucher } from "@/lib/gateway-money";
 import { logFailure, merchantVouchers } from "@/lib/gateway-server";
 import { setupSteps } from "@/lib/onboarding";
@@ -104,6 +105,7 @@ function home(payments: Confirmed[], fee: bigint | null, vouchers: Voucher[] | n
   const vsYesterday = change(f.grossToday, f.grossYesterday);
   // before the first payment there is nothing to compare or refund: calm zeros with a hint, never "—" (batch 024)
   const none = payments.length === 0;
+  const net = netAfterFees(f.grossToday, fee, f.countToday);
   const tiles: Tile[] = [
     { label: "Gross today", value: formatUsdt(f.grossToday), sub: vsYesterday === null ? "USDT, since midnight IST" : `${arrow(vsYesterday)}% vs yesterday`, tone: toneOf(vsYesterday) },
     none
@@ -113,7 +115,11 @@ function home(payments: Confirmed[], fee: bigint | null, vouchers: Voucher[] | n
     none
       ? { label: "Refunds", value: formatUsdt(0n), sub: "None yet" }
       : { label: "Refunds", value: f.refunded === null ? "—" : formatUsdt(f.refunded), sub: `${f.refundedPayments} ${f.refundedPayments === 1 ? "payment" : "payments"}, all time` },
-    { label: "Settled", value: "T+0", sub: "in the payment's transaction" },
+    {
+      label: "Net today",
+      value: net === null ? "—" : formatUsdt(net),
+      sub: net === null ? "can't read the fee now" : "gross minus fees, settled in the payment's transaction",
+    },
     { label: "Vouchers used", ...vouchersUsed(vouchers, now) },
   ];
   const series = dailyGross(
@@ -216,6 +222,15 @@ async function Dashboard() {
     <Shell active="home" account={<Account merchant={merchant} />}>
       <Band shop={shop} when={when} note={payments.length === 0 ? "No sales yet. Your first one shows here the moment it's paid." : undefined} />
       <div className="grid gap-6 px-4 py-6 md:px-8 md:py-7">
+        <div className="flex flex-wrap items-center gap-3">
+          <a href="/merchant/links" className={buttonClasses("primary")}>
+            Create payment link
+          </a>
+          <a href="/merchant/ai" className={buttonClasses("glass", "border-ink/30 text-ink")}>
+            Connect your AI
+          </a>
+          <span className="eyebrow text-ink-muted">Whitechain Testnet · USDT test tokens, no real money</span>
+        </div>
         <GetStarted steps={steps} />
 
         <section aria-label="Today at a glance" className="grid grid-cols-2 gap-px overflow-hidden rounded-[20px] border border-hairline bg-hairline md:grid-cols-3 xl:grid-cols-6">
