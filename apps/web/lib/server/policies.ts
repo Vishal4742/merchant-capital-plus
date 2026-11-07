@@ -102,7 +102,7 @@ export async function issueReceivingProof(ctx: AuthContext, input: { address: un
   const message = createSiweMessage({
     domain: origin.host,
     address: recipient,
-    statement: `WhiteFlow receiving-wallet proof: this wallet will receive USDT for "${promptSafe(biz.display_name)}" on Whitechain Testnet. It proves control of this wallet only; it moves no funds.`,
+    statement: `Whiteflow receiving-wallet proof: this wallet will receive USDT for "${promptSafe(biz.display_name)}" on Whitechain Testnet. It proves control of this wallet only; it moves no funds.`,
     uri: origin.origin,
     version: "1",
     chainId: whitechainSepolia.id,
@@ -155,7 +155,7 @@ export async function issueOwnerApproval(ctx: AuthContext, input: { proofNonce: 
   if (typeof input.wallet !== "string" || !isAddress(input.wallet, { strict: false })) throw new HttpError(400, "Choose the wallet you approve with.");
   const wallet = input.wallet.toLowerCase();
   const [mine] = await query("SELECT 1 FROM wf_principal_wallets WHERE principal_id = $1 AND address = $2", [ctx.principalId, wallet]);
-  if (!mine) throw new HttpError(403, "Approve with a wallet linked to your WhiteFlow sign-in. Link one in the sign-in dialog, then sign in again.");
+  if (!mine) throw new HttpError(403, "Approve with a wallet linked to your Whiteflow sign-in. Link one in the sign-in dialog, then sign in again.");
   if (!(await approvalWalletAllowed(ctx.businessId, ctx.principalId, wallet))) throw new HttpError(403, NOT_ENROLLED);
   await sharedRateLimit(`wf-challenge:${ctx.principalId}`, CHALLENGES_PER_MINUTE, 60_000, "closed");
   const origin = publicOrigin();
@@ -167,7 +167,7 @@ export async function issueOwnerApproval(ctx: AuthContext, input: { proofNonce: 
   const message = createSiweMessage({
     domain: origin.host,
     address: getAddress(wallet),
-    statement: `WhiteFlow: approve receiving policy version ${version} for "${promptSafe(biz.display_name)}": pay out to ${getAddress(proof.address)} in USDT ${getAddress(POLICY_TOKEN)} on Whitechain Testnet. Signing approves where this workspace is paid; it moves no funds.`,
+    statement: `Whiteflow: approve receiving policy version ${version} for "${promptSafe(biz.display_name)}": pay out to ${getAddress(proof.address)} in USDT ${getAddress(POLICY_TOKEN)} on Whitechain Testnet. Signing approves where this workspace is paid; it moves no funds.`,
     uri: origin.origin,
     version: "1",
     chainId: whitechainSepolia.id,

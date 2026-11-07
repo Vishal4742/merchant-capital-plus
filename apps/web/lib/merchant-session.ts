@@ -1,4 +1,4 @@
-// Server-only: who is using the merchant dashboard (batch 051). The WhiteFlow session cookie → the active workspace
+// Server-only: who is using the merchant dashboard (batch 051). The Whiteflow session cookie → the active workspace
 // membership, re-read on every request → the legacy merchant wallet that workspace linked. The pre-051 wallet cookie
 // (mc_session) is not read. Null when signed out, without a linked workspace, or when the read fails (fail closed).
 import { cookies } from "next/headers";

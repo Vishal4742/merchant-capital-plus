@@ -5,7 +5,7 @@
 // apps/web's production Neon HTTP driver; a holder keeps an interactive transaction open through the same package's
 // WebSocket Pool with SELECT … FOR UPDATE on the contested row; the runner waits until pg_stat_activity shows the
 // contenders waiting on a Lock, then the holder commits. Without the database config it FAILS (exit 1), never skips.
-// Run from the repo root: node tools/stage3/identity-neon.mjs P:/WhiteFlow/.env
+// Run from the repo root: node tools/stage3/identity-neon.mjs P:/Whiteflow/.env
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
@@ -20,7 +20,7 @@ const { sqlStatements } = await import("../../apps/web/db/statements.mjs");
 
 let raw;
 try {
-  raw = parseEnv(readFileSync(process.argv[2] ?? "P:/WhiteFlow/.env", "utf8")).DATABASE_URL;
+  raw = parseEnv(readFileSync(process.argv[2] ?? "P:/Whiteflow/.env", "utf8")).DATABASE_URL;
 } catch {
   raw = undefined;
 }

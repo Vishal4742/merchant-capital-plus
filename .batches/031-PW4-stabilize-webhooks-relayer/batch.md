@@ -1,5 +1,5 @@
 # 031-PW4-stabilize-webhooks-relayer
-Phase: W4 (WhiteFlow roadmap; proposed PHASES row in docs/SRS-v3.0-WhiteFlow-PROPOSAL.md §F — this batch cites only already-approved v2.2 IDs)   Round: build   Owner lane: claude-contracts (apps/web/lib/server, apps/web/db) + claude-relayer (apps/relayer)
+Phase: W4 (Whiteflow roadmap; proposed PHASES row in docs/SRS-v3.0-Whiteflow-PROPOSAL.md §F — this batch cites only already-approved v2.2 IDs)   Round: build   Owner lane: claude-contracts (apps/web/lib/server, apps/web/db) + claude-relayer (apps/relayer)
 Mode: phase
 Money: yes
 Request (verbatim): "BUILD and VERIFY the product … Implement in dependency order … E. Durable financial processing, reconciliation and webhook delivery." (owner, 2026-11-06) · "you have a one more session present do the tassks in parallel" (owner, 2026-11-06)

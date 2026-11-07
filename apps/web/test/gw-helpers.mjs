@@ -86,7 +86,7 @@ export async function resetDb() {
   resetRateCache(); // and the FX cache would serve one test's mocked rates to the next
 }
 
-// Batch 051: the dashboard cookie is a WhiteFlow session (wf_session) of an Owner whose workspace is linked to the legacy
+// Batch 051: the dashboard cookie is a Whiteflow session (wf_session) of an Owner whose workspace is linked to the legacy
 // merchant wallet, the only way to reach the v1 gateway after the cutover. signedIn() stays synchronous: it names the
 // merchant, and that workspace (principal, business, Owner membership, session) is written on the next database call.
 // resetDb() forgets them, so each test seeds only what it signs in as. Files that never call signedIn() get no wf_* rows. A file that installs its own
@@ -147,7 +147,7 @@ export const expireSession = (id, at = Date.now() - 1) => query("UPDATE app_web_
 /** Sets a checkout's pending attempt's validBefore (default 0: long past, so USDT can no longer settle it). */
 export const agePending = (id, validBefore = 0n) => query("UPDATE app_web_sessions SET pending = jsonb_set(pending, '{validBefore}', to_jsonb($2::text)) WHERE id = $1", [id, validBefore.toString()]);
 
-/** Headers for the Owner of `merchant`'s linked workspace, signed in to WhiteFlow (batch 051). */
+/** Headers for the Owner of `merchant`'s linked workspace, signed in to Whiteflow (batch 051). */
 export const signedIn = (merchant = MERCHANT) => {
   needOrigin();
   wanted.add(merchant.toLowerCase());

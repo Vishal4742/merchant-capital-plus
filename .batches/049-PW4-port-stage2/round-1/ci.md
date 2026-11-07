@@ -15,8 +15,8 @@ Runtime: **Node v26.13.0** (CI's major; official win-x64 zip, SHA-256 `dcc60d59�
 | sdk | `npm run typecheck`; `npm test` | 47/47 (after restoring the CRLF checkout copy of `public/v1/button.js`; git content identical) |
 | mcp | `npm run typecheck`; `npm test` | 25/25 |
 | contracts | `forge build`; `forge test` | 12 suites, **164/164 pass**; `git diff origin/main -- contracts` empty |
-| real Postgres (Neon production driver, isolated `wf_s2_relayer`/`_prev`) | `node tools/stage2/relayer-neon.ts P:/WhiteFlow/.env` | **8/8**: clean schema (001, 003, 004 twice), 12-process lease race, 10-process duplicate authorization, uncertain-commit recovery, durable tx reference, stale-holder fencing, restart persistence, **previous schema = main's batch-037 `001_rel.sql` + legacy rows → upgraded twice: rows, fees, old lock kept, statuses `unknown`/`reverted`** |
-| real Postgres (isolated `wf_s2_web`/`_prev`) | `node tools/stage2/web-neon.mjs P:/WhiteFlow/.env` | **8/8** (15 migrations twice; enqueue-once, claim, lease-expiry, fenced outcome, fair dispatch, shared rate limit, previous schema) |
+| real Postgres (Neon production driver, isolated `wf_s2_relayer`/`_prev`) | `node tools/stage2/relayer-neon.ts P:/Whiteflow/.env` | **8/8**: clean schema (001, 003, 004 twice), 12-process lease race, 10-process duplicate authorization, uncertain-commit recovery, durable tx reference, stale-holder fencing, restart persistence, **previous schema = main's batch-037 `001_rel.sql` + legacy rows → upgraded twice: rows, fees, old lock kept, statuses `unknown`/`reverted`** |
+| real Postgres (isolated `wf_s2_web`/`_prev`) | `node tools/stage2/web-neon.mjs P:/Whiteflow/.env` | **8/8** (15 migrations twice; enqueue-once, claim, lease-expiry, fenced outcome, fair dispatch, shared rate limit, previous schema) |
 
 Only `DATABASE_URL` was read from `.env` (via `parseEnv`); no value printed; the live app database was not touched (each harness asserts `current_database()` before DDL).
 
@@ -26,5 +26,5 @@ Only `DATABASE_URL` was read from `.env` (via `parseEnv`); no value printed; the
 - Main's `store.ts` + `db/pglite.ts` retired (superseded by 031's `state.ts`/`db.ts`); `dev.ts` rewired.
 - New tests: `test/forward-migration.test.ts`; role end-to-end test in `relayer.test.ts` (relay works as `mcplus_relayer`; other tables, deletes and unblock inserts refused).
 - `app/api/v1/{sessions,invoices}/[id]/funds` (main's 032-P5) moved from the per-instance `rateLimit()` to `sharedRateLimit(…, "memory")` (FR-OPS-9; caught by 031's route-limit test).
-- UI: Nav = WhiteFlow five destinations + main's soft navigation, FoldedMenu, Capital (legacy) and Webhooks links; home = main's Shell fallback, parallel reads, Vouchers-used tile, Get paid early kept; the hard-coded "T+0" tile dropped (FR-UX-1/3).
-- Docs: SRS 3.0.1 header records main's 2.3 Privy payer note; FR-GW-15/AT-18 annotated "built on main, kept working, outside WhiteFlow scope".
+- UI: Nav = Whiteflow five destinations + main's soft navigation, FoldedMenu, Capital (legacy) and Webhooks links; home = main's Shell fallback, parallel reads, Vouchers-used tile, Get paid early kept; the hard-coded "T+0" tile dropped (FR-UX-1/3).
+- Docs: SRS 3.0.1 header records main's 2.3 Privy payer note; FR-GW-15/AT-18 annotated "built on main, kept working, outside Whiteflow scope".

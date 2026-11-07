@@ -8,7 +8,7 @@ VERDICT: PASS
 - **Code:** a detached worktree `P:/wf-051-walk` at the committed HEAD, no local edits: first 438459c, then 04266ce after the overflow fix below.
   - Why not P:/wf-051: it holds uncommitted edits to three batch-050 files (privy-config.ts, auth-sessions.ts, privy-token.ts) that belong to neither this batch nor its author.
 - **Server:** `next dev -p 3100`, launched by `launch3.mjs`.
-  - DATABASE_URL is read in-process from P:/WhiteFlow/.env, switched to `/wf_s2_web`, verified with `current_database()`, and passed only through the child's environment.
+  - DATABASE_URL is read in-process from P:/Whiteflow/.env, switched to `/wf_s2_web`, verified with `current_database()`, and passed only through the child's environment.
   - PUBLIC_ORIGIN=http://localhost:3100.
   - Dummy non-secret MERCHANT_ADDRESS and SHOP_API_KEY are set so `/merchant` renders.
   - No Privy app id.
@@ -28,7 +28,7 @@ VERDICT: PASS
 | h-fail, sign-out answers 500 (1440/375/360) | "We couldn't sign you out. Try again." (role=alert); no navigation; the session's revoked_at stays null; focus on Sign out; scrollWidth equals the viewport |
 | h, sign-out works | lands on `/sign-in?out=1`; that session's revoked_at is set, the other session untouched, the cookie cleared |
 | h-reuse | the revoked token gives the signed-out panel |
-| i, focus and target size | Sign out is 54×40 px, tab stop 2, outline solid 2 px rgb(59,79,217); "Link merchant wallet", "Sign in to WhiteFlow" and "Create your workspace" all have the same 2 px outline |
+| i, focus and target size | Sign out is 54×40 px, tab stop 2, outline solid 2 px rgb(59,79,217); "Link merchant wallet", "Sign in to Whiteflow" and "Create your workspace" all have the same 2 px outline |
 | /merchant/connections at 360/375, Owner and Viewer | scrollWidth 360/375; the MCP `<pre>` scrolls inside its box (client 286/301 of 410); the Viewer sees "Only Owners can see API keys and webhooks.", the Owner doesn't |
 
 ## Findings in run 1 (both resolved)

@@ -44,7 +44,7 @@ export function assertSameOrigin(request: Request, origin = publicOrigin()): voi
   const sent = request.headers.get("origin");
   const site = request.headers.get("sec-fetch-site");
   if (sent !== null ? sent === origin.origin : site === "same-origin") return;
-  throw new HttpError(403, "This request didn't come from the WhiteFlow site.");
+  throw new HttpError(403, "This request didn't come from the Whiteflow site.");
 }
 
 const SQL_SIGN_IN = `WITH p AS (
@@ -80,7 +80,7 @@ const SQL_SIGN_IN = `WITH p AS (
   )
   SELECT id, principal_id FROM s`;
 
-/** Verifies the Privy tokens and starts a WhiteFlow session. Returns the Set-Cookie value and the principal. */
+/** Verifies the Privy tokens and starts a Whiteflow session. Returns the Set-Cookie value and the principal. */
 export async function signInWithPrivy(request: Request, body: { idToken?: unknown }, now = Date.now()): Promise<{ cookie: string; principal: Principal }> {
   const origin = publicOrigin();
   assertSameOrigin(request, origin);

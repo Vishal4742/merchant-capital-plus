@@ -1,9 +1,9 @@
-// WhiteFlow v2 API helpers (batch 050): one wrapper so a database outage answers 503 "nothing changed" (fail closed,
+// Whiteflow v2 API helpers (batch 050): one wrapper so a database outage answers 503 "nothing changed" (fail closed,
 // 032 acceptance 15) instead of a generic 500, plus the body reader the v2 routes share.
 import { DbUnavailable } from "./db.ts";
 import { HttpError, handle, readJson } from "./http.ts";
 
-export const DB_DOWN = "WhiteFlow can't reach its database right now. Nothing changed. Try again in a minute.";
+export const DB_DOWN = "Whiteflow can't reach its database right now. Nothing changed. Try again in a minute.";
 
 /** Connection-level failures (not SQL errors): unset DATABASE_URL, the Neon driver's fetch failure, Postgres classes
  *  08 (connection), 53 (resources), 57P0x (shutdown). Not 08P01 (protocol violation): that is our bug (e.g. a wrong

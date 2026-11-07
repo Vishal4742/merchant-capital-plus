@@ -8,7 +8,7 @@ import { DitherScene } from "@/components/DitherScene";
 import { HoldButton } from "@/components/HoldButton";
 import { TRANSPORT_LABEL, getChainClient } from "@/lib/anon";
 import { proveTypedDataSigning } from "@/lib/guest-wallet";
-import { WhiteFlowMark } from "@/components/WhiteFlowMark";
+import { WhiteflowMark } from "@/components/WhiteflowMark";
 
 type Proof =
   | { state: "running" }
@@ -122,8 +122,8 @@ export default function RailProofs() {
         <div className="relative mx-auto max-w-5xl px-4 pt-6 pb-24">
           <header className="flex items-center justify-between gap-4">
             <span className="title inline-flex items-center gap-2 whitespace-nowrap">
-              <WhiteFlowMark />
-              WhiteFlow
+              <WhiteflowMark />
+              Whiteflow
             </span>
             <span className="data hidden sm:inline">Phase 1 · rail proofs</span>
           </header>

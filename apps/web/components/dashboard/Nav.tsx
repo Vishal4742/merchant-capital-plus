@@ -1,4 +1,4 @@
-// WhiteFlow navigation (FR-UX-2): the five destinations Overview, Invoices, Payments, Connections, Settings, then the
+// Whiteflow navigation (FR-UX-2): the five destinations Overview, Invoices, Payments, Connections, Settings, then the
 // existing gateway tools (links, pages, vouchers, reports, settlements, developers, docs) and legacy Capital, outside the
 // five (its existing positions stay visible). Between screens that send the same CSP a link is next/link (a client
 // navigation, the shell prefetched, NFR-13); every other link is a plain <a>, a full load under its own headers

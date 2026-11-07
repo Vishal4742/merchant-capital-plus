@@ -1,19 +1,19 @@
-# WhiteFlow W0 — baseline and requirement matrix (2026-11-06)
+# Whiteflow W0 — baseline and requirement matrix (2026-11-06)
 
-Evidence rule: "fresh" = run in this workspace on 2026-11-06. Historical claims from notes/README/PHASES are labelled historical and are **not** evidence for WhiteFlow.
+Evidence rule: "fresh" = run in this workspace on 2026-11-06. Historical claims from notes/README/PHASES are labelled historical and are **not** evidence for Whiteflow.
 
 ## 1. Workspace and versions (fresh)
 | Item | Value |
 |---|---|
-| Inputs present | `merchant-capital-plus-main/` (app base), `Pixa-main/` (reference only), `WhiteFlow-Final-Vision-and-Claude-Build-Plan.md` (authoritative), `Business-Payments-Final-PRD.md` (supporting) |
-| Repository HEAD | **None — not a git checkout** (`git rev-parse` fails). Upstream remote per README: github.com/Vishal4742/merchant-capital-plus. The authoritative doc cites reviewed commit label `3cd0dc96…`; it cannot be confirmed here. |
+| Inputs present | `merchant-capital-plus-main/` (app base), `Pixa-main/` (reference only), `Whiteflow-Final-Vision-and-Claude-Build-Plan.md` (authoritative), `Business-Payments-Final-PRD.md` (supporting) |
+| Repository HEAD | **None — not a git checkout** (`git rev-parse` fails). Upstream remote per README: github.com/Vishal4742/whiteflow. The authoritative doc cites reviewed commit label `3cd0dc96…`; it cannot be confirmed here. |
 | Node / npm | v24.14.0 / 11.9.0 (CI and `apps/relayer`, `apps/shop` engines pin Node 26.x → `EBADENGINE` warnings) |
 | Foundry | Initially **not installed** and `contracts/lib/*` **empty**. Restored 2026-11-06 with owner approval: Foundry v1.8.6 (official win32 release, SHA-256 `924d6395…dcfff` matched the published checksum; forge commit `6bad0a66`) in `~/tools/foundry-v1.8.6`; forge-std v1.17.0 at `f3dae6e6…` and OpenZeppelin v5.7.0 at `cab19933…` (both equal to `foundry.lock`) |
 | Other | Python 3.13.14, psql 18.4 client, git 2.49, gh CLI present; no Docker |
 | `.env` | none exists → no DB URL, no keys, no funded wallets: every live testnet transaction is blocked until the owner configures them |
 | Key deps (lockfiles) | next 16.4.3, react 19.3.0, viem 2.57.13, @neondatabase/serverless 1.2.0, @electric-sql/pglite 0.5.11 (tests), typescript 5.9.3 (web/sdk) / 7.0.2 (relayer/shop), eslint 9.39.5 |
 
-## 2. Baseline checks (fresh, before any WhiteFlow change)
+## 2. Baseline checks (fresh, before any Whiteflow change)
 | Package | Command | Result |
 |---|---|---|
 | packages/sdk | `npm run typecheck` | exit 0 |
@@ -29,11 +29,11 @@ Evidence rule: "fresh" = run in this workspace on 2026-11-06. Historical claims 
 Historical (not fresh): web 584 tests/582 pass (batch 030 ci.md), forge 154 tests (batch 009), coverage MerchantPay 97.78% (notes/phase-4-contracts.md).
 
 ## 3. Implementation matrix
-Status vocabulary: Implemented and verified (fresh check) · Implemented but unverified · Missing · Blocked by external dependency · Deferred by the authoritative scope. SRS IDs for new work are the **proposed** v3.0 IDs (`docs/SRS-v3.0-WhiteFlow-PROPOSAL.md`), not yet approved.
+Status vocabulary: Implemented and verified (fresh check) · Implemented but unverified · Missing · Blocked by external dependency · Deferred by the authoritative scope. SRS IDs for new work are the **proposed** v3.0 IDs (`docs/SRS-v3.0-Whiteflow-PROPOSAL.md`), not yet approved.
 
 | Requirement | Source | Existing code | Status | Missing work | Verification |
 |---|---|---|---|---|---|
-| WhiteFlow branding, no unverified claims | WF§1, §12 | "Merchant Capital+" throughout; landing hard-codes "1.4 s median", "0 gas", "T+0" (`components/landing/Sections.tsx:88`, `HeroSheet.tsx:64`); dashboard "Settled: T+0" constant (`app/merchant/page.tsx:108`) | Missing | Rebrand user-facing copy; remove unmeasured claims (FR-UX-1) | Copy grep + screenshots (AT-19) |
+| Whiteflow branding, no unverified claims | WF§1, §12 | "Whiteflow" throughout; landing hard-codes "1.4 s median", "0 gas", "T+0" (`components/landing/Sections.tsx:88`, `HeroSheet.tsx:64`); dashboard "Settled: T+0" constant (`app/merchant/page.tsx:108`) | Missing | Rebrand user-facing copy; remove unmeasured claims (FR-UX-1) | Copy grep + screenshots (AT-19) |
 | 5-item navigation | WF§4 | Many separate merchant pages (links, pages, vouchers, reports, settlements, developers) | Missing (partial) | Re-home under Overview/Invoices/Payments/Connections/Settings (FR-UX-2) | Screens at 1440/360 |
 | Business workspace, memberships, roles | WF§4, §9 | Tenant = lowercase wallet address; no businesses/memberships/roles tables (`db/001…050`); single-merchant env model `MERCHANT_ADDRESS`/`SHOP_API_KEY`, `isShopInvoice` (`lib/settle.ts:94`) | Missing (partial) | FR-BIZ-1/2, FR-AUTH-1 | Role × route matrix tests (AT-27/28) |
 | Wallet-scoped tenant isolation (existing) | WF§6 | Every dashboard/API query scoped by server-derived merchant; foreign ids → 404 | Implemented and verified (fresh: cross-merchant tests in gw-keys, gw-links, gw-pages, gw-refunds, sessions-v2, gw-webhooks, capital-routes pass) | Re-key to business id preserving the pattern | Same tests after re-key |
@@ -104,11 +104,11 @@ Status vocabulary: Implemented and verified (fresh check) · Implemented but unv
 | ClaimToken V1 | 1874 | `0xce9b171a5c485a41dced9d7f043733bddc26c388` | deployed |
 | InvestorRegistry V1 | 1874 | `0x293430fae87ca79844c6e3a64e8044078c4d3e74` | deployed |
 | Retired MerchantPay | 1874 | `0x83b53cc0…73b7` (paused), `0x8effc3e2…248f` (paused; not in broadcast records) | keep paused |
-| PullStub (rail proof) | 1874 | `0x51e2e2a5…325d` | not used by WhiteFlow |
+| PullStub (rail proof) | 1874 | `0x51e2e2a5…325d` | not used by Whiteflow |
 | Sepolia USDC (proposed source) | 11155111 | `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` | verified live; corridor disabled |
 | L1CrossDomainMessenger | 11155111 | `0x547967f45d19dc4ca0a056ba525afe99bda18a88` | verified live |
 | L2CrossDomainMessenger | 1874 | `0x4200000000000000000000000000000000000007` | verified live |
 | OptimismPortal / DisputeGameFactory | 11155111 | `0xff9b597b0781457ae6aa7256ca5ed5839bf7d0c3` / `0xfaa2faa8912c069c01abc169c33713c79027c833` | verified live |
 
 ## 7. Pixa (reference only — no code copied, CON-1/CON-13)
-Adopt: one `register<Tool>(server, deps)` function per tool, zod input schemas, uniform `{content, isError}` result shaping, small tool surface. Reject: local private keys/wallet store, process-memory float budgets, signed payment headers returned to the model (`src/tools/pay.ts:121`), arbitrary URL fetch with auto-pay (`src/tools/x402-fetch.ts`), transfer/swap/token tools, hub dedupe by global correlation id without tenant/body comparison (`pixa-hub/src/api/pay.ts:153`), unconsumed request nonces (`src/core/auth.ts:102`), connection leak on early return. Pixa pins `@modelcontextprotocol/sdk ^1.26.0` (resolved 1.27.1); WhiteFlow pins 1.32.2.
+Adopt: one `register<Tool>(server, deps)` function per tool, zod input schemas, uniform `{content, isError}` result shaping, small tool surface. Reject: local private keys/wallet store, process-memory float budgets, signed payment headers returned to the model (`src/tools/pay.ts:121`), arbitrary URL fetch with auto-pay (`src/tools/x402-fetch.ts`), transfer/swap/token tools, hub dedupe by global correlation id without tenant/body comparison (`pixa-hub/src/api/pay.ts:153`), unconsumed request nonces (`src/core/auth.ts:102`), connection leak on early return. Pixa pins `@modelcontextprotocol/sdk ^1.26.0` (resolved 1.27.1); Whiteflow pins 1.32.2.

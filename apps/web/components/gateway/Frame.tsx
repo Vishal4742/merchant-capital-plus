@@ -1,7 +1,7 @@
-// Shared pieces of the WhiteFlow gateway screens:
+// Shared pieces of the Whiteflow gateway screens:
 // Editorial header, card styles, input field tokens, account badges, and signed-out states.
 import type { ReactNode } from "react";
-import { WhiteFlowWordmark } from "@/components/WhiteFlowLogo";
+import { WhiteflowWordmark } from "@/components/WhiteflowLogo";
 import { LegacyAccess, WorkspaceSignOut } from "@/components/workspace/LegacyAccess";
 
 export const card = "grid min-w-0 content-start gap-4 rounded-[16px] border border-hairline bg-surface p-5 md:p-6 shadow-card";
@@ -73,7 +73,7 @@ export function PlainPage({ children }: { children: ReactNode }) {
       <header className="flex items-center justify-between gap-4 border-b border-hairline pb-4">
         {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
         <a href="/" className="inline-flex min-h-10 items-center">
-          <WhiteFlowWordmark />
+          <WhiteflowWordmark />
         </a>
         <span className="text-xs font-medium text-ink-muted uppercase tracking-wider">
           Business Payments Workspace
@@ -87,11 +87,11 @@ export function PlainPage({ children }: { children: ReactNode }) {
 const GETS = [
   ["Invoices & Links", "Create invoices and shareable payment links settled directly in USDT."],
   ["Atomic Settlement", "Funds settle directly to your Whitechain wallet in the payment transaction."],
-  ["Zero Customer Gas", "Customer transactions on Whitechain testnet are sponsored by WhiteFlow relayer."],
+  ["Zero Customer Gas", "Customer transactions on Whitechain testnet are sponsored by Whiteflow relayer."],
   ["AI & Developer Ready", "Access through your dashboard, API keys, webhooks, or Model Context Protocol (MCP)."],
 ] as const;
 
-/** Every dashboard page without a linked workspace (batch 051): what a business gets, and the way in: WhiteFlow
+/** Every dashboard page without a linked workspace (batch 051): what a business gets, and the way in: Whiteflow
  *  sign-in, a workspace, then an Owner links the merchant wallet (LegacyAccess). `available` (the retired wallet
  *  cookie's secret) is ignored; the SIWE cleanup batch removes it from the pages. */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -101,13 +101,13 @@ export function SignedOut(props: { available?: boolean }) {
       <div className="mt-8 grid gap-8 md:mt-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:grid-rows-[auto_1fr] lg:gap-x-16 lg:gap-y-8">
         <div className="grid content-start gap-5 lg:pt-4">
           <span className="eyebrow self-start border-t border-accent pt-2.5 font-medium text-accent">
-            WhiteFlow Business Workspace
+            Whiteflow Business Workspace
           </span>
           <h1 className="max-w-[15ch] text-[38px] leading-tight font-semibold tracking-[-0.035em] text-ink md:text-[52px]">
             One invoice. <span className="text-accent">Clear settlement.</span>
           </h1>
           <p className="max-w-[48ch] text-sm text-ink-muted leading-relaxed">
-            Request business payments, accept supported crypto, and receive exact USDT settlement in your Whitechain wallet. Sign in to WhiteFlow to start.
+            Request business payments, accept supported crypto, and receive exact USDT settlement in your Whitechain wallet. Sign in to Whiteflow to start.
           </p>
         </div>
         <section aria-labelledby="setup" className={`${card} gap-3 shadow-card lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-start`}>
@@ -115,7 +115,7 @@ export function SignedOut(props: { available?: boolean }) {
             Open your workspace
           </h2>
           <p className="text-xs text-ink-muted">
-            Already used the dashboard with your wallet? Sign in to WhiteFlow, then link that wallet once: your links, keys and payments come with it.
+            Already used the dashboard with your wallet? Sign in to Whiteflow, then link that wallet once: your links, keys and payments come with it.
           </p>
           <LegacyAccess />
           <div className="grid gap-2 border-t border-hairline pt-4">

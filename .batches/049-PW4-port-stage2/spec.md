@@ -1,11 +1,11 @@
-# Spec: 049-PW4-port-stage2 — bring WhiteFlow Stage 1–2 from the snapshot into git
+# Spec: 049-PW4-port-stage2 — bring Whiteflow Stage 1–2 from the snapshot into git
 
 No new behaviour. This batch moves already-gated work (batch 031-PW4, closed at the owner's human gate 2026-11-06) from the non-git snapshot onto a branch off main, merges it with everything main gained since the snapshot was taken (Privy payer, MCP connector, Capital UI, settlement withdraw, admin Safe, debtor ack docs), and proves the merged tree still passes every check.
 
 ## Requirements (cite docs/SRS.md IDs)
 - Stage 2 (batch 031, unchanged): **FR-GW-7**, **FR-PAY-10** (webhook outbox: atomic event marker + deliveries, leases, isolation, pinned HTTPS), **FR-REL-5**, **FR-REL-6**, **FR-REL-10** (relayer lease + fence, write-ahead `rel_sent`, durable budget/limits/cooldown, fail-closed DB).
-- WhiteFlow requirements baseline: SRS v3.0 §8 adopted by the owner 2026-11-06 (FR-BIZ-*, FR-AUTH-*, FR-BILL-*, FR-CHK-*, FR-RFD-*, FR-OPS-*, FR-RTE-*, FR-MCP-6..11, FR-UX-*, NFR-15..19, CON-10..14, AT-19..56) merged with main's v2.3 changes (FR-PAY-16 Privy payer, FR-GW-15, FR-MCP-1..5).
-- **FR-UX-1** WhiteFlow brand, **FR-UX-2** dashboard navigation (rebrand already built in the snapshot).
+- Whiteflow requirements baseline: SRS v3.0 §8 adopted by the owner 2026-11-06 (FR-BIZ-*, FR-AUTH-*, FR-BILL-*, FR-CHK-*, FR-RFD-*, FR-OPS-*, FR-RTE-*, FR-MCP-6..11, FR-UX-*, NFR-15..19, CON-10..14, AT-19..56) merged with main's v2.3 changes (FR-PAY-16 Privy payer, FR-GW-15, FR-MCP-1..5).
+- **FR-UX-1** Whiteflow brand, **FR-UX-2** dashboard navigation (rebrand already built in the snapshot).
 - **FR-OPS-9** durable web rate limits (052), **FR-OPS-6** (partial: outbox pieces from 031).
 
 ## Acceptance criteria

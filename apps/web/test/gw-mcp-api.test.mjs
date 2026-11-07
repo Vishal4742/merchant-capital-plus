@@ -26,7 +26,7 @@ before(async () => {
 let sk, otherSk, pk;
 beforeEach(async () => {
   await resetDb();
-  // batch 051: a secret key acts once its wallet is linked to a WhiteFlow workspace (the key takes it in its INSERT)
+  // batch 051: a secret key acts once its wallet is linked to a Whiteflow workspace (the key takes it in its INSERT)
   await seedWorkspace(MERCHANT);
   await seedWorkspace(OTHER_MERCHANT);
   sk = (await createKey(MERCHANT, "mcp", "sk")).key;

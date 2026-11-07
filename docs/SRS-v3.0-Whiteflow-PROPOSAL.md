@@ -1,22 +1,22 @@
-# SRS change proposal v3.0 — WhiteFlow
+# SRS change proposal v3.0 — Whiteflow
 
 | | |
 |---|---|
 | Status | **ADOPTED 2026-11-06** into `docs/SRS.md` §8 (owner authorization). This file is the drafting record; SRS.md is authoritative. |
 | Drafted | 2026-11-06 by the lead engineer acting in the claude-research role (no claude-research session, agentbus or HANDOFF.md exists in this workspace; see `notes/whiteflow-status.md`). Amended the same day after an independent read-only gap review against WF§3–§12 by the peer session whiteflow-b7 (13 misses, 4 tensions, invented-rule labels — all incorporated; mechanism choices moved to §H). |
-| Sources, in precedence order | (1) the owner's build instruction of 2026-11-06; (2) `../WhiteFlow-Final-Vision-and-Claude-Build-Plan.md` v1.0 (cited **WF§n**); (3) non-conflicting detail from `../Business-Payments-Final-PRD.md` v2.0 (cited **PRD§n**). Existing code shows what is built, not what the product must be. |
+| Sources, in precedence order | (1) the owner's build instruction of 2026-11-06; (2) `../Whiteflow-Final-Vision-and-Claude-Build-Plan.md` v1.0 (cited **WF§n**); (3) non-conflicting detail from `../Business-Payments-Final-PRD.md` v2.0 (cited **PRD§n**). Existing code shows what is built, not what the product must be. |
 | Rule | No new business rule is invented here. Where the sources leave a rule open, the requirement says so and the dependent behaviour stays disabled. |
-| Applies to | `docs/SRS.md` v2.2 (Merchant Capital+). On approval the sections below are merged into SRS.md as v3.0, PHASES.md gains the W0–W10 rows in §F, and the cut/supersede list in §B is applied. IDs are never reused. |
+| Applies to | `docs/SRS.md` v2.2 (Whiteflow). On approval the sections below are merged into SRS.md as v3.0, PHASES.md gains the W0–W10 rows in §F, and the cut/supersede list in §B is applied. IDs are never reused. |
 
 ---
 
 ## A. Scope change
 
-v3.0 turns the gateway into **WhiteFlow**: a business payments workspace with business onboarding, a business-controlled Whitechain receiving wallet, invoices and payment links, account-free customer checkout, payment from explicitly supported networks/assets, exact designated USDT settlement on Whitechain, transaction evidence, reconciliation and recovery, and dashboard + MCP access to the same records (WF§1).
+v3.0 turns the gateway into **Whiteflow**: a business payments workspace with business onboarding, a business-controlled Whitechain receiving wallet, invoices and payment links, account-free customer checkout, payment from explicitly supported networks/assets, exact designated USDT settlement on Whitechain, transaction evidence, reconciliation and recovery, and dashboard + MCP access to the same records (WF§1).
 
 - Testnet only. Destination: Whitechain Sepolia 1874, designated test USDT `0xcedfB56113143d55b2358b8CFbB0dEB5Ad2f55a7` (6 dp; verified live 2026-11-06). First external corridor: Ethereum Sepolia 11155111 Circle test USDC `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` (6 dp; verified live 2026-11-06) → Whitechain USDT, **only after DEP-8 and the W6/W7 gates pass** (WF§3, §7).
 - Direct collection and cross-chain collection are independently feature-flagged. If the corridor fails, an honestly labelled direct-only build ships and the blocker is recorded; a simulated bridge is never a substitute (WF§3).
-- WhiteFlow is the user-facing name. Internal tables, contracts and APIs are not renamed for branding (WF§2).
+- Whiteflow is the user-facing name. Internal tables, contracts and APIs are not renamed for branding (WF§2).
 - Existing v2.2 requirements stay in force unless §B supersedes, scopes or cuts them.
 
 ## B. Conflict resolutions (applied on approval)
@@ -25,24 +25,24 @@ v3.0 turns the gateway into **WhiteFlow**: a business payments workspace with bu
 |---|---|---|---|
 | R1 | FR-MCP-5 (agent signs and pays a checkout with `MCP_PAYER_KEY`) | **Cut.** Not implemented (`packages/mcp` does not exist), so no code is removed. | Owner instruction §7; WF§3 ("Autonomous agent spending/x402 buying: not included"), WF§6 |
 | R2 | FR-MCP-1, FR-MCP-2, FR-MCP-4, AT-16 (local stdio server with an env `sk_test_` key) | **Superseded** by FR-MCP-6…11 (remote OAuth MCP). A stdio adapter may exist later only as an optional developer adapter over the same services. FR-MCP-3 (no tool moves money, signs, refunds or changes keys/wallets/webhooks) is kept and strengthened by FR-MCP-8. | WF§5 (`src/index.ts` row), WF§6 |
-| R3 | FR-GW-15 + AT-18 (Settlements withdraw) | **Deferred** (not in the WhiteFlow testnet scope table). The balance card may remain only labelled "Wallet balance — not revenue, not held by WhiteFlow". | WF§3, §4 ("never fabricate a dashboard custodial balance"), §6 (no withdrawal tool) |
+| R3 | FR-GW-15 + AT-18 (Settlements withdraw) | **Deferred** (not in the Whiteflow testnet scope table). The balance card may remain only labelled "Wallet balance — not revenue, not held by Whiteflow". | WF§3, §4 ("never fabricate a dashboard custodial balance"), §6 (no withdrawal tool) |
 | R4 | FR-PAY-7, NFR-6, SR-SC-1 (no chain names, gas or signatures on the pay page) | **Superseded** by FR-CHK-2 and FR-UX-1: plain business language first, but the network, token, required approvals/signatures and source-gas requirement are always disclosed, with technical evidence expandable. | WF§1, §4 |
 | R5 | CON-4 (payers never pay gas) | **Scoped** to the direct Whitechain route (destination WBT is sponsored by the relayer). On an external route the payer pays source gas and any approval, disclosed before signing. The whole flow is never labelled gasless. | WF§1 |
 | R6 | DEP-3 result and ARCHITECTURE §4 (customer guest wallet = key in localStorage) | **Replaced** by FR-CHK-1: an existing funded wallet is the default; the guest wallet is a clearly labelled demo fixture, off in production configuration. | WF§4, §10 (`guest-wallet.ts` row); PRD§6 |
 | R7 | FR-GW-10 "showing that settlement is instant (T+0)"; SRS §1.2 "instant settlements" | **Wording removed** (FR-UX-1). Settlement views show observed inclusion and finality with timestamps. | WF§1, §12 first box |
-| R8 | FR-GW-11 "USD converts 1:1 to USDT" | WhiteFlow invoices are denominated in settlement USDT atomic units (FR-BILL-1). Legacy multi-currency links/pages keep working, but the 1:1 rule is displayed as the operator's pricing rule, never as a parity claim. | WF§2 ("do not promise stablecoin parity"), PRD§7.2 |
+| R8 | FR-GW-11 "USD converts 1:1 to USDT" | Whiteflow invoices are denominated in settlement USDT atomic units (FR-BILL-1). Legacy multi-currency links/pages keep working, but the 1:1 rule is displayed as the operator's pricing rule, never as a parity claim. | WF§2 ("do not promise stablecoin parity"), PRD§7.2 |
 | R9 | NFR-5 ("no event-log scans"); ARCHITECTURE §6 ("Neon holds only sessions…; the chain is the truth") | **Superseded for server workers** by FR-OPS-3/FR-OPS-5: chain events prove execution; Postgres owns drafts, grants, workflows and reconciliation projections; workers use checkpointed, bounded log queries. Browser pages still make no log scans. | WF§8 |
 | R10 | SRS §1.2 / §7 "strictly on Whitechain Sepolia"; FR-GW-14 "no mainnet path exists" | **Extended:** Ethereum Sepolia is added as a source **testnet**. Still testnet only (CON-9); mainnet stays disabled behind W10. | WF§3, §11 |
 | R11 | FR-PAY-15 (wallet = merchant identity); single-merchant env model (`MERCHANT_ADDRESS`, `SHOP_API_KEY`, `isShopInvoice`) | **Extended** by FR-BIZ-1, FR-BIZ-6 and FR-AUTH-1: identity is principal → membership → business, behind one AuthContext adapter. WF§4.1 asks for a vetted sign-in with a recovery path and passkey enrollment kept separate from wallet signing; the mechanism is a **pending human decision** (FR-BIZ-6). Until it is decided, wallet SIWE remains an adapter so W2 service work is not blocked. Demo-only eligibility checks are replaced by registered-business eligibility, not deleted. | WF§4.1, §6, §10; PRD§6, §14 |
 | R12 | Duplicate ID FR-PAY-16 (SRS.md lines 110 and 111) | The owner sweep (v1.1, deployed) keeps **FR-PAY-16**. "Pay with your own wallet" becomes **FR-PAY-17** and is subsumed by FR-CHK-1. | SRS change control ("IDs are never reused") |
-| R13 | PHASES "Never cut: the advance"; Phase 5 Capital tab screens | Deployed Capital contracts, server reads and existing positions stay. **No new Capital/lending screens** in WhiteFlow scope. Legacy obligations are protected by CON-11. | WF§3 ("Lending/revenue advances: maintain legacy obligations only"), WF§10 |
-| R14 | FR-PRIV-1…4, FR-ARK-* (sponsor tracks) | Kept where implemented; not extended; not part of WhiteFlow acceptance. Cross-chain checkout reads made through the payer's own wallet provider are added to the FR-PRIV-4 exclusions (W7). | Owner instruction §4 ("preserve working integrations") |
-| R15 | CON-5, CON-6, SR-* (hackathon submission) | Unchanged; not WhiteFlow acceptance criteria. | — |
+| R13 | PHASES "Never cut: the advance"; Phase 5 Capital tab screens | Deployed Capital contracts, server reads and existing positions stay. **No new Capital/lending screens** in Whiteflow scope. Legacy obligations are protected by CON-11. | WF§3 ("Lending/revenue advances: maintain legacy obligations only"), WF§10 |
+| R14 | FR-PRIV-1…4, FR-ARK-* (sponsor tracks) | Kept where implemented; not extended; not part of Whiteflow acceptance. Cross-chain checkout reads made through the payer's own wallet provider are added to the FR-PRIV-4 exclusions (W7). | Owner instruction §4 ("preserve working integrations") |
+| R15 | CON-5, CON-6, SR-* (hackathon submission) | Unchanged; not Whiteflow acceptance criteria. | — |
 | R16 | FR-GW-14 badge vs FR-PAY-7 | The "Test mode · testnet" badge stays on every page (supports CON-9). | WF§11 (testnet/prod separation) |
 
 ## C. New requirements
 
-Priority: M must / S should / C could. **W** = WhiteFlow roadmap batch (WF§11).
+Priority: M must / S should / C could. **W** = Whiteflow roadmap batch (WF§11).
 
 ### C.1 Business workspace, roles and receiving policy — FR-BIZ
 | ID | Requirement | Pri | W | Source |
@@ -51,8 +51,8 @@ Priority: M must / S should / C could. **W** = WhiteFlow roadmap batch (WF§11).
 | FR-BIZ-2 | Membership roles Owner, Operator, Viewer with exactly the permissions of WF§9: Owner manages team/settings, approves receiving policies, publishes, authorizes refunds (subject to wallet authority); Operator drafts invoices, inspects payments, prepares links and refund proposals, but cannot change destinations or move treasury funds; Viewer reads only. Enforced in the shared services for dashboard, API and MCP. | M | W2 | WF§9 |
 | FR-BIZ-3 | Receiving-wallet proof of control: a fresh, single-use, short-lived, domain-bound challenge (EIP-4361 format) signed by the receiving wallet. EOA signatures only; EIP-1271 contract wallets stay unsupported until an actual compatibility test passes. The status is labelled "wallet control confirmed", never business legitimacy. | M | W2 | WF§4.2–4.3, §9 |
 | FR-BIZ-4 | Settlement policy versions are immutable rows: business, version, chain id, token address, recipient, policy hash, approver, approval evidence (wallet proof id), created time. The confirmation screen shows the full address with copy and explorer options, the network and the exact token, and requires an explicit confirm action. Only an Owner approves. A new version requires step-up authentication (engineering choice: a sign-in within the last 10 minutes, testnet value, labelled) and a fresh proof for the new address, notifies the other Owners and writes an audit event. Approved or published invoices keep their original policy version; changing settings or recovering an account can never redirect them. | M | W2 | WF§4.3, §4, §9; PRD§6 (settlement address changes) |
-| FR-BIZ-5 | Activation: WhiteFlow collection starts only when an approved policy exists. A new workspace can draft and preview invoices before activation. A receiving wallet with outstanding V1 Capital claims or liens stays on the V1 liability-aware payment path (V1 MerchantPay, which repays investors) and is refused for V2 and any new route (CON-11). Verification statuses are shown separately and only when actually checked: account authenticated · wallet control confirmed · domain confirmed (not implemented) · human verified (optional, W8) · business verified (not implemented). | M | W3 | WF§4.4, §9, §10; PRD§11.1 |
-| FR-BIZ-6 | Verified workspace sign-in with a recovery path and passkey enrollment, using a vetted authentication implementation; login is kept separate from wallet signing (a passkey is not an EVM signer). **Owner decision 2026-11-06 (testnet):** wallet-only SIWE behind the shared AuthContext, with memberships and server-revocable sessions, kept separate from receiving-wallet proof; the absence of WhiteFlow-side recovery is disclosed as a testnet limitation; email/passkey sign-in with reviewed recovery is required before broader pilots. No recovery path may change a policy or a published invoice. | M | W2 (testnet form) / before pilots (recovery) | WF§4.1, §6; PRD§19 |
+| FR-BIZ-5 | Activation: Whiteflow collection starts only when an approved policy exists. A new workspace can draft and preview invoices before activation. A receiving wallet with outstanding V1 Capital claims or liens stays on the V1 liability-aware payment path (V1 MerchantPay, which repays investors) and is refused for V2 and any new route (CON-11). Verification statuses are shown separately and only when actually checked: account authenticated · wallet control confirmed · domain confirmed (not implemented) · human verified (optional, W8) · business verified (not implemented). | M | W3 | WF§4.4, §9, §10; PRD§11.1 |
+| FR-BIZ-6 | Verified workspace sign-in with a recovery path and passkey enrollment, using a vetted authentication implementation; login is kept separate from wallet signing (a passkey is not an EVM signer). **Owner decision 2026-11-06 (testnet):** wallet-only SIWE behind the shared AuthContext, with memberships and server-revocable sessions, kept separate from receiving-wallet proof; the absence of Whiteflow-side recovery is disclosed as a testnet limitation; email/passkey sign-in with reviewed recovery is required before broader pilots. No recovery path may change a policy or a published invoice. | M | W2 (testnet form) / before pilots (recovery) | WF§4.1, §6; PRD§19 |
 | FR-BIZ-7 | Platform roles are separate from workspace roles: Platform support has redacted, scoped, audited diagnostic access with no payouts and no impersonation. Treasury administration is separate: tested multisig with distinct operators before production, least privilege, change delays where appropriate, explicit break-glass. A worker executes allowed intents only, never arbitrary vault withdrawals. Independent Approver / dual control is **deferred** to the team release. | M | W6/W9 | WF§9 |
 
 ### C.2 Authorization, idempotency and audit — FR-AUTH
@@ -70,7 +70,7 @@ Priority: M must / S should / C could. **W** = WhiteFlow roadmap batch (WF§11).
 | FR-BILL-1 | Invoice drafts are editable and private (off-chain): customer reference, description, optional line items, amount in settlement-USDT atomic units, concrete due date stored in UTC plus the business timezone. | M | W3 | WF§4.5, §8 |
 | FR-BILL-2 | Approval creates an immutable invoice version binding business, invoice id/version, settlement policy version and hash, chain id, token, recipient, amount, fee policy and expiry, with a terms hash shown on the review page. Any change creates a new version and invalidates earlier approvals. | M | W3 | WF§6; PRD§7.1 |
 | FR-BILL-3 | Draft, approval, on-chain issuance and link publication are distinct operations with distinct statuses. Publication never claims issuance before issuance is confirmed on chain. | M | W3 | WF§6 |
-| FR-BILL-4 | A published invoice has a public payment link showing business display name, amount, token, network and due date; the customer needs no WhiteFlow account. | M | W3 | WF§1, §4 |
+| FR-BILL-4 | A published invoice has a public payment link showing business display name, amount, token, network and due date; the customer needs no Whiteflow account. | M | W3 | WF§1, §4 |
 | FR-BILL-5 | Capacity: credited amount plus active reservations never exceeds the approved amount. Testnet release supports one-off full payment only. | M | W3/W6 | WF§3; PRD§15 invariants |
 | FR-BILL-6 | An unpaid published invoice can be cancelled; cancellation and payment resolve to exactly one terminal outcome. | S | W3 | WF§7 (races) |
 
@@ -138,7 +138,7 @@ Priority: M must / S should / C could. **W** = WhiteFlow roadmap batch (WF§11).
 ### C.10 Experience — FR-UX
 | ID | Requirement | Pri | W | Source |
 |---|---|---|---|---|
-| FR-UX-1 | User-facing brand WhiteFlow. No unverified "any chain", "instant", "safe", "audited", "insured", "institutional-grade" or blanket "gasless" claims; no hard-coded performance figures. | M | W3 | WF§1, §12 |
+| FR-UX-1 | User-facing brand Whiteflow. No unverified "any chain", "instant", "safe", "audited", "insured", "institutional-grade" or blanket "gasless" claims; no hard-coded performance figures. | M | W3 | WF§1, §12 |
 | FR-UX-2 | Dashboard navigation: Overview, Invoices, Payments, Connections, Settings. Existing gateway features (links, pages, vouchers, QR, reports, developers) live inside these; checkout and receipt stay separate public pages; Capital stays legacy/beta outside main navigation with existing positions visible. | M | W3 | WF§4 |
 | FR-UX-3 | Receivables, settled collections, fees and refunds are distinct metrics computed from records; a wallet balance is labelled as not revenue. | M | W3 | WF§4 |
 | FR-UX-4 | Keyboard operation, visible focus, readable contrast, labelled controls, inline validation, wallet return path, no horizontal overflow at 360 px, no colour-only status. | M | W3 | WF§4 |
@@ -172,10 +172,10 @@ Priority: M must / S should / C could. **W** = WhiteFlow roadmap batch (WF§11).
 All start unchecked; a box is checked only with reproducible evidence.
 
 **Product and onboarding**
-AT-19 WhiteFlow branding consistent; no unverified "any chain", "instant", "safe", "audited" or "institutional-grade" claims. ·
+AT-19 Whiteflow branding consistent; no unverified "any chain", "instant", "safe", "audited" or "institutional-grade" claims. ·
 AT-20 A new business can create a draft before completing collection activation. ·
 AT-21 Receiving-wallet proof and immutable policy are enforced; a changed policy cannot redirect an existing invoice. ·
-AT-22 A customer pays without a WhiteFlow account, World ID or AI subscription. ·
+AT-22 A customer pays without a Whiteflow account, World ID or AI subscription. ·
 AT-23 Unsupported network/token/wallet/exchange-send cases are explained before a deposit. ·
 AT-24 Exact fees/net receipt and recovery limitations are visible before approval. ·
 AT-25 Mobile wallet return, refresh and expired-quote flows preserve correct state. ·
@@ -236,7 +236,7 @@ AT-56 Mainnet exact asset, route, security, operational, economic and eligibilit
 Feature flags default off for cross-chain, MCP writes, World sponsorship and mainnet (WF§11). Dependencies (WF§11): W1 and W2 run independently after W0; W3 needs W2 and does not wait for W1; W4 needs W2 and integrates W3; **W5 needs W2–W4 and cannot bypass missing durable services**; W6 needs W1 and frozen W2/W4 interfaces; W7 needs W4 and W6; W8 needs W2 and is optional; **W9's gate also requires no critical unresolved money/auth defects**; W10 needs pilot evidence. If W1 fails, W6/W7 stay disabled and the direct path continues.
 
 ## G. Per-batch gate artifacts (WF§11)
-Every WhiteFlow batch records in its spec/build files: problem and acceptance criteria, SRS mapping, affected interfaces, migrations, tests with real output, residual risks, rollback plan and evidence links. (Adding these headings to `tools/batch-start.sh`'s template is a pipeline change and needs the human, PIPELINE §11; until then batches include them by hand.)
+Every Whiteflow batch records in its spec/build files: problem and acceptance criteria, SRS mapping, affected interfaces, migrations, tests with real output, residual risks, rollback plan and evidence links. (Adding these headings to `tools/batch-start.sh`'s template is a pipeline change and needs the human, PIPELINE §11; until then batches include them by hand.)
 
 ## H. Engineering choices (reversible, not requirements)
 Labelled so they are not mistaken for owner rules: EIP-4361 format for wallet proofs (FR-BIZ-3); 10-minute step-up window (FR-BIZ-4); sorted-key JSON + SHA-256 canonical hash (FR-AUTH-4); 404 for foreign ids (FR-AUTH-1); "insured" added to the banned-claims list and "no colour-only status" (FR-UX-1/4); 10/60-minute corridor deadlines come from PRD§8.6, not WF. External facts used here (SDK version, messenger addresses, token metadata) carry their verification date and are re-checked at the batch that relies on them.

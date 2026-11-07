@@ -1,4 +1,4 @@
-// WhiteFlow Connections Workspace (/merchant/connections):
+// Whiteflow Connections Workspace (/merchant/connections):
 // Manage API credentials, webhook endpoints, and Model Context Protocol (MCP) connectivity.
 import { connection } from "next/server";
 import { Suspense } from "react";
@@ -103,7 +103,7 @@ async function ConnectionsLoader() {
 
           <div className="grid grid-cols-[minmax(0,1fr)] gap-3 text-sm text-ink-muted">
             <p>
-              WhiteFlow targets protocol version <span className="font-mono text-ink">2025-11-25</span> using{" "}
+              Whiteflow targets protocol version <span className="font-mono text-ink">2025-11-25</span> using{" "}
               <span className="font-mono text-ink">@modelcontextprotocol/sdk 1.32.2</span> over Streamable HTTP.
             </p>
             <div className="rounded-[10px] bg-surface-sunk/70 p-4 border border-hairline">

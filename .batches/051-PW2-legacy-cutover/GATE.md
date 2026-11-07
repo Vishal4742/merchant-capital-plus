@@ -12,7 +12,7 @@
    - A failed V1 obligations read refuses the claim (CON-11).
    - Refused claims are rate-limited.
 2. **The v1 cutover.**
-   - The 18 merchant handlers and the dashboard pages answer to WhiteFlow sessions and workspace roles (R2-1 map).
+   - The 18 merchant handlers and the dashboard pages answer to Whiteflow sessions and workspace roles (R2-1 map).
    - The old wallet cookie (`mc_session`) is accepted nowhere.
    - API keys and webhooks are Owner-only.
    - Secret keys manage webhooks only once their wallet is linked.

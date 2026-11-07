@@ -1,9 +1,9 @@
-// WhiteFlow Workspace Shell — Polished financial-workspace layout.
-// Sidebar with WhiteFlow wordmark, navigation sections, account session & network indicator, and main content area.
+// Whiteflow Workspace Shell — Polished financial-workspace layout.
+// Sidebar with Whiteflow wordmark, navigation sections, account session & network indicator, and main content area.
 import type { ReactNode } from "react";
 import { Nav, type NavKey } from "@/components/dashboard/Nav";
 import { PrivateReads } from "@/components/dashboard/PrivateReads";
-import { WhiteFlowWordmark } from "@/components/WhiteFlowLogo";
+import { WhiteflowWordmark } from "@/components/WhiteflowLogo";
 
 export function Shell({
   active,
@@ -26,9 +26,9 @@ export function Shell({
           <a
             href="/"
             className="order-1 inline-flex min-h-10 items-center whitespace-nowrap rounded-lg px-2 py-1 transition-colors hover:bg-surface-sunk md:mb-2"
-            aria-label="WhiteFlow home"
+            aria-label="Whiteflow home"
           >
-            <WhiteFlowWordmark />
+            <WhiteflowWordmark />
           </a>
 
           {/* Account profile & network badge (at top on mobile, at bottom on desktop) */}

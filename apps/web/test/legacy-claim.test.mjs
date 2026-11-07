@@ -1,4 +1,4 @@
-// Batch 051 (Stage 3): claiming a legacy merchant wallet for a WhiteFlow workspace through the real v2 route handlers on
+// Batch 051 (Stage 3): claiming a legacy merchant wallet for a Whiteflow workspace through the real v2 route handlers on
 // PGlite, with real wallet signatures (viem). Spec acceptance 1, 2, 4, 5, 12 (3 = real-Postgres races,
 // tools/stage3/legacy-neon.mjs).
 import { test, beforeEach, mock } from "node:test";

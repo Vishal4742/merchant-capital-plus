@@ -11,7 +11,7 @@ import { Confirming } from "@/components/Confirming";
 import { HoldButton } from "@/components/HoldButton";
 import { InvoiceAck } from "@/components/InvoiceAck";
 import { MerchantName } from "@/components/MerchantName";
-import { WhiteFlowWordmark } from "@/components/WhiteFlowLogo";
+import { WhiteflowWordmark } from "@/components/WhiteflowLogo";
 import { GuestShort, WalletOption, endWalletSession, loadSigner, useGuestFunds, walletPayer, type WalletVia } from "@/components/WalletPay";
 import { FAILED, errorTone, outcome, type PayAnswer } from "@/lib/outcome";
 import type { AckEntry } from "@/lib/server/invoice-acks";
@@ -123,7 +123,7 @@ export function InvoicePay({ invoiceId, merchantName, verified, dueText, invoice
   return (
     <section className="relative grid w-full max-w-[420px] gap-5 rounded-[24px] bg-surface p-7 text-ink shadow-float border border-hairline" aria-live="polite">
       <div className="flex items-center justify-between border-b border-hairline pb-3">
-        <WhiteFlowWordmark className="text-xs" />
+        <WhiteflowWordmark className="text-xs" />
         <span className="eyebrow text-xs text-ink-muted">Whitechain Sepolia</span>
       </div>
       <div className="flex items-start justify-between gap-4">

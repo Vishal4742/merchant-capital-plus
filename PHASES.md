@@ -16,8 +16,8 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 | 6 | Proof and documentation | FR-PRIV-4, SR-* evidence, NFR-9 | G6: README review finds every SR item | all |
 | 7 | Video and submission | SR-ETH-2, CON-6 | G7: submission confirmed | all |
 
-## WhiteFlow phases W0–W10 (SRS v3.0 §8, adopted 2026-11-06)
-The owner's staged execution plan maps onto these (tracker: `notes/whiteflow-status.md`: Stage 2 = W4 subset, 3 = W2, 4 = W3, 5 = rest of W4, 6 = W5, 7 = W1, 8 = W6/W7, 9 = W9). Phases 0–7 below are the earlier Merchant Capital+ hackathon plan, kept for history.
+## Whiteflow phases W0–W10 (SRS v3.0 §8, adopted 2026-11-06)
+The owner's staged execution plan maps onto these (tracker: `notes/whiteflow-status.md`: Stage 2 = W4 subset, 3 = W2, 4 = W3, 5 = rest of W4, 6 = W5, 7 = W1, 8 = W6/W7, 9 = W9). Phases 0–7 below are the earlier Whiteflow hackathon plan, kept for history.
 
 
 | Phase | Delivers | Gate |

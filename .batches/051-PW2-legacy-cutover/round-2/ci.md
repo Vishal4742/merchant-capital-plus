@@ -21,7 +21,7 @@ These ran away from P:/wf-051, whose working tree holds another party's uncommit
 | `npm run lint` | clean |
 | `node --experimental-test-module-mocks --test test/` (Node 26.13.0) | 813 tests, 811 pass, 0 fail, 2 skipped |
 | `npm run build` | exit 0 (60/60 static pages; two "shop key check: Error" lines from lib/shop-auth.ts at build time with no database; not this batch, and the exit code is 0) |
-| `node tools/stage3/legacy-neon.mjs P:/WhiteFlow/.env` (Neon production driver, wf_s2_web) | 6/6: schema; 3a one claim ×3; 3b two workspaces × one wallet; 3c claim vs removal (free); 3d claim vs removal (staged); 3e claim vs demotion (staged) |
+| `node tools/stage3/legacy-neon.mjs P:/Whiteflow/.env` (Neon production driver, wf_s2_web) | 6/6: schema; 3a one claim ×3; 3b two workspaces × one wallet; 3c claim vs removal (free); 3d claim vs removal (staged); 3e claim vs demotion (staged) |
 | pre-push hook (push of fe2059a from the clean worktree) | web typecheck, lint, tests, relayer typecheck and tests: all passed |
 
 ## Reviews and walks

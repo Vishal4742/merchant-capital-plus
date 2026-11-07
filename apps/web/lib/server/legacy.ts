@@ -1,5 +1,5 @@
 // Batch 051 (Stage 3, SRS v3.1 FR-BIZ-1..3, FR-AUTH-1..3, FR-AUTH-5, CON-11, NFR-17): a legacy merchant wallet joins a
-// WhiteFlow workspace, and the v1 gateway answers to workspace roles instead of the retired wallet cookie.
+// Whiteflow workspace, and the v1 gateway answers to workspace roles instead of the retired wallet cookie.
 // - Claim: an Owner proves control of the legacy merchant wallet by signing a fresh, single-use EIP-4361 message the
 //   server built for this principal and workspace. Linking the workspace, consuming the challenge, moving the wallet's
 //   API keys into the workspace, the Owners' notices and the audit row are ONE statement. A wrong signature or a failed
@@ -34,7 +34,7 @@ const TAKEN = "That merchant account is already linked to another workspace.";
 const NOT_SIGNER = "That signature isn't from this wallet. Sign with the merchant wallet you entered.";
 const BAD_SIGNATURE = "That signature isn't valid.";
 const OBLIGATIONS_DOWN = "We couldn't check this wallet's Capital obligations, so nothing was linked. Try again in a minute.";
-const KEY_NOT_LINKED = "This API key's merchant account isn't linked to a WhiteFlow workspace yet. An Owner can link it in Settings.";
+const KEY_NOT_LINKED = "This API key's merchant account isn't linked to a Whiteflow workspace yet. An Owner can link it in Settings.";
 const PK_FORBIDDEN = "A publishable key (pk_test_…) can't do this: use your secret key (sk_test_…), on your server only.";
 
 type OwnerContext = AuthContext & { principalId: string; businessId: string };
@@ -97,7 +97,7 @@ export async function issueClaimChallenge(ctx: AuthContext, input: { address: un
   const message = createSiweMessage({
     domain: origin.host,
     address: wallet,
-    statement: `WhiteFlow merchant-account link: this wallet's existing gateway records (links, pages, vouchers, keys, webhooks, payments) will be managed by the members of "${name}" by role. It moves no funds.`,
+    statement: `Whiteflow merchant-account link: this wallet's existing gateway records (links, pages, vouchers, keys, webhooks, payments) will be managed by the members of "${name}" by role. It moves no funds.`,
     uri: origin.origin,
     version: "1",
     chainId: whitechainSepolia.id,
@@ -262,7 +262,7 @@ async function keyAccess(request: Request, scope: Scope, publishableForbidden: b
   const key = await authenticateKey(request);
   // a pk_ key ships to browsers, so it never reads or creates merchant records (main's batch 052)
   if (key?.kind === "pk" && publishableForbidden) throw new Forbidden(PK_FORBIDDEN);
-  if (!key || key.kind !== "sk") throw new AuthError("Sign in to your WhiteFlow workspace, or send your secret API key.");
+  if (!key || key.kind !== "sk") throw new AuthError("Sign in to your Whiteflow workspace, or send your secret API key.");
   if (!SECRET_KEY_SCOPES.has(scope)) throw new Forbidden("API keys can't do that.");
   if (key.businessId === null) throw new HttpError(409, KEY_NOT_LINKED);
   const merchant = await linkedMerchantOf(key.businessId);
@@ -278,7 +278,7 @@ export interface DashboardWorkspace {
   scopes: ReadonlySet<Scope>;
 }
 
-/** The dashboard pages' caller: the WhiteFlow session token → the active workspace membership (re-read now) → the
+/** The dashboard pages' caller: the Whiteflow session token → the active workspace membership (re-read now) → the
  *  legacy wallet it linked. Null when signed out, without a linked workspace, or on any failure (fail closed: the page
  *  renders no merchant data). lib/merchant-session.ts passes the cookie. */
 export async function dashboardWorkspace(token: string | undefined): Promise<DashboardWorkspace | null> {

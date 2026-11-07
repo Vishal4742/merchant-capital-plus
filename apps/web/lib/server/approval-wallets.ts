@@ -65,7 +65,7 @@ export async function requestEnrollment(ctx: AuthContext, input: { wallet: unkno
   if (typeof input.endorser !== "string" || !isAddress(input.endorser, { strict: false })) throw new HttpError(400, "Choose the enrolled wallet that endorses it.");
   const wallet = input.wallet.toLowerCase(), endorser = input.endorser.toLowerCase();
   const [mine] = await query("SELECT 1 FROM wf_principal_wallets WHERE principal_id = $1 AND address = $2", [owner.principalId, wallet]);
-  if (!mine) throw new HttpError(400, "Enroll a wallet linked to your WhiteFlow sign-in. Link it in the sign-in dialog, then sign in again.");
+  if (!mine) throw new HttpError(400, "Enroll a wallet linked to your Whiteflow sign-in. Link it in the sign-in dialog, then sign in again.");
   // an active enrollment can't be repeated; a revoked one (its Owner was removed or demoted) needs this fresh endorsement
   const [taken] = await query("SELECT 1 FROM wf_approval_wallets WHERE business_id = $1 AND wallet = $2 AND revoked_at IS NULL", [owner.businessId, wallet]);
   if (taken) throw new HttpError(409, "That wallet is already an approval wallet of this workspace.");
@@ -89,7 +89,7 @@ export async function requestEnrollment(ctx: AuthContext, input: { wallet: unkno
   const message = createSiweMessage({
     domain: origin.host,
     address: getAddress(endorser),
-    statement: `WhiteFlow: endorse ${getAddress(wallet)} as an approval wallet of "${promptSafe(biz.display_name)}" for its Owner ${asker}. Approval wallets can approve where this workspace is paid. Sign only if you know this wallet belongs to that Owner. It moves no funds.`,
+    statement: `Whiteflow: endorse ${getAddress(wallet)} as an approval wallet of "${promptSafe(biz.display_name)}" for its Owner ${asker}. Approval wallets can approve where this workspace is paid. Sign only if you know this wallet belongs to that Owner. It moves no funds.`,
     uri: origin.origin,
     version: "1",
     chainId: whitechainSepolia.id,

@@ -1,4 +1,4 @@
-// WhiteFlow Business Workspace Home (/merchant):
+// Whiteflow Business Workspace Home (/merchant):
 // Non-custodial settlement, verified metrics, quick actions, invoices, payments and sponsored relayer telemetry.
 import { connection } from "next/server";
 import { Suspense } from "react";
@@ -179,7 +179,7 @@ function Band({ shop, when, note }: { shop: string; when: string; note?: string 
       <div className="absolute right-4 bottom-[20px] left-4 md:left-8">
         <div className="flex flex-wrap items-center gap-x-2 text-xs">
           <span className="eyebrow text-accent font-semibold tracking-wide">
-            WhiteFlow Workspace
+            Whiteflow Workspace
           </span>
           <span className="text-ink-muted">·</span>
           <span className="eyebrow opacity-80">{shop}</span>
@@ -412,7 +412,7 @@ async function Dashboard() {
             <StatusBadge status={health && !health.paused ? "paid" : "warning"} label={health && !health.paused ? "Running" : "Standby"} />
           </div>
           <p className="text-xs text-ink-muted leading-relaxed">
-            Customers pay zero network gas on Whitechain. The WhiteFlow relayer sponsors transaction gas and deducts a transparent {feeText ? `${feeText} USDT` : "nominal"} fee upon settlement.
+            Customers pay zero network gas on Whitechain. The Whiteflow relayer sponsors transaction gas and deducts a transparent {feeText ? `${feeText} USDT` : "nominal"} fee upon settlement.
           </p>
           {health ? (
             <dl className="grid gap-2 text-xs md:grid-cols-4 md:gap-4 pt-1">
@@ -434,7 +434,7 @@ async function Dashboard() {
         </section>
 
         <p className="text-xs text-ink-muted">
-          All payments settle directly to your Whitechain receiving wallet in the settlement transaction (T+0). WhiteFlow maintains non-custodial accounting; transaction amounts are customer payments, not a pooled custodial balance.
+          All payments settle directly to your Whitechain receiving wallet in the settlement transaction (T+0). Whiteflow maintains non-custodial accounting; transaction amounts are customer payments, not a pooled custodial balance.
         </p>
       </div>
     </Shell>

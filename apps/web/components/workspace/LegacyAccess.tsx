@@ -1,7 +1,7 @@
 "use client";
 // Batch 051 (SRS FR-BIZ-1, FR-BIZ-3 pattern, FR-AUTH-2): the dashboard's signed-out panel after the wallet-cookie
-// cutover. The merchant dashboard opens for a WhiteFlow workspace that linked the legacy merchant wallet, so this panel
-// walks the person there: sign in to WhiteFlow → a workspace → an Owner links the merchant wallet with one signature
+// cutover. The merchant dashboard opens for a Whiteflow workspace that linked the legacy merchant wallet, so this panel
+// walks the person there: sign in to Whiteflow → a workspace → an Owner links the merchant wallet with one signature
 // (no transaction, no funds). The server enforces every rule; this panel only reflects GET /api/v2/legacy.
 // Styles are local on purpose: components/gateway/Frame.tsx renders this panel, so importing its tokens would be a cycle.
 import { useCallback, useEffect, useState } from "react";
@@ -84,7 +84,7 @@ export function LegacyAccess() {
     () =>
       api<Status>("/api/v2/legacy").then(
         (status) => setView({ kind: "ready", status }),
-        (e: unknown) => setView(e instanceof ApiError && e.status === 401 ? { kind: "signed-out" } : { kind: "down", problem: e instanceof ApiError ? e.message : "We couldn't reach WhiteFlow. Check your connection, then try again." }),
+        (e: unknown) => setView(e instanceof ApiError && e.status === 401 ? { kind: "signed-out" } : { kind: "down", problem: e instanceof ApiError ? e.message : "We couldn't reach Whiteflow. Check your connection, then try again." }),
       ),
     [],
   );
@@ -106,14 +106,14 @@ export function LegacyAccess() {
     }
   };
 
-  if (view.kind === "loading") return <p className="text-sm text-ink-muted">Checking your WhiteFlow sign-in…</p>;
+  if (view.kind === "loading") return <p className="text-sm text-ink-muted">Checking your Whiteflow sign-in…</p>;
   if (view.kind === "signed-out") {
     return (
       <div className="grid gap-3">
-        <p className="text-sm text-ink-muted">Sign in to WhiteFlow with your email or wallet. If you used this dashboard with a merchant wallet before, you&apos;ll link it next.</p>
+        <p className="text-sm text-ink-muted">Sign in to Whiteflow with your email or wallet. If you used this dashboard with a merchant wallet before, you&apos;ll link it next.</p>
         {/* a full load on purpose: /sign-in sends its own CSP (with Privy) */}
         <a href="/sign-in" className={primary}>
-          Sign in to WhiteFlow
+          Sign in to Whiteflow
         </a>
       </div>
     );
@@ -179,7 +179,7 @@ export function LegacyAccess() {
   );
 }
 
-/** Signs out of WhiteFlow: the server revokes the session, then /sign-in?out=1 ends Privy's session in this browser.
+/** Signs out of Whiteflow: the server revokes the session, then /sign-in?out=1 ends Privy's session in this browser.
  *  If the server can't confirm the sign-out, the session may still be live: say so and stay. */
 export function WorkspaceSignOut() {
   const [problem, setProblem] = useState<string | null>(null);

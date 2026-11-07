@@ -5,15 +5,15 @@
 import { Button, buttonClasses } from "@/components/Button";
 import { HeroScene } from "./HeroScene";
 import { HeroSheet } from "./HeroSheet";
-import { WhiteFlowMark } from "@/components/WhiteFlowMark";
+import { WhiteflowMark } from "@/components/WhiteflowMark";
 
 export function Nav() {
   return (
     <header className="lp-nav">
       <div className="wrap">
         <span className="lp-word inline-flex items-center gap-2">
-          <WhiteFlowMark />
-          WhiteFlow
+          <WhiteflowMark />
+          Whiteflow
         </span>
         <nav className="links" aria-label="Product">
           <a href="#accept">Invoices &amp; Payments</a>

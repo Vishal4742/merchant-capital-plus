@@ -125,7 +125,7 @@ async function Payments() {
         {pay && logs === null && <p className="text-sm text-warning">We couldn&apos;t read the full payment list just now, so only this server&apos;s own checkouts show. Reload in a minute.</p>}
         {known.length > 0 && (
           <p className="text-xs text-ink-muted">
-            Your customers paid zero network fees. WhiteFlow covered <span className="font-mono text-ink font-medium">{formatWbt(covered)} WBT</span> across {known.length}{" "}
+            Your customers paid zero network fees. Whiteflow covered <span className="font-mono text-ink font-medium">{formatWbt(covered)} WBT</span> across {known.length}{" "}
             {known.length === 1 ? "payment" : "payments"}
             {failed > 0 ? `; fee for ${failed} more couldn't be read` : ""}
             {payments.length > FEE_ROWS ? `; fees shown for newest ${FEE_ROWS}` : ""}. {WBT_HINT}

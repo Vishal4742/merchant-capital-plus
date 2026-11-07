@@ -258,7 +258,7 @@ test("FR-BIZ-3/4: receiving proof + Owner approval activate version 1; GET shows
   assert.equal(r.status, 201, JSON.stringify(r.body));
   assert.deepEqual([r.body.version, r.body.recipient, r.body.chainId, r.body.v1Obligations], [1, recipient.address.toLowerCase(), 1874, false]);
   assert.equal(r.body.token, "0xcedfb56113143d55b2358b8cfbb0deb5ad2f55a7");
-  assert.match(r.proof.body.message, /^localhost wants you to sign in with your Ethereum account:\n0x[0-9a-fA-F]{40}\n\nWhiteFlow receiving-wallet proof/);
+  assert.match(r.proof.body.message, /^localhost wants you to sign in with your Ethereum account:\n0x[0-9a-fA-F]{40}\n\nWhiteflow receiving-wallet proof/);
   assert.match(r.proof.body.message, /Chain ID: 1874/);
   assert.ok(r.approval.body.message.includes(`urn:whiteflow:policy:${r.body.policyHash}`), "the approval binds the policy hash (EIP-4361 resource)");
   // the same request again (same idempotency key) gets the stored answer (round 2, L3); the same signed pair under a

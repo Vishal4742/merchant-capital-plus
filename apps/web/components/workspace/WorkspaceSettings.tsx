@@ -108,7 +108,7 @@ export function WorkspaceSettings() {
     return (
       <section aria-labelledby="ws-heading" className={card}>
         <h2 id="ws-heading" className="text-[17px] font-semibold text-ink">Workspace</h2>
-        <p className="text-sm text-ink-muted">You&apos;re not signed in to a WhiteFlow workspace, or your session ended.</p>
+        <p className="text-sm text-ink-muted">You&apos;re not signed in to a Whiteflow workspace, or your session ended.</p>
         <a href="/sign-in" className={textLink}>Sign in with email or wallet</a>
       </section>
     );
@@ -359,7 +359,7 @@ function ReceivingWallet({ role, principalWallets }: { role: Role; principalWall
               {pinned?.firstPinOpen && (
                 <p className="text-xs text-ink-muted">
                   The first approval pins this wallet. Later changes to where this workspace is paid need an approval wallet, and a wallet you link later must be
-                  endorsed by one. A solo Owner who loses every approval wallet needs WhiteFlow support to change the policy.
+                  endorsed by one. A solo Owner who loses every approval wallet needs Whiteflow support to change the policy.
                 </p>
               )}
               <button type="button" className={`${primary} justify-self-start`} onClick={() => void signApproval()}>Sign the approval</button>
@@ -449,7 +449,7 @@ function ApprovalWalletsPanel({ pinned, principalWallets, onEnrolled }: { pinned
       <h3 className="font-medium text-ink">Approval wallets</h3>
       <p className="text-xs text-ink-muted">
         Only these wallets can approve where this workspace is paid. A wallet linked to a sign-in later can&apos;t, until an approval wallet endorses it. A solo
-        Owner who loses every approval wallet needs WhiteFlow support to change the policy.
+        Owner who loses every approval wallet needs Whiteflow support to change the policy.
       </p>
       <ul className="grid gap-1 text-sm">
         {pinned.wallets.map((w) => (
@@ -625,7 +625,7 @@ function Team({ role }: { role: Role }) {
             </select>
           </label>
           <button type="submit" className={primary} disabled={who.trim().length === 0}>Add</button>
-          <p className="text-xs text-ink-muted sm:col-span-3">They need to have signed in to WhiteFlow once. No email is sent.</p>
+          <p className="text-xs text-ink-muted sm:col-span-3">They need to have signed in to Whiteflow once. No email is sent.</p>
         </form>
       ) : (
         <p className="text-sm text-ink-muted">Only an Owner can add, change or remove team members.</p>

@@ -6,7 +6,7 @@ import { announcePaid } from "@/lib/announce-paid";
 import { notFound } from "next/navigation";
 import { Suspense, type ReactNode } from "react";
 import { StaticScene } from "@/components/StaticScene";
-import { WhiteFlowWordmark } from "@/components/WhiteFlowLogo";
+import { WhiteflowWordmark } from "@/components/WhiteflowLogo";
 import { StatusBadge } from "@/components/ui/Badge";
 import { merchantConfig, payConfig } from "@/lib/config";
 import { paidLogs, paymentRefunded, readPayment } from "@/lib/onchain";
@@ -120,7 +120,7 @@ function ReceiptCard({ label, amount, merchantName, paidAt, reference, price, re
   return (
     <section className="relative grid w-full max-w-[440px] gap-5 rounded-[20px] border border-hairline bg-surface p-7 shadow-float">
       <div className="flex items-center justify-between border-b border-hairline pb-3">
-        <WhiteFlowWordmark className="text-sm" />
+        <WhiteflowWordmark className="text-sm" />
         <StatusBadge status="paid" label="Confirmed Settlement" />
       </div>
 
@@ -158,7 +158,7 @@ function ReceiptCard({ label, amount, merchantName, paidAt, reference, price, re
         </div>
         <div className="flex justify-between gap-4">
           <dt className="text-ink-muted">Customer Gas Fee</dt>
-          <dd className="text-xs font-medium text-positive">0.00 WBT (Sponsored by WhiteFlow)</dd>
+          <dd className="text-xs font-medium text-positive">0.00 WBT (Sponsored by Whiteflow)</dd>
         </div>
         <div className="flex justify-between gap-4">
           <dt className="text-ink-muted">Refund Status</dt>

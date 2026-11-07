@@ -1,5 +1,5 @@
 // Batch 051 (Stage 3): the v1 gateway after the cutover. Every handler that used the retired wallet cookie now resolves
-// WhiteFlow session → membership → role scope → the workspace's linked legacy merchant (032 R2-1 map). Spec acceptance
+// Whiteflow session → membership → role scope → the workspace's linked legacy merchant (032 R2-1 map). Spec acceptance
 // 6–10. Network is off (fetch throws), so chain/Arkiv reads fail fast; an allowed caller is anything but 401/403/409.
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
