@@ -11,7 +11,7 @@ import { Account, card, PlainPage, SignedOut } from "@/components/gateway/Frame"
 import { authSecret } from "@/lib/auth";
 import { currentMerchant } from "@/lib/merchant-session";
 import { query } from "@/lib/server/db";
-import { csrfToken, issuerOf, verifyConsentRequest } from "@/lib/server/mcp-grants";
+import { csrfToken, describeClient, issuerOf, verifyConsentRequest } from "@/lib/server/mcp-grants";
 import { internalSecret } from "@/lib/server/mcp-principal";
 
 export const metadata: Metadata = { title: "Authorize an assistant · WhiteFlow", robots: { index: false } };
@@ -55,7 +55,8 @@ async function Consent({ searchParams }: Pick<PageProps<"/merchant/ai/authorize"
   const token = typeof raw === "string" ? raw : "";
   const request = token ? verifyConsentRequest(token, secret) : null;
   if (!request) return <Notice title="This request has expired">Start the connection again from your assistant. Nothing was approved.</Notice>;
-  const name = await clientName(request.clientId);
+  // who is asking is decided by where the code will be SENT, never by the name the app chose (review 058 R1 H1)
+  const who = describeClient(await clientName(request.clientId), request.redirectUri);
   const asked = SCOPES.filter((s) => request.scopes.includes(s.id)).map((s) => ({ id: s.id, text: s.text, write: s.write }));
 
   return (
@@ -64,17 +65,26 @@ async function Consent({ searchParams }: Pick<PageProps<"/merchant/ai/authorize"
         <header className="grid gap-3">
           <span className="eyebrow border-t border-ink pt-3 text-ink-muted">Authorize</span>
           <h1 className="text-[32px] leading-[1.05] font-medium tracking-[-0.03em] md:text-[40px]">
-            Let <span className="emphasis">{name}</span> use WhiteFlow?
+            Let <span className="emphasis">{who.title}</span> use WhiteFlow?
           </h1>
         </header>
+        {who.warning && (
+          <p role="alert" className="rounded-[14px] border border-warning px-4 py-3 text-sm text-warning">
+            {who.warning}
+          </p>
+        )}
         <section aria-labelledby="who" className={card}>
           <h2 id="who" className="sr-only">
             What you are approving
           </h2>
           <dl className="grid gap-2 text-sm">
             <div className="flex flex-wrap justify-between gap-x-4 gap-y-1">
-              <dt>Assistant</dt>
-              <dd className="font-medium">{name}</dd>
+              <dt>App</dt>
+              <dd className="font-medium">{who.title}</dd>
+            </div>
+            <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 border-t border-hairline pt-2">
+              <dt>Access is sent to</dt>
+              <dd className="data">{who.host}</dd>
             </div>
             <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 border-t border-hairline pt-2">
               <dt>Your WhiteFlow account</dt>
