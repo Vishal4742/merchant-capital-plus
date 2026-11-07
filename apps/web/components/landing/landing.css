@@ -14,6 +14,7 @@
   @media (prefers-reduced-motion: no-preference) {
     html:has(.lp) { scroll-behavior: smooth; }
   }
+  body:has(.lp) .test-mode-badge { display: none !important; }
   .lp .mono { font-family: var(--font-mono); font-size: 11px; line-height: 16px; letter-spacing: 0.06em; text-transform: uppercase; }
   .lp .num { font-variant-numeric: tabular-nums; }
   .lp .em { font-family: var(--font-serif); font-style: italic; font-weight: 400; letter-spacing: -0.01em; }

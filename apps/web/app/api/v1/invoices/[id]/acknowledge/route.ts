@@ -8,7 +8,7 @@ import { getAddress, isAddress, isHex, verifyTypedData, zeroAddress } from "viem
 import { merchantConfig, payConfig } from "../../../../../../lib/config.ts";
 import { ackTypedData } from "../../../../../../lib/invoice-ack.ts";
 import { readInvoice } from "../../../../../../lib/onchain.ts";
-import { clientIp, fail, handle, ok, rateLimit, readJson } from "../../../../../../lib/server/http.ts";
+import { clientIp, fail, handle, ok, readJson, sharedRateLimit } from "../../../../../../lib/server/http.ts";
 import { MAX_UNBOUND_ACKS, saveAck } from "../../../../../../lib/server/invoice-acks.ts";
 import { isShopInvoice } from "../../../../../../lib/settle.ts";
 
@@ -21,7 +21,7 @@ const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 export const POST = (request: Request, context: { params: Promise<{ id: string }> }) => handle(() => post(request, context));
 
 async function post(request: Request, { params }: { params: Promise<{ id: string }> }): Promise<Response> {
-  rateLimit(`ack:${clientIp(request)}`, ACKS_PER_MINUTE, 60_000);
+  await sharedRateLimit(`ack:${clientIp(request)}`, ACKS_PER_MINUTE, 60_000, "closed"); // the ack is a DB write anyway
   const { id } = await params;
   if (!/^[1-9]\d{0,19}$/.test(id)) return fail(404, NOT_FOUND);
   const pay = payConfig();

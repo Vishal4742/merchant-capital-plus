@@ -5,7 +5,7 @@
 import { after } from "next/server.js"; // the .js path resolves under Node's test runner too
 import { verifyTypedData, type Hex } from "viem";
 import { payConfig } from "../config.ts";
-import { BUSY, NOT_FUNDED, UNKNOWN } from "../relay.ts";
+import { BUSY, NOT_FUNDED, UNKNOWN, cooldownMessage } from "../relay.ts";
 import { plainUsdt, receiveTypes, usdtDomain } from "../usdt.ts";
 import { syncOffer } from "./capital-arkiv.ts";
 import { CAPITAL_MARKET, HOLDER_CAP, claimHolders, holderCapMessage, fundingNonce, isVerifiedInvestor, offerStatus, parseFundBody, quoteUnits, readOffer, type Deps, type FundBody } from "./capital.ts";
@@ -90,7 +90,8 @@ async function relayFunding(f: FundBody, relayerUrl: string, deps: FundDeps) {
   } catch {
     throw new HttpError(504, UNKNOWN); // a timeout or a dropped connection: the relayer may have sent it
   }
-  const data = (await res.json().catch(() => ({}))) as { txHash?: string; blockNumber?: string | number; code?: string };
+  const data = (await res.json().catch(() => ({}))) as { txHash?: string; blockNumber?: string | number; code?: string; retry_after_s?: unknown };
+  if (res.status === 429 && data.code === "payer_cooldown") throw new HttpError(429, cooldownMessage(data.retry_after_s)); // batch 031 A10
   if (res.ok && typeof data.txHash === "string" && HASH.test(data.txHash)) {
     return { tx_hash: data.txHash as Hex, block_number: data.blockNumber === undefined ? null : String(data.blockNumber) };
   }

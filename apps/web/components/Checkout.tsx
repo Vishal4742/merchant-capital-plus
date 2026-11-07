@@ -14,6 +14,7 @@ import type { Address, Hex } from "viem";
 import { Confirming } from "@/components/Confirming";
 import { HoldButton } from "@/components/HoldButton";
 import { MerchantName } from "@/components/MerchantName";
+import { WhiteFlowWordmark } from "@/components/WhiteFlowLogo";
 import { GuestShort, WalletOption, endWalletSession, loadSigner, useGuestFunds, walletPayer, type WalletVia } from "@/components/WalletPay";
 import { FAILED, errorTone, outcome, type PayAnswer } from "@/lib/outcome";
 import { EXPLORER } from "@/lib/usdt";
@@ -178,7 +179,11 @@ export function Checkout({ sessionId, merchantName, verified, reference, items, 
     </a>
   );
   return (
-    <section className="relative w-full max-w-[420px] rounded-[28px] bg-surface p-8 text-ink shadow-float" aria-live="polite">
+    <section className="relative w-full max-w-[420px] rounded-[24px] bg-surface p-7 text-ink shadow-float border border-hairline" aria-live="polite">
+      <div className="flex items-center justify-between border-b border-hairline pb-3 mb-4">
+        <WhiteFlowWordmark className="text-xs" />
+        <span className="eyebrow text-xs text-ink-muted">Whitechain Sepolia</span>
+      </div>
       {paidId ? (
         <div className="grid gap-4">
           <h1 className="sr-only">Paid to {merchantName}</h1>

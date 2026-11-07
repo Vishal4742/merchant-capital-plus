@@ -1,6 +1,6 @@
 // Shared helpers for the gateway API routes (batch 007): JSON errors, the signed-in merchant, input validation.
 // Route handlers stay framework-free (they read the Request), so tests call them directly.
-import { randomBytes, randomInt } from "node:crypto";
+import { createHash, randomBytes, randomInt } from "node:crypto";
 // next/navigation's server export of it: "next/navigation.js" is the browser module (it breaks route bundles), and the
 // bare "next/navigation" doesn't resolve under Node's test runner. ponytail: an internal path; recheck on a Next upgrade.
 import { unstable_rethrow } from "next/dist/client/components/unstable-rethrow.js";
@@ -8,7 +8,7 @@ import type { Address } from "viem";
 import { SESSION_COOKIE, authSecret, cookieFrom, readSession } from "../auth.ts";
 import { merchantConfig } from "../config.ts";
 import { parseUsdt } from "../usdt.ts";
-import { DbUnavailable } from "./db.ts";
+import { DbUnavailable, query } from "./db.ts";
 
 export const MIN_PAYMENT = 1_000_000n; // 1 USDT, MerchantPay's minimum payment
 export const MAX_PAYMENT = 1_000_000_000n; // 1,000 USDT per payment on testnet (ARCHITECTURE §4b safety cap)
@@ -140,9 +140,11 @@ const BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 /** 10 random base62 characters (~59 bits): public slugs for links and pages. */
 export const newSlug = () => Array.from({ length: 10 }, () => BASE62[randomInt(BASE62.length)]).join("");
 
-// ponytail: per-instance memory, so the limit is per serverless instance; move to Postgres if abuse shows up.
+const TOO_MANY = "Too many requests. Wait a minute and try again.";
+
+// Per-instance memory: only sharedRateLimit's "memory" fallback uses it now (every route limits through Postgres).
 const hits = new Map<string, { count: number; resetAt: number }>();
-/** At most `limit` calls per `windowMs` for this key (e.g. "quotes:<ip>"), else 429. */
+/** This instance's own window: at most `limit` calls per `windowMs` for this key (e.g. "quotes:<ip>"), else 429. */
 export function rateLimit(key: string, limit: number, windowMs: number, now = Date.now()): void {
   const entry = hits.get(key);
   if (!entry || entry.resetAt <= now) {
@@ -150,11 +152,60 @@ export function rateLimit(key: string, limit: number, windowMs: number, now = Da
     return;
   }
   hits.set(key, { ...entry, count: entry.count + 1 });
-  if (entry.count + 1 > limit) throw new HttpError(429, "Too many requests. Wait a minute and try again.");
+  if (entry.count + 1 > limit) throw new HttpError(429, TOO_MANY);
 }
 
-/** Tests only: forget every rate-limit window (gw-helpers resetDb calls it between tests). */
+/** Tests only: forget this instance's in-memory windows. The shared ones are app_web_rate_limits rows, which
+ *  gw-helpers resetDb() truncates with the other app_web_* tables. */
 export const resetRateLimits = () => hits.clear();
+
+// Batch 031-PW4 Part C (FR-REL-5, FR-REL-10 theme): limits shared by every instance and kept across restarts. One fixed
+// window per key in app_web_rate_limits (db/052), counted by ONE statement: the upsert holds the key's row lock, so
+// concurrent calls on any instance get distinct counts 1, 2, 3, ... with no read-then-write race. A window that has
+// ended restarts at 1. `now` is this server's clock in unix ms (like the in-memory limiter, so tests can move time).
+export const RATE_LIMIT_SQL = `INSERT INTO app_web_rate_limits AS r (key, count, reset_at) VALUES ($1, 1, $2::bigint + $3::bigint)
+ON CONFLICT (key) DO UPDATE SET
+  count = CASE WHEN r.reset_at <= $2::bigint THEN 1 ELSE r.count + 1 END,
+  reset_at = CASE WHEN r.reset_at <= $2::bigint THEN $2::bigint + $3::bigint ELSE r.reset_at END
+RETURNING count::text AS count`;
+export const PRUNE_SQL = "DELETE FROM app_web_rate_limits WHERE reset_at < $1";
+export const PRUNE_EVERY = 100; // calls per instance between sweeps of ended windows
+const PRUNE_GRACE_MS = 60_000; // only windows that ended over a minute ago: room for clock skew between instances
+const MAX_KEY = 200; // a longer key (an attacker's huge x-forwarded-for) is stored as its hash: btree rows stay small
+/** The fixed refusal when the shared store can't be reached on a fail-closed route. */
+export const RATE_LIMIT_DOWN = "We can't check request limits right now, so nothing was done and nothing was charged. Try again in a minute.";
+
+/** What a shared limit does when Postgres is unreachable or not configured. "closed": refuse with 503 and
+ *  RATE_LIMIT_DOWN (payment and money-adjacent routes: no limit check, no service). "memory": fall back to this
+ *  instance's in-memory window (public reads that don't need the database, so they stay up and limited per instance). */
+export type WhenDbDown = "closed" | "memory";
+
+let sharedCalls = 0;
+
+/** Deletes windows that ended over a minute before `now` (an ended window counts the same as no row). */
+export async function pruneRateLimits(now = Date.now()): Promise<void> {
+  await query(PRUNE_SQL, [now - PRUNE_GRACE_MS]);
+}
+
+/** At most `limit` calls per `windowMs` for this key across every instance and restart, else 429 (TOO_MANY). */
+export async function sharedRateLimit(key: string, limit: number, windowMs: number, whenDbDown: WhenDbDown, now = Date.now()): Promise<void> {
+  const stored = key.length <= MAX_KEY ? key : `sha256:${createHash("sha256").update(key).digest("hex")}`;
+  let count: number;
+  try {
+    const [row] = await query<{ count: string }>(RATE_LIMIT_SQL, [stored, now, windowMs]);
+    count = Number(row.count);
+    if (!Number.isSafeInteger(count)) throw new TypeError("rate limit count");
+  } catch (err) {
+    // the error's name only: a driver message can hold the connection string
+    if (!(err instanceof DbUnavailable)) console.error("rate limit store unavailable:", err instanceof Error ? err.name : typeof err);
+    if (whenDbDown === "memory") return rateLimit(key, limit, windowMs, now);
+    throw new HttpError(503, RATE_LIMIT_DOWN);
+  }
+  if (++sharedCalls % PRUNE_EVERY === 0) {
+    await pruneRateLimits(now).catch((err: unknown) => console.error("rate limit prune failed:", err instanceof Error ? err.name : typeof err));
+  }
+  if (count > limit) throw new HttpError(429, TOO_MANY);
+}
 
 /** The caller's IP as Vercel reports it (first x-forwarded-for hop), for rate limits only. */
 export const clientIp = (request: Request) => (request.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || "unknown";

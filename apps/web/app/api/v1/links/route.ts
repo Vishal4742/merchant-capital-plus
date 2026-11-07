@@ -3,7 +3,7 @@
 // assistant connector can create links. A secret-key write must carry an Idempotency-Key (24 h, durable, per merchant
 // and route), and the link and its replayable reply commit in one transaction (production review F1), so a retry after
 // any failure or lost reply returns the same link and never makes a second one. A publishable key gets 403.
-import { HttpError, handle, jsonObject, ok, rateLimit } from "../../../../lib/server/http.ts";
+import { HttpError, handle, jsonObject, ok, sharedRateLimit } from "../../../../lib/server/http.ts";
 import { MAX_IDEMPOTENCY_KEY, idempotent, requestHash, send } from "../../../../lib/server/idempotency.ts";
 import { callerMerchant } from "../../../../lib/server/keys.ts";
 import { createLink, createLinkOnce, linkJson, listLinks } from "../../../../lib/server/links.ts";
@@ -14,7 +14,7 @@ const MAX_BODY = 16_384;
 export async function POST(request: Request) {
   return handle(async () => {
     const { merchant, via } = await callerMerchant(request);
-    rateLimit(`links:${merchant.toLowerCase()}`, LINKS_PER_MINUTE, 60_000);
+    await sharedRateLimit(`links:${merchant.toLowerCase()}`, LINKS_PER_MINUTE, 60_000, "closed"); // a write: no limit store, no link
     const text = await request.text();
     const body = jsonObject(text, MAX_BODY); // a malformed body is a 400 before any slot is taken
     const key = request.headers.get("idempotency-key");

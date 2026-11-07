@@ -42,6 +42,6 @@ async function get(request: Request, { params }: { params: Promise<{ id: string 
           () => undefined,
         )
       : undefined;
-  const body = { id, status, amount: plainUsdt(session.payment?.amount ?? session.amount), ...currencyFields(session), reference: session.reference, paymentId, txHash: session.payment?.txHash ?? null, refunded };
+  const body = { id, status, amount: plainUsdt(session.payment?.amount ?? session.amount), ...currencyFields(session), reference: session.reference, paymentId, txHash: session.payment?.txHash ?? null, ...(status === "pending" && session.pending?.txHash && { pendingTxHash: session.pending.txHash }), refunded };
   return Response.json(body, { headers: { "cache-control": "no-store" } });
 }

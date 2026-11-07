@@ -7,7 +7,7 @@
 // Batch 052: the Idempotency-Key slots moved to lib/server/idempotency.ts (shared with POST /api/v1/links), unchanged.
 import { formatUnits } from "viem";
 import { BAD_RETURN_URL, SESSION_TTL_MS, createSession, currencyFields, webUrl, type LineItem, type Priced } from "../../../../lib/sessions.ts";
-import { CURRENCIES, HttpError, MAX_PAYMENT, MIN_PAYMENT, handle, rateLimit, type Currency } from "../../../../lib/server/http.ts";
+import { CURRENCIES, HttpError, MAX_PAYMENT, MIN_PAYMENT, handle, sharedRateLimit, type Currency } from "../../../../lib/server/http.ts";
 import { MAX_IDEMPOTENCY_KEY, idempotent, send, sha256, type Reply } from "../../../../lib/server/idempotency.ts";
 import { QUOTE_TTL_MS, toUsdtUnits, usdRate } from "../../../../lib/server/quotes.ts";
 import { shopCaller, type Shop } from "../../../../lib/shop-auth.ts";
@@ -27,9 +27,10 @@ async function post(request: Request): Promise<Response> {
   if ("error" in shop) return send(fail(shop.status, shop.error));
   // per merchant: any signed-in wallet can mint a key, so one key can't flood the checkout store (security 012 F3)
   try {
-    rateLimit(`sessions:${shop.merchant.toLowerCase()}`, SESSIONS_PER_MINUTE, 60_000);
-  } catch {
-    return send(fail(429, "Too many checkouts at once. Wait a minute and try again."));
+    await sharedRateLimit(`sessions:${shop.merchant.toLowerCase()}`, SESSIONS_PER_MINUTE, 60_000, "closed");
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 429) return send(fail(429, "Too many checkouts at once. Wait a minute and try again."));
+    throw error; // the limit store is down: handle() answers 503 with RATE_LIMIT_DOWN (fail closed), nothing is created
   }
   const text = await request.text();
   const key = request.headers.get("idempotency-key");

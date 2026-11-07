@@ -8,7 +8,7 @@ import { formatUsdt } from "../usdt.ts";
 import { checkoutOf, markCheckoutPaid } from "./checkouts.ts";
 import { query } from "./db.ts";
 import { confirmRedemption } from "./vouchers.ts";
-import { enqueueEvent } from "./webhooks.ts";
+import { enqueueEventOnce } from "./webhooks.ts";
 
 type EventType = "payment.succeeded" | "payment.refunded";
 const plain = (units: bigint) => formatUsdt(units).replaceAll(",", ""); // "1000.00": machine-readable, no separators
@@ -33,17 +33,13 @@ async function eventData(session: Session, paidAmount = session.amount) {
  *  server instance, reuses it, so a merchant deduping on event.id (the SDK README's advice) never ships twice. */
 export const eventIdFor = (key: string) => `evt_${createHash("sha256").update(key).digest("base64url").slice(0, 24)}`;
 
-/** Queues the webhook once per key; if queuing fails the key is released, so a retry still delivers it (same id).
- *  The key is checked before the data is built (F4): a re-announce of a sent event does no other work. */
+/** Queues the webhook once per key (same event id on every try). The key and the deliveries are written by one statement
+ *  in enqueueEventOnce (batch 031 A1), so a failure or a killed process leaves either both or neither: a retry or a
+ *  re-announce still delivers it, and nothing is marked sent without deliveries. The key is checked before the data is
+ *  built (F4): a re-announce of a queued event does no other work; two racing announcements are settled by the insert. */
 async function sendOnce(key: string, merchant: Address, type: EventType, buildData: () => Promise<Record<string, unknown>>, now: number): Promise<void> {
-  const fresh = await query("INSERT INTO app_gw_events (key, created_at) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING RETURNING key", [key, now]);
-  if (fresh.length === 0) return;
-  try {
-    await enqueueEvent(merchant, type, await buildData(), now, eventIdFor(key));
-  } catch (err) {
-    await query("DELETE FROM app_gw_events WHERE key = $1", [key]);
-    throw err;
-  }
+  if ((await query("SELECT 1 FROM app_gw_events WHERE key = $1", [key])).length > 0) return;
+  await enqueueEventOnce(key, merchant, type, await buildData(), now, eventIdFor(key));
 }
 
 /** `paidAmount` = the price the pay route claimed (claimAmountDue) and relayed. Required on purpose (batch 012 review N1):
