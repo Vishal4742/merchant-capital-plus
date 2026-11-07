@@ -4,6 +4,7 @@
 import { LiveTotal } from "@/components/gateway/LiveTotal";
 import type { ReactNode } from "react";
 import { buttonClasses } from "@/components/Button";
+import { MerchantName } from "@/components/MerchantName";
 import type { Currency, OpenAmount, PublicLink } from "@/lib/gateway-client";
 import { amountText } from "@/lib/gateway-forms";
 
@@ -61,7 +62,9 @@ export function LinkSheet({ link, amount, error }: { link: PublicLink; amount: s
   return (
     <section className={sheet} aria-labelledby="pay-title">
       <div className="grid gap-1">
-        <span className="eyebrow text-ink-muted">{link.merchant_name}</span>
+        <p className="font-medium break-words text-ink">
+          <MerchantName name={link.merchant_name} verified={link.merchant_verified} />
+        </p>
         <h1 id="pay-title" className="title">
           {link.description}
         </h1>
@@ -91,6 +94,7 @@ export function LinkSheet({ link, amount, error }: { link: PublicLink; amount: s
 export interface SheetPage {
   slug: string;
   merchant_name: string;
+  merchant_verified?: boolean; // the tick after the name; the dashboard preview passes the merchant's own
   title: string;
   description: string | null;
   logo_url: string | null;
@@ -132,7 +136,9 @@ export function PageSheet({ page, rows, amount, error, preview = false }: { page
             {logo && <span className="absolute inset-0 rounded-full bg-surface bg-cover bg-center" style={{ backgroundImage: `url("${logo}")` }} />}
           </span>
         </span>
-        <span className="eyebrow min-w-0 text-ink-muted">{page.merchant_name}</span>
+        <p className="min-w-0 font-medium break-words text-ink">
+          <MerchantName name={page.merchant_name} verified={page.merchant_verified} />
+        </p>
       </div>
       <div className="grid gap-1.5">
         <h1 id={preview ? undefined : "page-title"} className="title break-words">

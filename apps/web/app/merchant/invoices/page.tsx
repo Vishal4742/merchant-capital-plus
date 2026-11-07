@@ -8,8 +8,10 @@ import { Invoices, type InvoiceRow } from "@/components/merchant/Invoices";
 import { MetricCard } from "@/components/ui/MetricCard";
 import { authSecret } from "@/lib/auth";
 import { merchantConfig, payConfig } from "@/lib/config";
+import { logFailure } from "@/lib/gateway-server";
 import { currentMerchant } from "@/lib/merchant-session";
 import { merchantInvoices, paidLogs, readRelayFee, type Invoice, type PaidLog } from "@/lib/onchain";
+import { ackView, acksFor, type InvoiceAck } from "@/lib/server/invoice-acks";
 import { formatUsdt } from "@/lib/usdt";
 
 const header = (
@@ -21,7 +23,10 @@ const header = (
   </EditorialHeader>
 );
 
-function invoiceRows(invoices: Invoice[], logs: PaidLog[]): InvoiceRow[] {
+/** This invoice's acks, only those signed for its own terms (security 047 L1), or null (as on /merchant). */
+const ackOf = (acks: Map<string, InvoiceAck[]> | null, invoice: Invoice) => ackView(acks?.get(invoice.id.toString()) ?? [], invoice);
+
+function invoiceRows(invoices: Invoice[], logs: PaidLog[], acks: Map<string, InvoiceAck[]> | null): InvoiceRow[] {
   const paidBy = new Map(logs.filter((log) => log.invoiceId !== 0n).map((log) => [log.invoiceId, log.paymentId.toString()]));
   return invoices.flatMap((invoice) =>
     invoice.status === "missing"
@@ -34,6 +39,7 @@ function invoiceRows(invoices: Invoice[], logs: PaidLog[]): InvoiceRow[] {
             status: invoice.status,
             paidText: invoice.status === "open" && invoice.paid > 0n ? formatUsdt(invoice.paid) : null,
             receiptId: invoice.status === "paid" ? (paidBy.get(invoice.id) ?? null) : null,
+            ack: ackOf(acks, invoice),
           },
         ],
   );
@@ -74,7 +80,10 @@ async function InvoicesLoader() {
       ])
     : [null, null, null];
 
-  const rows = invoices ? invoiceRows(invoices, logs ?? []) : null;
+  // which open invoices their debtor acknowledged (batch 047); unreadable, the list shows "Not acknowledged yet"
+  const openIds = (invoices ?? []).filter((invoice) => invoice.status === "open").map((invoice) => invoice.id);
+  const acks = pay ? await acksFor(pay.merchantPay, openIds).catch((error: unknown) => (logFailure("invoices: debtor acks", error), null)) : null; // the name only: a DB message can hold SQL
+  const rows = invoices ? invoiceRows(invoices, logs ?? [], acks) : null;
   const isShopWallet = config && merchant.toLowerCase() === config.merchant.toLowerCase();
   const feeText = fee === null ? null : formatUsdt(fee);
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
