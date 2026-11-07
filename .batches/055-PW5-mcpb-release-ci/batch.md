@@ -21,3 +21,4 @@ Log:
   npm ci --ignore-scripts; L1 pin actions to SHAs; L2 add whsec_ and sk_live_ to the scan; L3 compare the unpacked
   contents digest; L4 the SBOM says 0.2.0 from package.json while the release is 0.3.0 (build.mjs, whiteflow-8b).
 - closed under the supervisor's (whiteflow-8c) scope freeze: no follow-up built in this batch, nothing merged.
+- round-3 fixes by claude-contracts (owner 05:34: fix the PRs, then merge): merged the updated wf/merchant-mcpb; key scan adds sk_live_ and a bare 0x 64-hex (no hit on a fresh bundle), sk_test_ at 16; build (contents: read) and attest (id-token, attestations; no npm/node) jobs, download-artifact@v8; RELEASE.md to match.
