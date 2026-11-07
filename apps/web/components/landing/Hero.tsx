@@ -6,7 +6,7 @@ import { Button, buttonClasses } from "@/components/Button";
 import { HeroScene } from "./HeroScene";
 import { HeroSheet } from "./HeroSheet";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { WhiteFlowMark } from "@/components/WhiteFlowMark";
+import { WhiteflowMark } from "@/components/WhiteflowMark";
 
 export function Nav() {
   return (

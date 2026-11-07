@@ -2,7 +2,7 @@
 // Editorial header, card styles, input field tokens, account badges, and signed-out states.
 import type { ReactNode } from "react";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { WhiteFlowWordmark } from "@/components/WhiteFlowLogo";
+import { WhiteflowWordmark } from "@/components/WhiteflowLogo";
 import { LegacyAccess, WorkspaceSignOut } from "@/components/workspace/LegacyAccess";
 
 /** The day/night switch on a plain surface (batch 060); the landing dresses it as glass instead. */
