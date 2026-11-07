@@ -73,7 +73,11 @@ test("a lapsed lock (its instance died mid-payment) can be re-taken; a live one 
   assert.equal(await two.claimPayment(s.id), null, "live");
   await query("UPDATE app_web_locks SET until = now() - interval '1 second' WHERE key = $1", [s.id]);
   assert.equal(await one.isInFlight(s.id), false, "a lapsed lock isn't in flight");
-  const retaken = await Promise.all([one.claimPayment(s.id), two.claimPayment(s.id)]);
+  // batch 057: the token is the lock's `until` and PGlite's clock ticks once a millisecond, so a re-claim inside the
+  // first claim's millisecond got the same token back (the flake). Real Postgres can't: a re-claim needs the old
+  // until < now(), so its token is always later. Waiting past the tick keeps this test about stale tokens.
+  await new Promise((resolve) => setTimeout(resolve, 2));
+  const retaken =await Promise.all([one.claimPayment(s.id), two.claimPayment(s.id)]);
   assert.equal(retaken.filter(Boolean).length, 1, "exactly one instance re-takes it");
   const [{ secs }] = await query("SELECT extract(epoch FROM until - now())::int AS secs FROM app_web_locks WHERE key = $1", [s.id]);
   assert.ok(secs > 290 && secs <= 300, `held for the full lock time again (${secs} s)`);
