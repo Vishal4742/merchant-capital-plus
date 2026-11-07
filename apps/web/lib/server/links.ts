@@ -4,7 +4,7 @@ import { formatUnits, getAddress, type Address } from "viem";
 import { SESSION_TTL_MS, createSession, type LineItem } from "../sessions.ts";
 import { parseUsdt } from "../usdt.ts";
 import { recordCheckout, type CheckoutKind } from "./checkouts.ts";
-import { query } from "./db.ts";
+import { query, transaction, type Statement } from "./db.ts";
 import {
   HttpError,
   MAX_PAYMENT,
@@ -24,6 +24,7 @@ import {
 } from "./http.ts";
 import { QUOTE_TTL_MS, toUsdtUnits, usdRate } from "./quotes.ts";
 import { dispatchSoon } from "./webhooks.ts";
+import type { Reply } from "./idempotency.ts";
 
 const MAX_PRICE = 100_000_000_000_000n; // 100,000,000 of any currency: a sanity cap; the 1..1,000 USDT rule runs at creation and checkout
 export const MAX_LIST = 200; // ponytail: list screens show the newest 200; add a cursor when a merchant has more
@@ -196,7 +197,9 @@ export const publicLinkJson = (link: Link) => {
   };
 };
 
-export async function createLink(merchant: Address, body: Record<string, unknown>, now = Date.now()): Promise<Link> {
+/** A new link, validated, with its id and slug, not yet stored. Everything that can fail or call out (the FX bound
+ *  check) happens here, before any database write, so the write itself is one statement or one transaction. */
+export async function prepareLink(merchant: Address, body: Record<string, unknown>, now = Date.now()): Promise<Link> {
   const currency = currencyField(body.currency);
   const usd = currency === "USD" || currency === "USDT";
   const amount = !given(body.amount) ? null : usd ? usdtField(body.amount) : priceField(body.amount, "amount");
@@ -205,13 +208,61 @@ export async function createLink(merchant: Address, body: Record<string, unknown
   const expiresAt = given(body.expires_at) ? futureTime(body.expires_at, "expires_at", now) : null;
   if (given(body.single_use) && typeof body.single_use !== "boolean") throw new HttpError(400, "single_use must be true or false.");
   if (amount !== null && !usd) await payablePrices([amount], currency, true); // USD and USDT: usdtField checked 1..1,000
-  const rows = await query<LinkRow>(
-    `INSERT INTO app_gw_links (id, slug, merchant, amount, currency, description, reference_id, single_use, expires_at, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (merchant, reference_id) DO NOTHING RETURNING ${COLUMNS}`,
-    [newId("lnk"), newSlug(), merchant.toLowerCase(), amount?.toString() ?? null, currency, description, referenceId, body.single_use === true, expiresAt, now],
-  );
-  if (rows.length === 0) throw new HttpError(409, "You already have a link with that reference_id.");
-  return (await withPayments(rows))[0];
+  // a new link has no payments yet: its reply is built here, never read back after the INSERT (production review F1)
+  return { id: newId("lnk"), slug: newSlug(), merchant: merchant.toLowerCase(), amount, currency, description, referenceId, singleUse: body.single_use === true, expiresAt, cancelledAt: null, createdAt: now, payments: 0, paidAt: null };
+}
+
+const DUPLICATE_REFERENCE = "You already have a link with that reference_id.";
+const isUniqueViolation = (error: unknown) => (error as { code?: unknown })?.code === "23505";
+
+/** The INSERT for a prepared link; with `own`, it inserts only while that request still owns its Idempotency-Key slot
+ *  with the stored reply (in the same transaction), so a request that lost its slot can never add a link. */
+function insertLink(link: Link, own?: { slot: string; owner: string }): Statement {
+  const guard = own ? " WHERE EXISTS (SELECT 1 FROM app_web_idempotency WHERE slot = $11 AND owner = $12 AND status = 201)" : "";
+  return {
+    text: `INSERT INTO app_gw_links (id, slug, merchant, amount, currency, description, reference_id, single_use, expires_at, created_at)
+           SELECT $1, $2, $3, $4::bigint, $5, $6, $7, $8::boolean, $9::bigint, $10::bigint${guard} RETURNING id`,
+    params: [link.id, link.slug, link.merchant, link.amount?.toString() ?? null, link.currency, link.description, link.referenceId, link.singleUse, link.expiresAt, link.createdAt, ...(own ? [own.slot, own.owner] : [])],
+  };
+}
+
+/** A link without an Idempotency-Key (the dashboard): one INSERT; a reference clash is a 409. */
+export async function createLink(merchant: Address, body: Record<string, unknown>, now = Date.now()): Promise<Link> {
+  const link = await prepareLink(merchant, body, now);
+  const insert = insertLink(link);
+  try {
+    await query(insert.text, insert.params);
+  } catch (error) {
+    if (isUniqueViolation(error)) throw new HttpError(409, DUPLICATE_REFERENCE);
+    throw error;
+  }
+  return link;
+}
+
+/** A link under an Idempotency-Key slot this request owns (batch 054, production review F1): its replayable reply and
+ *  the link commit in ONE transaction. If anything fails before the commit, nothing exists and the slot is freed. If
+ *  the commit happened but the reply was lost, the stored reply replays it. Either way a retry can't make a second link. */
+export async function createLinkOnce(merchant: Address, body: Record<string, unknown>, own: { slot: string; owner: string }, now = Date.now()): Promise<Reply> {
+  let link: Link;
+  try {
+    link = await prepareLink(merchant, body, now);
+  } catch (error) {
+    if (error instanceof HttpError) return { status: error.status, body: { error: error.message } }; // frees the key
+    throw error;
+  }
+  const reply = linkJson(link);
+  try {
+    const [, inserted] = await transaction([
+      { text: "UPDATE app_web_idempotency SET status = 201, body = $3::jsonb WHERE slot = $1 AND owner = $2 AND status IS NULL", params: [own.slot, own.owner, JSON.stringify(reply)] },
+      insertLink(link, own),
+    ]);
+    // the slot was no longer ours (another request took it over): nothing was created
+    if (inserted.length === 0) return { status: 409, body: { error: "A request with this Idempotency-Key is still being processed. Try again in a moment." } };
+  } catch (error) {
+    if (isUniqueViolation(error)) return { status: 409, body: { error: DUPLICATE_REFERENCE } }; // rolled back, slot freed
+    throw error;
+  }
+  return { status: 201, body: reply, stored: true };
 }
 
 export async function listLinks(merchant: Address): Promise<Link[]> {
@@ -223,6 +274,33 @@ export async function listLinks(merchant: Address): Promise<Link[]> {
 export async function cancelLink(merchant: Address, id: string, now = Date.now()): Promise<boolean> {
   const rows = await query("UPDATE app_gw_links SET cancelled_at = COALESCE(cancelled_at, $3) WHERE id = $1 AND merchant = $2 RETURNING id", [id, merchant.toLowerCase(), now]);
   return rows.length === 1;
+}
+
+export const MAX_LINK_PAYMENTS = 50; // ponytail: the newest 50 paid checkouts of a reusable link; add a cursor if needed
+
+/** One of the merchant's links, or null (another merchant's id is the same null: the route answers 404). */
+export async function linkById(merchant: Address, id: string): Promise<Link | null> {
+  const rows = await query<LinkRow>(`SELECT ${COLUMNS} FROM app_gw_links WHERE id = $1 AND merchant = $2`, [id, merchant.toLowerCase()]);
+  return rows.length ? (await withPayments(rows))[0] : null;
+}
+
+/** A link's paid checkouts, newest first (batch 052): the server's own record of each payment (app_web_sessions.payment,
+ *  written by the pay route once the relayer's receipt, or the chain after an unknown outcome, confirmed it), never a
+ *  redirect or a client's word. `amount` is what was paid in USDT, after any discount code. */
+export async function linkPayments(link: Link): Promise<{ session_id: string; payment_id: string | null; amount: string; currency: "USDT"; tx_hash: string | null; paid_at: string | null }[]> {
+  const rows = await query<{ session_id: string; paid_at: string; payment: { txHash?: string | null; paymentId?: string | null; amount?: string } | null; usdt_amount: string }>(
+    `SELECT c.session_id, c.paid_at::text, c.usdt_amount::text, s.payment FROM app_gw_checkouts c LEFT JOIN app_web_sessions s ON s.id = c.session_id
+     WHERE c.kind = 'link' AND c.ref_id = $1 AND c.merchant = $2 AND c.paid_at IS NOT NULL ORDER BY c.paid_at DESC, c.session_id LIMIT ${MAX_LINK_PAYMENTS}`,
+    [link.id, link.merchant],
+  );
+  return rows.map((r) => ({
+    session_id: r.session_id,
+    payment_id: r.payment?.paymentId ?? null,
+    amount: decimal(BigInt(r.payment?.amount ?? r.usdt_amount))!,
+    currency: "USDT",
+    tx_hash: r.payment?.txHash ?? null,
+    paid_at: iso(Number(r.paid_at)),
+  }));
 }
 
 export async function linkBySlug(slug: string): Promise<Link | null> {
