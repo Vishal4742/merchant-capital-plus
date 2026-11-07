@@ -7,9 +7,8 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 import { ConsentForm } from "@/components/ai/ConsentForm";
 import { SCOPES } from "@/components/ai/ConnectGuide";
-import { Account, card, PlainPage, SignedOut } from "@/components/gateway/Frame";
-import { authSecret } from "@/lib/auth";
-import { currentMerchant } from "@/lib/merchant-session";
+import { Account, card, PlainPage } from "@/components/gateway/Frame";
+import { currentWorkspace } from "@/lib/merchant-session";
 import { query } from "@/lib/server/db";
 import { csrfToken, describeClient, issuerOf, verifyConsentRequest } from "@/lib/server/mcp-grants";
 import { internalSecret } from "@/lib/server/mcp-principal";
@@ -47,14 +46,19 @@ async function clientName(clientId: string): Promise<string> {
 
 async function Consent({ searchParams }: Pick<PageProps<"/merchant/ai/authorize">, "searchParams">) {
   await connection();
-  const merchant = await currentMerchant();
-  if (!merchant) return <SignedOut available={Boolean(authSecret())} />;
   const secret = internalSecret();
   if (!secret || !issuerOf()) return <Notice title="AI connections aren't switched on">This server isn&apos;t set up to connect assistants yet, so nothing can be approved here.</Notice>;
   const raw = (await searchParams).request;
   const token = typeof raw === "string" ? raw : "";
   const request = token ? verifyConsentRequest(token, secret) : null;
   if (!request) return <Notice title="This request has expired">Start the connection again from your assistant. Nothing was approved.</Notice>;
+  const workspace = await currentWorkspace();
+  if (!workspace) {
+    const returnTo = `/merchant/ai/authorize?${new URLSearchParams({ request: token })}`;
+    return <Notice title="Sign in to authorize your assistant"><a className="text-accent underline" href={`/sign-in?${new URLSearchParams({ returnTo })}`}>Sign in to WhiteFlow</a>. Choose a workspace with a linked receiving wallet. If you still need to set up your workspace, <a className="text-accent underline" href="/merchant/settings" target="_blank" rel="noopener noreferrer">open Settings</a>, then return here and reload.</Notice>;
+  }
+  if (workspace.role !== "owner") return <Notice title="An Owner must approve this connection">Ask an Owner of this workspace to connect the assistant.</Notice>;
+  const merchant = workspace.merchant;
   // who is asking is decided by where the code will be SENT, never by the name the app chose (review 058 R1 H1)
   const who = describeClient(await clientName(request.clientId), request.redirectUri);
   const asked = SCOPES.filter((s) => request.scopes.includes(s.id)).map((s) => ({ id: s.id, text: s.text, write: s.write }));

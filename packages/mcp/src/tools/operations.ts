@@ -23,7 +23,7 @@ export function registerOperationTools(server: McpServer, ctx: Ctx): void {
     {
       title: "Operation status",
       description:
-        "Writes whose outcome is still unknown or needs reconciliation (after a timeout, a lost reply, or a reply that didn't match the request), or one write by its idempotency_key: what was attempted, when, and what WhiteFlow's records say. " +
+        "Writes whose outcome is still unknown or needs reconciliation (after a timeout, a lost reply, or a reply that didn't match the request), or one write by its idempotency_key: what was attempted, when, and what Whiteflow's records say. " +
         "Pass acknowledge: true only after the merchant has checked the record themselves; it clears the local flag so a new, identical request can be made.",
       inputSchema: {
         idempotency_key: z.string().regex(IDEMPOTENCY_KEY).optional().describe("One operation; leave out to list every unresolved one."),
@@ -45,12 +45,12 @@ export function registerOperationTools(server: McpServer, ctx: Ctx): void {
               // write (price, currency, URL on a trusted origin). The next identical call resumes with this key, gets the
               // replayed record and verifies it; until then the entry stays unresolved (batch 058).
               if (data.state === "succeeded" && entry.outcome === "pending") {
-                server = { ...server, note: "WhiteFlow says it succeeded. Verify the record itself (get_payment_link) or repeat the same request: it replays this record and checks it before reporting success." };
+                server = { ...server, note: "Whiteflow says it succeeded. Verify the record itself (get_payment_link) or repeat the same request: it replays this record and checks it before reporting success." };
               }
             } catch (error) {
               if (!(error instanceof ApiError) || error.status !== 404) throw error;
               // A missing record is not proof of anything: the lookup can lag the write, forget it, or not cover it.
-              server = { state: "not_found", note: "WhiteFlow has no operation record under this key. That is not proof the write didn't happen: check the record itself (get_payment_link, list_payments) before creating another." };
+              server = { state: "not_found", note: "Whiteflow has no operation record under this key. That is not proof the write didn't happen: check the record itself (get_payment_link, list_payments) before creating another." };
             }
           }
           return {

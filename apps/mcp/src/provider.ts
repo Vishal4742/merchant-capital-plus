@@ -174,6 +174,8 @@ export class PgOAuthProvider implements OAuthServerProvider {
     const [row] = await this.#sql.query(
       `SELECT t.expires_at::text AS token_expires, g.id, g.client_id, g.merchant, g.scopes, g.resource
          FROM app_mcp_tokens t JOIN app_mcp_grants g ON g.id = t.grant_id
+         JOIN wf_businesses b ON b.id = g.business_id AND b.legacy_merchant = g.merchant
+         JOIN wf_memberships m ON m.business_id = g.business_id AND m.principal_id = g.approved_by AND m.role = 'owner'
         WHERE t.token_hash = $1 AND t.kind = 'access' AND t.revoked_at IS NULL AND t.expires_at > $2 AND g.revoked_at IS NULL AND g.expires_at > $2`,
       [sha256(token), now],
     );
@@ -201,7 +203,7 @@ export class PgOAuthProvider implements OAuthServerProvider {
   // ── internals ──
   async #liveGrant(id: string): Promise<GrantRow | undefined> {
     const now = this.#now();
-    const [row] = await this.#sql.query("SELECT id, client_id, merchant, scopes, resource, expires_at::text AS expires_at, revoked_at::text AS revoked_at FROM app_mcp_grants WHERE id = $1 AND revoked_at IS NULL AND expires_at > $2", [id, now]);
+    const [row] = await this.#sql.query("SELECT g.id, g.client_id, g.merchant, g.scopes, g.resource, g.expires_at::text AS expires_at, g.revoked_at::text AS revoked_at FROM app_mcp_grants g JOIN wf_businesses b ON b.id = g.business_id AND b.legacy_merchant = g.merchant JOIN wf_memberships m ON m.business_id = g.business_id AND m.principal_id = g.approved_by AND m.role = 'owner' WHERE g.id = $1 AND g.revoked_at IS NULL AND g.expires_at > $2", [id, now]);
     return row as unknown as GrantRow | undefined;
   }
 

@@ -6,6 +6,8 @@
 import type { ReactNode } from "react";
 import { Button } from "@/components/Button";
 import { PrivateReads } from "@/components/dashboard/PrivateReads";
+import { ThemeToggle } from "@/components/ThemeToggle";
+import { plainToggle } from "@/components/gateway/Frame";
 import { short } from "./format";
 import { Holdings } from "./Holdings";
 import { OfferBook } from "./OfferBook";
@@ -32,7 +34,7 @@ export function InvestorApp({ view, header }: InvestorAppProps) {
           {/* a full load: home runs under its own headers (security review 005 F-N4) */}
           {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
           <a href="/" className="inline-flex min-h-11 items-center text-[17px] font-medium tracking-[-0.02em] whitespace-nowrap md:text-[19px]">
-            WhiteFlow
+            Whiteflow
           </a>
           {/* no CSS order: what you see is the tab order at every width; the wallet wraps below on a phone (UX review #33 M4) */}
           <nav aria-label="Capital" className="flex gap-1">
@@ -48,6 +50,7 @@ export function InvestorApp({ view, header }: InvestorAppProps) {
             ))}
           </nav>
           <div className="ml-auto flex items-center gap-2">
+            <ThemeToggle className={plainToggle} />
             <WalletChip state={state} connect={connect} />
           </div>
         </div>

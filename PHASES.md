@@ -1,4 +1,4 @@
-# Delivery phases: Merchant Capital+
+# Delivery phases: Whiteflow
 
 How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the requirements it delivers, tasks by owner, and an **exit gate** made of acceptance tests (SRS §6). **Rule: a phase's gate must pass before the next phase's core work starts.** Tick boxes as you go and log each passed gate in HANDOFF_LOG.md. Design and ABI: ARCHITECTURE.md. Event deadlines: HANDOFF.md.
 
@@ -16,6 +16,26 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 | 6 | Proof and documentation | FR-PRIV-4, SR-* evidence, NFR-9 | G6: README review finds every SR item | all |
 | 7 | Video and submission | SR-ETH-2, CON-6 | G7: submission confirmed | all |
 
+## Whiteflow phases W0–W10 (SRS v3.0 §8, adopted 2026-11-06)
+The owner's staged execution plan maps onto these (tracker: `notes/whiteflow-status.md`: Stage 2 = W4 subset, 3 = W2, 4 = W3, 5 = rest of W4, 6 = W5, 7 = W1, 8 = W6/W7, 9 = W9). Phases 0–7 below are the earlier Whiteflow hackathon plan, kept for history.
+
+
+| Phase | Delivers | Gate |
+|---|---|---|
+| W0 Baseline | Inventory, matrix, this proposal | Baseline report with fresh check output (`notes/phase-W0-baseline.md`) |
+| W1 Route experiment | DEP-8 | Source/destination/outcome tx evidence; failed-inner-call handling; measured timing; economics note |
+| W2 Identity & service boundary | FR-BIZ-1–4, 6; FR-AUTH-1–5 | AT-27, AT-28, AT-31 (service level); policy-change invalidation; migration/backfill plan |
+| W3 Direct collection | FR-BIZ-5; FR-BILL-*; FR-CHK-*; FR-RFD-1, FR-RFD-3; FR-RTE-*; FR-UX-* | Real testnet direct payment and refund end to end; AT-19–AT-26; desktop/mobile checks |
+| W4 Durable operations | FR-OPS-1–9; FR-REL-10 | AT-48, AT-49, AT-50; crash/restart, duplicate, RPC-uncertainty, reorg evidence |
+| W5 MCP | FR-MCP-6–11 | AT-29, AT-30, AT-32, AT-33, AT-34 |
+| W6 Corridor contracts | FR-XC-1–4, FR-XC-8; FR-OPS-10; FR-BIZ-7 (treasury separation) | AT-35–AT-45, AT-47 in unit/fuzz/invariant/fork tests; no fake bridge |
+| W7 Cross-chain UX | FR-XC-5–7; FR-RFD-2 | AT-46, AT-51, AT-52; reconciled balances |
+| W8 Optional World | FR-WLD-1 | AT-54; checkout unaffected |
+| W9 Pilot readiness | runbooks, evidence | AT-53, AT-55; all applicable boxes evidenced; documented limitations |
+| W10 Mainnet decision | CON-9 | AT-56 (human/external) |
+
+Feature flags default off for cross-chain, MCP writes, World sponsorship and mainnet (WF§11). Dependencies (WF§11): W1 and W2 run independently after W0; W3 needs W2 and does not wait for W1; W4 needs W2 and integrates W3; **W5 needs W2–W4 and cannot bypass missing durable services**; W6 needs W1 and frozen W2/W4 interfaces; W7 needs W4 and W6; W8 needs W2 and is optional; **W9's gate also requires no critical unresolved money/auth defects**; W10 needs pilot evidence. If W1 fails, W6/W7 stay disabled and the direct path continues.
+
 ---
 
 ## Phase 0: Preparation
@@ -25,7 +45,7 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 - [ ] Claim faucet WBT from home (limited per wallet, IP and GitHub account): relayer hot wallet first, then demo customer and investor wallets; swap part to USDT on YetiTrade
 - [ ] Keys: Ankr (code `Whitechain2026`), Arkiv access key + Rabdi funds, Vercel + Neon, an empty public GitHub repo (keys in `.env` only, CON-7)
 - [x] Start the `claude-contracts` session: "You are claude-contracts. Read AGENTS.md, HANDOFF.md, docs/SRS.md, ARCHITECTURE.md, PHASES.md and the build plan. Planning only until hacking starts."
-- [x] Tell the frontend session: the idea is Merchant Capital+, its name is `claude-frontend`, and it rewrites `docs/FRONTEND-PLAN.md` against the SRS
+- [x] Tell the frontend session: the idea is Whiteflow, its name is `claude-frontend`, and it rewrites `docs/FRONTEND-PLAN.md` against the SRS
 - [ ] Optional: product name and design direction
 
 **R**
@@ -42,7 +62,7 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 ## Phase 1: Rail proofs
 **Goal:** prove the risky assumptions before building on them.
 
-- [x] `H` Create the repo (`main` 6b0ccd4 at 20:26, public on GitHub: Vishal4742/merchant-capital-plus); first commit = AGENTS.md, CLAUDE.md, PIPELINE.md, docs/SRS.md, ARCHITECTURE.md, PHASES.md, `tools/{pipeline-gate,batch-start,batch-close}.sh`, `.claude/agents/*`, `.claude/settings.json` (gate hook)
+- [x] `H` Create the repo (`main` 6b0ccd4 at 20:26, public on GitHub: Vishal4742/whiteflow); first commit = AGENTS.md, CLAUDE.md, PIPELINE.md, docs/SRS.md, ARCHITECTURE.md, PHASES.md, `tools/{pipeline-gate,batch-start,batch-close}.sh`, `.claude/agents/*`, `.claude/settings.json` (gate hook)
 - [x] `R` Run `bash ~/.claude/skills/three-techniques/scripts/setup.sh typescript` in the repo (ECC + Ponytail, commands, agents); merge the gate hook back if the merge touched it; restart sessions; **prove the gate fires** (an edit under `apps/` with no batch is denied) — PIPELINE.md §9
 - [x] From here on, every task in this file runs as a PIPELINE.md batch (`bash tools/batch-start.sh <phase> <slug>`)
 - [x] `C` Foundry project (`prague`); a stub contract pulls USDT with `receiveWithAuthorization`, submitted by a relayer key (DEP-1); measure the gas of a routed payment · batch 001-P1-rail-proof, verified 21:55: PullStub `0x51e2E2A530c9dabe6147D55F9bb7fcD47219325d` (explorer-verified), relayed pull tx `0xc4629df1…c847e` 94,034 gas, payer nonce 0 / 0 WBT

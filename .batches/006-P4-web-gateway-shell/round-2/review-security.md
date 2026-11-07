@@ -164,7 +164,7 @@ Mirror the change in claude-contracts' `BANDS`.
 ### R2-F3 LOW: the /docs wordmark is a `next/link`, so after F3 home can run inside the /docs CSP
 `app/docs/page.tsx:74`. Owner: claude-frontend.
 
-**Problem.** Clicking "Merchant Capital+" on /docs soft-navigates to `/` without a new document, so the strict CSP stays. Home then `<Link>`s to `/proofs`, whose Nym CDNs and gateways are blocked. This fails closed, so it is not a hole. It is the 005 F-N4 pattern, and the Shell already avoids it (`dashboard/Shell.tsx:14-16`).
+**Problem.** Clicking "Whiteflow" on /docs soft-navigates to `/` without a new document, so the strict CSP stays. Home then `<Link>`s to `/proofs`, whose Nym CDNs and gateways are blocked. This fails closed, so it is not a hole. It is the 005 F-N4 pattern, and the Shell already avoids it (`dashboard/Shell.tsx:14-16`).
 
 **Fix.** Use a plain `<a href="/">`.
 

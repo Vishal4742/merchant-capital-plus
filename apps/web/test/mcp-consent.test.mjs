@@ -3,7 +3,7 @@
 // the session AND a CSRF token bound to that merchant and that request. Real SQL on PGlite. Run: npm test
 import { test, before, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { setupDb, resetDb, signedIn, req, MERCHANT, OTHER_MERCHANT } from "./gw-helpers.mjs";
+import { setupDb, resetDb, seedWorkspace, seedMember, legacyCookie, signedIn, req, MERCHANT, OTHER_MERCHANT } from "./gw-helpers.mjs";
 
 const SECRET = "mcp-internal-test-secret-0123456789abcdef";
 process.env.MCP_INTERNAL_SECRET = SECRET;
@@ -55,14 +55,14 @@ test("approve returns the client's callback with a code, and the grant belongs t
   assert.ok(url.searchParams.get("code"));
   assert.equal(url.searchParams.get("state"), "abc");
   assert.equal(url.searchParams.get("iss"), "https://mcp.example/", "byte-identical to the SDK's advertised issuer (review 058 R1 M1)");
-  const [grant] = await listGrants(MERCHANT);
+  const [grant] = await listGrants(MERCHANT, (await seedWorkspace(MERCHANT)).businessId);
   assert.deepEqual(grant.scopes, ["account:read", "links:read"], "exactly what was ticked, so links:write stays off");
-  assert.equal((await listGrants(OTHER_MERCHANT)).length, 0);
+  assert.equal((await listGrants(OTHER_MERCHANT, (await seedWorkspace(OTHER_MERCHANT)).businessId)).length, 0);
 });
 
 test("links:write is granted only when ticked", async () => {
   await consent(good(token(), { scopes: ["account:read", "links:read", "links:write"] }));
-  assert.deepEqual((await listGrants(MERCHANT))[0].scopes, ["account:read", "links:read", "links:write"]);
+  assert.deepEqual((await listGrants(MERCHANT, (await seedWorkspace(MERCHANT)).businessId))[0].scopes, ["account:read", "links:read", "links:write"]);
 });
 
 test("deny returns access_denied to the client and creates nothing", async () => {
@@ -98,7 +98,7 @@ test("a form-encoded cross-site-style post is refused: the route only takes JSON
 });
 
 // ── Disconnect ──
-const grantFor = async (merchant) => (await approveGrant({ owner: merchant, merchant, request: REQUEST, approved: ["account:read"], issuer: "https://mcp.example", now: NOW })).grantId;
+const grantFor = async (merchant) => (await approveGrant({ ...(await seedWorkspace(merchant)), owner: merchant, merchant, request: REQUEST, approved: ["account:read"], issuer: "https://mcp.example", now: NOW })).grantId;
 const revoke = (id, body, headers = signedIn()) => revokeRoute(req("POST", `/api/mcp/grants/${id}/revoke`, { body, headers: { ...headers, "content-type": "application/json" } }), { params: Promise.resolve({ id }) });
 
 test("Disconnect needs the session and a CSRF token for that grant; another merchant's grant is 404", async () => {
@@ -112,4 +112,14 @@ test("Disconnect needs the session and a CSRF token for that grant; another merc
   assert.equal((await revoke(id, { csrf: csrfToken(MERCHANT, id, SECRET) })).status, 200);
   assert.notEqual((await query("SELECT revoked_at FROM app_mcp_grants WHERE id = $1", [id]))[0].revoked_at, null);
   assert.equal((await query("SELECT revoked_at FROM app_mcp_grants WHERE id = $1", [theirs]))[0].revoked_at, null);
+});
+
+
+test("retired wallet cookie and non-Owner members cannot approve a connection", async () => {
+  assert.equal((await consent(good(), legacyCookie())).status, 401);
+  for (const role of ["viewer", "operator"]) {
+    const member = await seedMember(MERCHANT, role);
+    assert.equal((await consent(good(), member.headers)).status, 403);
+  }
+  assert.equal(await grantCount(), 0);
 });

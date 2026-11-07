@@ -3,7 +3,7 @@
 // listing with honest states, and revocation. Real SQL on PGlite. Run: npm test
 import { test, before, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { setupDb, resetDb, MERCHANT, OTHER_MERCHANT } from "./gw-helpers.mjs";
+import { setupDb, resetDb, seedWorkspace, MERCHANT, OTHER_MERCHANT } from "./gw-helpers.mjs";
 
 const SECRET = "mcp-internal-test-secret-0123456789abcdef";
 const { signConsentRequest, verifyConsentRequest, approveGrant, denyRedirect, listGrants, revokeGrant, grantState, GRANT_TTL_MS, CODE_TTL_MS } = await import("../lib/server/mcp-grants.ts");
@@ -24,7 +24,7 @@ beforeEach(async () => {
   await query("INSERT INTO app_mcp_clients (client_id, metadata, created_at) VALUES ('client_1', $1::jsonb, $2)", [JSON.stringify({ client_name: "Claude", redirect_uris: [REDIRECT] }), NOW]);
 });
 
-const approve = (over = {}) => approveGrant({ owner: MERCHANT, merchant: MERCHANT, request: REQUEST, approved: ["account:read", "links:read"], issuer: ISSUER, now: NOW, ...over });
+const approve = async (over = {}) => approveGrant({ ...(await seedWorkspace(over.merchant ?? MERCHANT)), owner: MERCHANT, merchant: MERCHANT, request: REQUEST, approved: ["account:read", "links:read"], issuer: ISSUER, now: NOW, ...over });
 
 test("a consent request round-trips and any edit, expiry, wrong secret or wrong audience is refused", () => {
   const token = signConsentRequest(REQUEST, SECRET, NOW);
@@ -80,13 +80,13 @@ test("grants are listed per merchant, newest first, with states that never claim
   const a = (await approve()).grantId;
   const b = (await approve({ now: NOW + 5000 })).grantId;
   await approve({ owner: OTHER_MERCHANT, merchant: OTHER_MERCHANT });
-  const mine = await listGrants(MERCHANT);
+  const mine = await listGrants(MERCHANT, (await seedWorkspace(MERCHANT)).businessId);
   assert.deepEqual(mine.map((g) => g.id), [b, a]);
   assert.equal(mine.length, 2, "another merchant's grant is never listed");
   assert.equal(grantState(mine[0], NOW + 6000), "awaiting_verification");
   await query("UPDATE app_mcp_grants SET last_tool_ok_at = $2 WHERE id = $1", [b, NOW + 7000]);
-  assert.equal(grantState((await listGrants(MERCHANT))[0], NOW + 8000), "verified");
-  assert.equal(grantState((await listGrants(MERCHANT))[0], NOW + 5000 + GRANT_TTL_MS + 1), "reauthorization_required");
+  assert.equal(grantState((await listGrants(MERCHANT, (await seedWorkspace(MERCHANT)).businessId))[0], NOW + 8000), "verified");
+  assert.equal(grantState((await listGrants(MERCHANT, (await seedWorkspace(MERCHANT)).businessId))[0], NOW + 5000 + GRANT_TTL_MS + 1), "reauthorization_required");
 });
 
 test("revoking disconnects at once: the grant and every token of it, only for its own merchant", async () => {
@@ -97,7 +97,7 @@ test("revoking disconnects at once: the grant and every token of it, only for it
   assert.equal(await revokeGrant(MERCHANT, grantId, NOW + 10), true);
   assert.notEqual((await query("SELECT revoked_at FROM app_mcp_grants WHERE id = $1", [grantId]))[0].revoked_at, null);
   assert.equal((await query("SELECT count(*)::int AS n FROM app_mcp_tokens WHERE grant_id = $1 AND revoked_at IS NULL", [grantId]))[0].n, 0);
-  assert.equal(grantState((await listGrants(MERCHANT))[0], NOW + 20), "revoked");
+  assert.equal(grantState((await listGrants(MERCHANT, (await seedWorkspace(MERCHANT)).businessId))[0], NOW + 20), "revoked");
   assert.equal(await revokeGrant(MERCHANT, grantId, NOW + 30), false, "already revoked");
 });
 

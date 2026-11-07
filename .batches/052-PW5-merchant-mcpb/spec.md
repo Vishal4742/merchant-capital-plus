@@ -1,7 +1,7 @@
-# Spec: 052-PW5-merchant-mcpb: WhiteFlow Merchant MCP bundle (whiteflow.mcpb)
+# Spec: 052-PW5-merchant-mcpb: Whiteflow Merchant MCP bundle (whiteflow.mcpb)
 
 ## Requirements (cite docs/SRS.md IDs)
-Delivered or kept, from main's SRS 2.3 and the WhiteFlow SRS v3.1 (on the stage branches, PR #43):
+Delivered or kept, from main's SRS 2.3 and the Whiteflow SRS v3.1 (on the stage branches, PR #43):
 - FR-MCP-3 (kept and strengthened): no tool moves money, signs, refunds, or changes keys, wallets or webhooks; keys
   never appear in output or logs; inputs are validated; API errors come back as a plain reason.
 - FR-MCP-4 (superseded in v3.0, still true for the dev adapter): one `claude mcp add` command and a Claude Desktop

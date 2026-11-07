@@ -214,6 +214,6 @@ export function ensureSandbox(dir: string, timezone: string): { apiKey: string; 
     if (saved.api_key && SANDBOX_KEY.test(saved.api_key)) return { apiKey: saved.api_key, created: false };
   }
   const { apiKey } = addMerchant(dir, { name: "Demo Business (sandbox)", timezone });
-  writeFileSync(file, JSON.stringify({ api_key: apiKey, note: "Sandbox only: a simulated key for the local WhiteFlow simulator. It works nowhere else." }, null, 2), { mode: 0o600 });
+  writeFileSync(file, JSON.stringify({ api_key: apiKey, note: "Sandbox only: a simulated key for the local Whiteflow simulator. It works nowhere else." }, null, 2), { mode: 0o600 });
   return { apiKey, created: true };
 }

@@ -14,7 +14,7 @@ Both round-1 musts are fixed. No new MUST. Three LOWs below.
 
 ## Round-1 findings
 
-1. **Not-found for /checkout and /r: fixed.** `nf-checkout-ux2-375-light.png`, `nf-receipt-ux2-1440-dark.png`. Branded sheet on the dither scene, a title, one plain explanation, and a "Go to Merchant Capital+" link. The checkout copy ("Nothing was charged from this page") is true. The receipt copy tells a customer who just paid to open the checkout link again. Legible in both themes, no crypto words.
+1. **Not-found for /checkout and /r: fixed.** `nf-checkout-ux2-375-light.png`, `nf-receipt-ux2-1440-dark.png`. Branded sheet on the dither scene, a title, one plain explanation, and a "Go to Whiteflow" link. The checkout copy ("Nothing was charged from this page") is true. The receipt copy tells a customer who just paid to open the checkout link again. Legible in both themes, no crypto words.
 2. **Pending state: fixed.** `confirming-ux2-375-dark.png`, `confirming-ux2-1440-light.png`. Bordered panel, amber "Confirming" pill (`text-warning`), copy in ink not red, quiet "Check again" button, 44 px tall. `role="status"`, no pay button. Panel text confirmed by DOM. It sits below the item list, so the amount stays visible.
 3. **Mono prices: fixed.** Line items render in the sans face with tabular numbers (10.00 / 5.00 align with 25.00).
 4. **Paid heading: fixed in code** (sr-only `h1` "Paid to {shop}"). I could not render the paid state (no funded wallet).

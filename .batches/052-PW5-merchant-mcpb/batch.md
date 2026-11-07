@@ -15,7 +15,7 @@ Human decisions (2026-11-07 00:4x, AskUserQuestion):
   and reports, plus a key-scoped account profile and a single-link read. Customers, invoice drafts/finalize and
   reminders run in a clearly labelled local sandbox adapter that implements the written API contract.
 - Package: "Evolve packages/mcp". pay_checkout, spending_report and MCP_PAYER_KEY are removed (SRS v3.0 R1).
-- Security: redacted the Privy app secret from the uncommitted .batches/050-P5-privy-onboarding/batch.md in P:/WhiteFlow
+- Security: redacted the Privy app secret from the uncommitted .batches/050-P5-privy-onboarding/batch.md in P:/Whiteflow
   (human approved). The human must still rotate it.
 Round 2 request (human, 2026-11-07, after the external production review of afd5a07): extend into a
 production-capable merchant collection product per "Whiteflow Merchant MCP — production implementation prompt" and the
@@ -32,7 +32,7 @@ Human decisions (2026-11-07, round 2, AskUserQuestion):
   PR #45 keeps packages/mcp only.
 Agent ids (builders, for SendMessage resumes): claude (this session)
 Log:
-- 00:50 batch started in its own worktree from origin/main e7e41bf (P:/WhiteFlow holds another lane's uncommitted batch 050).
+- 00:50 batch started in its own worktree from origin/main e7e41bf (P:/Whiteflow holds another lane's uncommitted batch 050).
 - round 1 closed with security PASS, code PASS and CI PASS (afd5a07).
 - round 2: production review findings, decisions above.
 - round-3 fixes by claude-contracts (owner 05:34: fix the PRs, then merge): untrusted() strips tag characters U+E0000-U+E007F, U+2028/2029, U+061C; invoice/link ids match /^[\w-]{1,64}$/ before any fetch; package.json 0.3.0; MCP_SECRET_KEY alone is a startup error; README 46 tests; merged origin/main.

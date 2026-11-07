@@ -6,17 +6,12 @@
 // never see this; they pay with the guest wallet. Nothing here asks the wallet for anything until a button is pressed.
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
-import { createWalletClient, custom, type EIP1193Provider } from "viem";
+import { createWalletClient, custom } from "viem";
 import { whitechainSepolia } from "viem/chains";
 import { createSiweMessage } from "viem/siwe";
 import { Button } from "@/components/Button";
 import { SIGN_IN_WINDOW_MS, WHITECHAIN_TESTNET, signInProblem, walletProblem } from "@/lib/onboarding";
-
-declare global {
-  interface Window {
-    ethereum?: EIP1193Provider;
-  }
-}
+// window.ethereum's type lives in lib/window-ethereum.d.ts (batch 051)
 
 const NO_ACCOUNT = "Your wallet didn't share an account. Unlock it, pick an account, then try again.";
 const OFFLINE = "We couldn't reach our server. Check your connection, then try again.";
@@ -136,7 +131,7 @@ export function SignIn({ available }: { available: boolean }) {
         uri: window.location.origin,
         version: "1",
         expirationTime: new Date(Date.now() + SIGN_IN_WINDOW_MS), // the server refuses messages without a short expiry
-        statement: "Sign in to your WhiteFlow dashboard. This is free and moves no money.",
+        statement: "Sign in to your Whiteflow dashboard. This is free and moves no money.",
       });
       const signature = await wallet.signMessage({ account: address, message });
       const res = await fetch("/api/auth/verify", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message, signature }) }).catch(() => {

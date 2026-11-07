@@ -59,7 +59,7 @@ export function internalScope(method: string, pathname: string): GrantScope | "a
   return null;
 }
 
-export type InternalCaller = { merchant: Address; grantId: string; scopes: string[] };
+export type InternalCaller = { merchant: Address; grantId: string; scopes: string[]; businessId: string; principalId: string };
 export type InternalRefusal = { status: number; error: string };
 
 /** null: this request carries no assertion (let the other credentials try). Otherwise the verified caller or the refusal. */
@@ -72,8 +72,11 @@ export async function internalCaller(request: Request, now = Date.now()): Promis
   if (!claim) return { status: 401, error: "This connection's credential isn't valid. Authorize WhiteFlow again in your assistant." };
   const need = internalScope(request.method, new URL(request.url).pathname);
   if (need === null) return { status: 403, error: "Assistant connections can't use this part of WhiteFlow." };
-  const [row] = await query<{ merchant: string; scopes: string; expires_at: string; revoked_at: string | null }>(
-    "SELECT merchant, scopes, expires_at::text, revoked_at::text FROM app_mcp_grants WHERE id = $1",
+  const [row] = await query<{ merchant: string; scopes: string; expires_at: string; revoked_at: string | null; business_id: string; approved_by: string }>(
+    `SELECT g.merchant, g.scopes, g.expires_at::text, g.revoked_at::text, g.business_id, g.approved_by
+       FROM app_mcp_grants g JOIN wf_businesses b ON b.id = g.business_id AND b.legacy_merchant = g.merchant
+       JOIN wf_memberships m ON m.business_id = g.business_id AND m.principal_id = g.approved_by AND m.role = 'owner'
+      WHERE g.id = $1`,
     [claim.grantId],
   );
   // the grant's own row decides: an assertion naming another merchant than the grant's is refused like an unknown grant
@@ -82,5 +85,5 @@ export async function internalCaller(request: Request, now = Date.now()): Promis
   }
   const scopes = row.scopes.split(" ").filter(Boolean);
   if (need !== "any" && !scopes.includes(need)) return { status: 403, error: `This connection doesn't have the ${need} permission.` };
-  return { merchant: getAddress(row.merchant), grantId: claim.grantId, scopes };
+  return { merchant: getAddress(row.merchant), grantId: claim.grantId, scopes, businessId: row.business_id, principalId: row.approved_by };
 }

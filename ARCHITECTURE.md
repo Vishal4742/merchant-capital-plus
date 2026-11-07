@@ -1,4 +1,4 @@
-# Merchant Capital+ : architecture (pre-event planning, no code)
+# Whiteflow : architecture (pre-event planning, no code)
 
 > Locked by the human 2026-11-05 18:53 IST. Planning only until Thu 21:00 IST (Start Fresh). Disclose in the README as "pre-event planning notes". Full design with sources and numeric examples: `research_notes/Mumbai hackathon idea validation/build_H1_merchant_capital.md` (the "build plan").
 

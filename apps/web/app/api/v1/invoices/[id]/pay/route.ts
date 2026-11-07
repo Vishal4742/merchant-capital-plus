@@ -3,7 +3,7 @@
 // checks the signature before relaying, keeps one payment in flight per invoice, and counts it only when the chain
 // says so. Phase 3 MerchantPay: the customer pays what is still owed plus relayFee on top, and the invoice turns Paid
 // once fully paid. MerchantPay itself never takes more than is owed (WrongAmount) or pays a paid invoice (InvoiceNotOpen).
-import { verifyTypedData } from "viem";
+import { type Hex, verifyTypedData } from "viem";
 import { merchantConfig, payConfig } from "../../../../../../lib/config.ts";
 import { invoicePaid, readInvoice, readRelayFee, readUsdtBalance } from "../../../../../../lib/onchain.ts";
 import { invoiceAuthorization, parseApproval } from "../../../../../../lib/pay.ts";
@@ -83,11 +83,11 @@ async function post(request: Request, { params }: { params: Promise<{ id: string
     if ((await invoiceAttempt(id)).receipt) return await alreadyPaid(id);
     const state = await invoiceState(id, invoice.status);
     if (state !== "open") return await closed(id, state);
-    const markPending = async () => setInvoiceAttempt(id, { ...(await invoiceAttempt(id)), pending: { from: payer, validBefore } });
+    const markPending = async (txHash?: Hex) => setInvoiceAttempt(id, { ...(await invoiceAttempt(id)), pending: { from: payer, validBefore, ...(txHash && { txHash }) } });
 
     const result = await relayPayInvoice({ relayerUrl: pay.relayerUrl, invoiceId, from: payer, amount: terms.amount, validBefore, salt, signature });
     if (!result.ok) {
-      if (result.unknown) await markPending(); // it may settle: the chain decides later
+      if (result.unknown) await markPending(result.txHash); // it may settle: the chain decides later; the tx reference is kept (A14)
       else if (result.refused) {
         // a refusal can mean someone paid or cancelled it meanwhile (InvoiceNotOpen in the relayer's simulation)
         const now = await readInvoice(pay.merchantPay, invoiceId, { tries: READ_TRIES }).catch(logged(`invoice ${id}: chain read after refusal`));
@@ -102,7 +102,7 @@ async function post(request: Request, { params }: { params: Promise<{ id: string
       paymentId !== null &&
       Boolean(await invoicePaid({ ...terms, paymentId: BigInt(paymentId), payer, paidBefore: invoice.paid }, { blockNumber }).catch(logged(`invoice ${id}: chain read after relay`)));
     if (!confirmed) {
-      await markPending(); // the relayer says it went through: never invite a second payment
+      await markPending(result.txHash); // the relayer says it went through: never invite a second payment; keep its tx reference (A14, review F2)
       return fail(504, UNKNOWN);
     }
     await setInvoiceAttempt(id, { receipt: { paymentId, txHash: result.txHash } });

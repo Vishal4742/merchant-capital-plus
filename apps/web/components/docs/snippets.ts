@@ -45,7 +45,7 @@ export const ENV = `GATEWAY_URL=https://your-gateway.example
 GATEWAY_SECRET_KEY=sk_test_…
 GATEWAY_WEBHOOK_SECRET=whsec_…`;
 
-export const CREATE = `import { Gateway } from "@merchant-capital/sdk";
+export const CREATE = `import { Gateway } from "@whiteflow/sdk";
 
 const gateway = new Gateway(
   process.env.GATEWAY_SECRET_KEY!,
@@ -72,7 +72,7 @@ const session = await gateway.sessions.create(
 // the customer to session.url, or give
 // session.id to the pay button.`;
 
-export const RETRIEVE = `import { sameAmount } from "@merchant-capital/sdk";
+export const RETRIEVE = `import { sameAmount } from "@whiteflow/sdk";
 
 const checkout = await gateway.sessions
   .retrieve(order.sessionId);
@@ -101,7 +101,7 @@ export const WEBHOOK = `import {
   sameAmount,
   SIGNATURE_HEADER,
   WebhookSignatureError,
-} from "@merchant-capital/sdk";
+} from "@whiteflow/sdk";
 
 const ok = () => new Response("ok");
 

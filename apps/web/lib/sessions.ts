@@ -63,7 +63,8 @@ export interface Session {
   /** An attempt whose outcome is unknown (timeout, dropped connection, 5xx, an unconfirmed 200): the chain decides it.
    *  `amount` is the price a link or page attempt claimed and signed (security 009 F3): the chain is read for exactly
    *  that; absent for a shop's own session, whose price is `amount` above. */
-  pending?: { from: Address; validBefore: bigint; amount?: bigint };
+  /** txHash (batch 031 A14): the relayer's reference for this attempt when it may have been broadcast. */
+  pending?: { from: Address; validBefore: bigint; amount?: bigint; txHash?: Hex };
 }
 
 // Stored in Postgres (db/050_web_sessions.sql), never in this process: on Vercel the checkout page and the API run on
@@ -80,7 +81,7 @@ function sessionOf(r: SessionRow): Session {
   const items = (JSON.parse(r.items) as (Omit<LineItem, "price"> & { price: string })[]).map((i) => ({ ...i, price: BigInt(i.price) }));
   const priced = r.priced === null ? undefined : (JSON.parse(r.priced) as Omit<Priced, "amount"> & { amount: string });
   const payment = r.payment === null ? undefined : (JSON.parse(r.payment) as Omit<Payment, "amount"> & { amount: string });
-  const pending = r.pending === null ? undefined : (JSON.parse(r.pending) as { from: Address; validBefore: string; amount?: string });
+  const pending = r.pending === null ? undefined : (JSON.parse(r.pending) as { from: Address; validBefore: string; amount?: string; txHash?: Hex });
   return {
     id: r.id,
     merchant: r.merchant as Address,
@@ -94,7 +95,7 @@ function sessionOf(r: SessionRow): Session {
     createdAt: Number(r.created_at),
     expiresAt: Number(r.expires_at),
     ...(payment && { payment: { ...payment, amount: BigInt(payment.amount) } }),
-    ...(pending && { pending: { from: pending.from, validBefore: BigInt(pending.validBefore), ...(pending.amount !== undefined && { amount: BigInt(pending.amount) }) } }),
+    ...(pending && { pending: { from: pending.from, validBefore: BigInt(pending.validBefore), ...(pending.amount !== undefined && { amount: BigInt(pending.amount) }), ...(pending.txHash && { txHash: pending.txHash }) } }),
   };
 }
 
@@ -175,7 +176,8 @@ export async function isInFlight(key: string): Promise<boolean> {
   return (await query("SELECT 1 FROM app_web_locks WHERE key = $1 AND until > now()", [key])).length === 1;
 }
 
-const pendingJson = (pending: NonNullable<Session["pending"]>) => json({ from: pending.from, validBefore: pending.validBefore, ...(pending.amount !== undefined && { amount: pending.amount }) });
+const pendingJson = (pending: NonNullable<Session["pending"]>) =>
+  json({ from: pending.from, validBefore: pending.validBefore, ...(pending.amount !== undefined && { amount: pending.amount }), ...(pending.txHash && { txHash: pending.txHash }) });
 
 async function changed(id: string, rows: unknown[]): Promise<void> {
   if (rows.length === 0 && !(await getSession(id))) throw new Error("No such checkout");
@@ -209,19 +211,20 @@ export const samePending = (a: Session["pending"], b: Session["pending"]) => (a 
  *  (WrongAmount) and refuses a paid invoice (InvoiceNotOpen); a lost `pending` only drops a "Don't pay again". */
 export interface InvoiceAttempt {
   /** An attempt whose outcome is unknown: the chain decides (lib/settle.ts invoiceState). */
-  pending?: { from: Address; validBefore: bigint };
+  pending?: { from: Address; validBefore: bigint; txHash?: Hex };
   receipt?: { paymentId: string; txHash: Hex | null };
 }
 
 export async function invoiceAttempt(id: string): Promise<InvoiceAttempt> {
   const [row] = await query<{ attempt: string }>("SELECT attempt::text FROM app_web_invoice_attempts WHERE id = $1", [id]);
   if (!row) return {};
-  const { pending, receipt } = JSON.parse(row.attempt) as { pending?: { from: Address; validBefore: string }; receipt?: InvoiceAttempt["receipt"] };
-  return { ...(pending && { pending: { from: pending.from, validBefore: BigInt(pending.validBefore) } }), ...(receipt && { receipt }) };
+  const { pending, receipt } = JSON.parse(row.attempt) as { pending?: { from: Address; validBefore: string; txHash?: Hex }; receipt?: InvoiceAttempt["receipt"] };
+  return { ...(pending && { pending: { from: pending.from, validBefore: BigInt(pending.validBefore), ...(pending.txHash && { txHash: pending.txHash }) } }), ...(receipt && { receipt }) };
 }
 
 export async function setInvoiceAttempt(id: string, attempt: InvoiceAttempt): Promise<void> {
-  const stored = { ...(attempt.pending && { pending: { from: attempt.pending.from, validBefore: attempt.pending.validBefore } }), ...(attempt.receipt && { receipt: attempt.receipt }) };
+  const p = attempt.pending;
+  const stored = { ...(p && { pending: { from: p.from, validBefore: p.validBefore, ...(p.txHash && { txHash: p.txHash }) } }), ...(attempt.receipt && { receipt: attempt.receipt }) };
   await query("INSERT INTO app_web_invoice_attempts (id, attempt) VALUES ($1, $2::jsonb) ON CONFLICT (id) DO UPDATE SET attempt = EXCLUDED.attempt", [id, json(stored)]);
 }
 
@@ -229,6 +232,6 @@ export async function setInvoiceAttempt(id: string, attempt: InvoiceAttempt): Pr
 export async function clearInvoicePending(id: string, expected: NonNullable<InvoiceAttempt["pending"]>): Promise<void> {
   await query("UPDATE app_web_invoice_attempts SET attempt = attempt - 'pending' WHERE id = $1 AND attempt->'pending' = $2::jsonb", [
     id,
-    json({ from: expected.from, validBefore: expected.validBefore }),
+    json({ from: expected.from, validBefore: expected.validBefore, ...(expected.txHash && { txHash: expected.txHash }) }),
   ]);
 }

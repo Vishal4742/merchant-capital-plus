@@ -130,6 +130,8 @@ export function redirectMatches(requested: string, registered: string): boolean 
 export interface ApproveInput {
   /** the SIWE address that approved */
   owner: string;
+  businessId: string;
+  principalId: string;
   /** the merchant the grant is bound to: from the session, never from the request */
   merchant: string;
   request: ConsentRequest;
@@ -142,6 +144,8 @@ export interface ApproveInput {
  *  approval doesn't fit the request: nothing is created then. */
 export async function approveGrant(input: ApproveInput): Promise<{ redirect: string; grantId: string }> {
   const { request, now = Date.now() } = input;
+  const [authority] = await query("SELECT 1 FROM wf_memberships m JOIN wf_businesses b ON b.id = m.business_id WHERE m.business_id = $1 AND m.principal_id = $2 AND m.role = 'owner' AND b.legacy_merchant = $3", [input.businessId, input.principalId, input.merchant.toLowerCase()]);
+  if (!authority) throw new GrantRefusal("An active workspace Owner must approve this connection.");
   const approved = [...new Set(input.approved)];
   if (approved.length === 0) throw new GrantRefusal("Approve at least one permission, or deny the request.");
   const known = GRANT_SCOPES as readonly string[];
@@ -156,8 +160,8 @@ export async function approveGrant(input: ApproveInput): Promise<{ redirect: str
   const owner = input.owner.toLowerCase(), merchant = input.merchant.toLowerCase();
   await transaction([
     {
-      text: "INSERT INTO app_mcp_grants (id, owner, merchant, client_id, scopes, resource, created_at, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-      params: [grantId, owner, merchant, request.clientId, approved.join(" "), request.resource, now, now + GRANT_TTL_MS],
+      text: "INSERT INTO app_mcp_grants (id, owner, merchant, client_id, scopes, resource, created_at, expires_at, business_id, approved_by) SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10 FROM wf_memberships m JOIN wf_businesses b ON b.id = m.business_id WHERE m.business_id = $9 AND m.principal_id = $10 AND m.role = 'owner' AND b.legacy_merchant = $3 FOR SHARE OF m, b",
+      params: [grantId, owner, merchant, request.clientId, approved.join(" "), request.resource, now, now + GRANT_TTL_MS, input.businessId, input.principalId],
     },
     {
       text: "INSERT INTO app_mcp_codes (code_hash, grant_id, client_id, redirect_uri, code_challenge, resource, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7)",
@@ -185,12 +189,14 @@ export interface GrantRow {
 
 const ms = (v: string | null) => (v === null ? null : Number(v));
 
-export async function listGrants(merchant: string): Promise<GrantRow[]> {
+export async function listGrants(merchant: string, businessId: string): Promise<GrantRow[]> {
   const rows = await query<{ id: string; client_id: string; client_name: string | null; scopes: string; created_at: string; expires_at: string; revoked_at: string | null; last_tool_ok_at: string | null; last_error_category: string | null }>(
     `SELECT g.id, g.client_id, c.metadata->>'client_name' AS client_name, g.scopes, g.created_at::text, g.expires_at::text, g.revoked_at::text, g.last_tool_ok_at::text, g.last_error_category
        FROM app_mcp_grants g JOIN app_mcp_clients c ON c.client_id = g.client_id
-      WHERE g.merchant = $1 ORDER BY g.created_at DESC, g.id DESC LIMIT 50`,
-    [merchant.toLowerCase()],
+       JOIN wf_businesses b ON b.id = g.business_id AND b.legacy_merchant = g.merchant
+       JOIN wf_memberships m ON m.business_id = g.business_id AND m.principal_id = g.approved_by AND m.role = 'owner'
+      WHERE g.merchant = $1 AND g.business_id = $2 ORDER BY g.created_at DESC, g.id DESC LIMIT 50`,
+    [merchant.toLowerCase(), businessId],
   );
   return rows.map((r) => ({ id: r.id, clientId: r.client_id, clientName: r.client_name ?? "An AI assistant", scopes: r.scopes.split(" ").filter(Boolean), createdAt: Number(r.created_at), expiresAt: Number(r.expires_at), revokedAt: ms(r.revoked_at), lastToolOkAt: ms(r.last_tool_ok_at), lastErrorCategory: r.last_error_category }));
 }

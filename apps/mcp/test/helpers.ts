@@ -52,7 +52,15 @@ export interface GatewayCall {
 
 export async function start(opts: { clock?: { now: number }; gatewayDown?: boolean } = {}) {
   const pg = new PGlite();
+  await pg.exec(readFileSync(new URL("../../web/db/001_keys.sql", import.meta.url), "utf8"));
   await pg.exec(MIGRATION);
+  await pg.exec(readFileSync(new URL("../../web/db/053_identity.sql", import.meta.url), "utf8"));
+  await pg.exec(readFileSync(new URL("../../web/db/055_mcp_workspace.sql", import.meta.url), "utf8"));
+  for (const merchant of [MERCHANT_A, MERCHANT_B]) {
+    await pg.query("INSERT INTO wf_principals (id, privy_did, created_at, last_sign_in_at) VALUES ($1, $2, 0, 0)", [merchant, `did:privy:${merchant}`]);
+    await pg.query("INSERT INTO wf_businesses (id, display_name, timezone, created_by, idem_key, request_hash, owner_count, legacy_merchant, created_at) VALUES ($1, 'Test', 'UTC', $1, 'seed', 'seed', 1, $1, 0)", [merchant]);
+    await pg.query("INSERT INTO wf_memberships (business_id, principal_id, role, created_at) VALUES ($1, $1, 'owner', 0)", [merchant]);
+  }
   const sql: SqlRunner = { query: async (text, params) => (await pg.query(text, params as unknown[])).rows as Record<string, unknown>[] };
   setTestDb({
     query: async (text, params) => (await pg.query(text, params)).rows as Record<string, unknown>[],
@@ -115,7 +123,7 @@ export async function start(opts: { clock?: { now: number }; gatewayDown?: boole
     const url = new URL(location);
     const request = verifyConsentRequest(url.searchParams.get("request") ?? "", SECRET, clock.now);
     if (!request) throw new Error("the consent request did not verify");
-    const done = await approveGrant({ owner: merchant, merchant, request, approved, issuer: config.issuerUrl.href.replace(/\/$/, ""), now: clock.now });
+    const done = await approveGrant({ owner: merchant, merchant, businessId: merchant, principalId: merchant, request, approved, issuer: config.issuerUrl.href.replace(/\/$/, ""), now: clock.now });
     const code = new URL(done.redirect).searchParams.get("code")!;
     return { ...done, code, request };
   };

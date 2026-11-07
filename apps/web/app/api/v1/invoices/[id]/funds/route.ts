@@ -4,7 +4,7 @@
 import { isAddress } from "viem";
 import { merchantConfig, payConfig } from "../../../../../../lib/config.ts";
 import { readInvoice, readRelayFee, readUsdtBalance } from "../../../../../../lib/onchain.ts";
-import { clientIp, fail, handle, ok, rateLimit } from "../../../../../../lib/server/http.ts";
+import { clientIp, fail, handle, ok, sharedRateLimit } from "../../../../../../lib/server/http.ts";
 import { isShopInvoice } from "../../../../../../lib/settle.ts";
 
 const CHECKS_PER_MINUTE = 30; // per IP, shared with the checkout's check (the same key)
@@ -15,7 +15,9 @@ const NOT_FOUND = "This invoice doesn't exist. Check the link with whoever sent 
 export const GET = (request: Request, context: { params: Promise<{ id: string }> }) => handle(() => get(request, context));
 
 async function get(request: Request, { params }: { params: Promise<{ id: string }> }): Promise<Response> {
-  rateLimit(`funds:${clientIp(request)}`, CHECKS_PER_MINUTE, 60_000);
+  // FR-OPS-9 (batch 049): one window across instances and restarts; a public balance check, so it stays up on this
+  // instance's memory window if the database is down
+  await sharedRateLimit(`funds:${clientIp(request)}`, CHECKS_PER_MINUTE, 60_000, "memory");
   const { id } = await params;
   if (!/^[1-9]\d{0,19}$/.test(id)) return fail(404, NOT_FOUND);
   const payer = new URL(request.url).searchParams.get("payer") ?? "";

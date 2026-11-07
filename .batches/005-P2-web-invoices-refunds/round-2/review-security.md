@@ -93,7 +93,7 @@ Fast mode (PIPELINE §3a): no HIGH or CRITICAL finding. Every round-1 follow-up 
 - **Where:** `.batches/005-P2-web-invoices-refunds/round-1/test.md:18`.
 - **Gap:**
   - That line contains the full 22-character id of the private design-system link. PIPELINE §3.7 commits batch markdown, so committing it would publish the id again.
-  - The full link is also in **public** history on `origin/main` (`Vishal4742/merchant-capital-plus`, visibility PUBLIC): commits ebed59b, ed17ab7, 17a1695, c402929 and e06b7b4, and it stays in HEAD's `tokens.css` until this batch commits.
+  - The full link is also in **public** history on `origin/main` (`Vishal4742/whiteflow`, visibility PUBLIC): commits ebed59b, ed17ab7, 17a1695, c402929 and e06b7b4, and it stays in HEAD's `tokens.css` until this batch commits.
   - AGENTS.md forbids rewriting history.
 - **Fix:**
   - claude-frontend redacts the id in test.md before committing.

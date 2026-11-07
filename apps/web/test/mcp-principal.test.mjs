@@ -4,7 +4,7 @@
 // the database on every request. Real SQL on PGlite. Run: npm test
 import { test, before, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
-import { setupDb, resetDb, req, MERCHANT, OTHER_MERCHANT } from "./gw-helpers.mjs";
+import { setupDb, resetDb, seedWorkspace, seedMember, req, MERCHANT, OTHER_MERCHANT } from "./gw-helpers.mjs";
 
 const SECRET = "mcp-internal-test-secret-0123456789abcdef";
 process.env.MCP_INTERNAL_SECRET = SECRET;
@@ -29,10 +29,11 @@ const NOW = Date.now();
 const ALL = "account:read links:read payments:read reports:read links:write";
 
 async function grant({ id = "grant_1", merchant = MERCHANT, scopes = ALL, expiresAt = NOW + 3_600_000, revokedAt = null } = {}) {
+  const { businessId, principalId } = await seedWorkspace(merchant);
   await query("INSERT INTO app_mcp_clients (client_id, metadata, created_at) VALUES ('client_1', '{}'::jsonb, $1) ON CONFLICT DO NOTHING", [NOW]);
   await query(
-    "INSERT INTO app_mcp_grants (id, owner, merchant, client_id, scopes, resource, created_at, expires_at, revoked_at) VALUES ($1, $2, $3, 'client_1', $4, 'https://mcp.example/mcp', $5, $6, $7)",
-    [id, merchant.toLowerCase(), merchant.toLowerCase(), scopes, NOW, expiresAt, revokedAt],
+    "INSERT INTO app_mcp_grants (id, owner, merchant, client_id, scopes, resource, created_at, expires_at, revoked_at, business_id, approved_by) VALUES ($1, $2, $3, 'client_1', $4, 'https://mcp.example/mcp', $5, $6, $7, $8, $9)",
+    [id, merchant.toLowerCase(), merchant.toLowerCase(), scopes, NOW, expiresAt, revokedAt, businessId, principalId],
   );
   return id;
 }
@@ -158,7 +159,8 @@ test("without MCP_INTERNAL_SECRET configured, assertions are refused (fail close
   }
 });
 
-test("a secret API key still works exactly as before", async () => {
+test("a secret API key for a linked workspace still works", async () => {
+  await seedWorkspace(MERCHANT);
   const { key } = await createKey(MERCHANT, "mcp", "sk");
   assert.equal((await accountRoute(req("GET", "/api/v1/account", { headers: bearer(key) }))).status, 200);
 });
@@ -176,4 +178,35 @@ test("payments and reports each need their own scope: a grant without them is 40
   const t = token();
   assert.equal((await paymentsRoute(req("GET", "/api/v1/payments", { headers: bearer(t) }))).status, 403);
   assert.equal((await reportsRoute(req("GET", "/api/v1/reports?from=2026-11-01&to=2026-11-02&tz=Asia/Kolkata", { headers: bearer(t) }))).status, 403);
+});
+
+
+test("removed grant approver loses access and rejoining never revives the grant", async () => {
+  await grant();
+  const owner = await seedWorkspace();
+  assert.equal((await accountRoute(req("GET", "/api/v1/account", { headers: bearer(token()) }))).status, 200);
+  await query("DELETE FROM wf_memberships WHERE business_id = $1 AND principal_id = $2", [owner.businessId, owner.principalId]);
+  assert.equal((await accountRoute(req("GET", "/api/v1/account", { headers: bearer(token()) }))).status, 401);
+  await seedWorkspace();
+  assert.equal((await accountRoute(req("GET", "/api/v1/account", { headers: bearer(token()) }))).status, 401);
+});
+
+test("demoting the approver immediately denies its gateway assertions", async () => {
+  await grant();
+  const owner = await seedWorkspace();
+  await query("UPDATE wf_memberships SET role = 'viewer' WHERE business_id = $1 AND principal_id = $2", [owner.businessId, owner.principalId]);
+  assert.equal((await accountRoute(req("GET", "/api/v1/account", { headers: bearer(token()) }))).status, 401);
+});
+
+
+test("Owner demotion permanently revokes its grants, including after promotion", async () => {
+  await grant();
+  const owner = await seedWorkspace();
+  const admin = await seedMember(MERCHANT, "owner", "admin");
+  const { contextFromRequest } = await import("../lib/server/auth-sessions.ts");
+  const { setMemberRole } = await import("../lib/server/businesses.ts");
+  const ctx = await contextFromRequest(req("GET", "/api/v2/me", { headers: admin.headers }));
+  await setMemberRole(ctx, { principalId: owner.principalId, role: "viewer", idempotencyKey: "demote-mcp" });
+  await setMemberRole(ctx, { principalId: owner.principalId, role: "owner", idempotencyKey: "promote-mcp" });
+  assert.equal((await accountRoute(req("GET", "/api/v1/account", { headers: bearer(token()) }))).status, 401);
 });

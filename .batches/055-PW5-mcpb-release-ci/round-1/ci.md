@@ -2,7 +2,7 @@ VERDICT: PASS
 Batch 055-PW5-mcpb-release-ci, round 1. Phase mode (PIPELINE.md §3b.1): written by the lane. Head c435259, draft PR #49 (base wf/merchant-mcpb).
 
 ## GitHub Actions (ci.yml on PR #49)
-Run https://github.com/Vishal4742/merchant-capital-plus/actions/runs/42303861937: conclusion `success` on c4352597250d.
+Run https://github.com/Vishal4742/whiteflow/actions/runs/42303861937: conclusion `success` on c4352597250d.
 - Jobs: secrets, changes, relayer, sdk, web, contracts, mcp. All passed.
 - Every job ran because the diff touches `.github/workflows/`.
 - Not CI: the two Vercel previews (web, relayer) say "Deployment rate limited, retry in 24 hours". They aren't required checks, and this branch doesn't deploy.

@@ -55,6 +55,9 @@ const nextConfig: NextConfig = {
       // ponytail: CSP only where nothing third-party loads; home and /proofs need Nym's CDNs and gateways
       { source: "/checkout/:path*", headers: paySheetCsp },
       { source: "/pay/:path*", headers: paySheetCsp },
+      // business sign-in (batch 050, FR-BIZ-6 v3.1): the only other page that loads Privy (email or wallet login, no embedded
+      // wallets); the same Privy/WalletConnect origins as the pay sheet. test/csp-privy-scope.test.mjs pins this list.
+      { source: "/sign-in", headers: paySheetCsp },
       { source: "/r/:path*", headers: csp },
       { source: "/l/:path*", headers: csp },
       { source: "/counter/:path*", headers: csp },

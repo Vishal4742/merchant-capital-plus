@@ -64,9 +64,9 @@ exit 0
 GET routes use handle()).
 
 ## GitHub Actions (PR #34)
-https://github.com/Vishal4742/merchant-capital-plus/actions/runs/42209774487 on 9de19dc: conclusion success
+https://github.com/Vishal4742/whiteflow/actions/runs/42209774487 on 9de19dc: conclusion success
 (changes, secrets, web: success; relayer, sdk, mcp, contracts: skipped, no changes there).
-After the security L3 fix (745efcb) and a second merge of main: https://github.com/Vishal4742/merchant-capital-plus/actions/runs/42210543153
+After the security L3 fix (745efcb) and a second merge of main: https://github.com/Vishal4742/whiteflow/actions/runs/42210543153
 on b999807: conclusion success; pre-push on that push: typecheck, lint, tests, all checks passed.
 
 ## CSP and secrets

@@ -1,4 +1,4 @@
-# Frontend plan: Merchant Capital+ (claude-frontend)
+# Frontend plan: Whiteflow (claude-frontend)
 
 This is planning only; Start Fresh means no product code before Thu 21:00 IST. After 21:00, every change is a batch (PIPELINE.md) that cites `docs/SRS.md` IDs. If this file disagrees with the SRS, ARCHITECTURE.md or PHASES.md, those win. Lane: `apps/web/`, `apps/shop/`.
 

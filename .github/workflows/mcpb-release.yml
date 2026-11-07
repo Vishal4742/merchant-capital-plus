@@ -1,4 +1,4 @@
-# Release build for the WhiteFlow Merchant MCP bundle (batch 055, production review F8; FR-MCP-12, NFR-17).
+# Release build for the Whiteflow Merchant MCP bundle (batch 055, production review F8; FR-MCP-12, NFR-17).
 # Builds whiteflow.mcpb from the checked-out commit, refuses an archive that holds a key-shaped string, attests it
 # (SLSA build provenance and its CycloneDX SBOM, signed by Sigstore through GitHub artifact attestations) and uploads it
 # with its checksums. This is provenance, not an MCPB signature: see packages/mcp/RELEASE.md.

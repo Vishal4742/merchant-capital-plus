@@ -98,7 +98,7 @@ export function registerCollectionTools(server: McpServer, ctx: Ctx): void {
           collected_notes: [
             "Every payment settles in USDT, whatever currency its link was priced in; no other currency is collected.",
             ctx.mode === "testnet"
-              ? "From WhiteFlow's on-chain payment records. fees = the relay fee MerchantPay took; net = what reached you (and any financing investors) before refunds."
+              ? "From Whiteflow's on-chain payment records. fees = the relay fee MerchantPay took; net = what reached you (and any financing investors) before refunds."
               : "SANDBOX: simulated payments; the simulator charges no fees and has no refunds.",
           ],
           receivables_now: receivables,

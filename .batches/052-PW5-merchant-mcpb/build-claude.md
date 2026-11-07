@@ -11,7 +11,7 @@ STATUS: READY
   - `app/api/v1/account/route.ts` (new).
   - `app/api/v1/reports/route.ts`: sk key.
   - Verified by `test/gw-mcp-api.test.mjs` 9/9 and the full web suite in the pre-push hook.
-- **packages/mcp: the WhiteFlow merchant MCP.**
+- **packages/mcp: the Whiteflow merchant MCP.**
   - 12 tools and 4 prompts: `src/tools/*`, `src/prompts.ts`.
   - The client: `src/client.ts`, `src/contract.ts`.
   - Integer money: `src/money.ts`. Zone dates: `src/dates.ts`.

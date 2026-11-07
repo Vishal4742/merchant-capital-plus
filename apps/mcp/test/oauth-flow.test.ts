@@ -366,3 +366,18 @@ test("M3: registration stops at the client cap instead of growing without bound"
   assert.equal(r.status, 400);
   assert.match(r.text, /too many|limit/i);
 });
+
+
+test("removing the approving Owner denies access and refresh even after rejoining", async () => {
+  const h = await start();
+  try {
+    const connection = await h.connect(MERCHANT_A);
+    assert.equal(connection.tokenStatus, 200);
+    await h.pg.query("DELETE FROM wf_memberships WHERE business_id = $1 AND principal_id = $1", [MERCHANT_A]);
+    await h.pg.query("INSERT INTO wf_memberships (business_id, principal_id, role, created_at) VALUES ($1, $1, 'owner', 0)", [MERCHANT_A]);
+    const denied = await h.json("/mcp", { method: "POST", headers: { authorization: `Bearer ${connection.tokens.access_token}`, "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
+    assert.equal(denied.status, 401);
+    const refresh = await h.token({ grant_type: "refresh_token", client_id: connection.clientId, refresh_token: connection.tokens.refresh_token });
+    assert.equal(refresh.status, 400);
+  } finally { await h.close(); await h.pg.close(); }
+});

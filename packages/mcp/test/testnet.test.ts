@@ -79,7 +79,7 @@ test("timeout with an unknown outcome: the tool says it's safe to retry, and the
   const lost = await first.call("create_payment_link", { amount: "15000", currency: "INR", description: "Acme website redesign" });
   assert.equal(lost.isError, true);
   assert.equal(lost.json.outcome, "unknown");
-  assert.match(lost.json.error, /didn't answer in time.*resumes this operation .* until 2026-11-07T12:00:00\.000Z, while WhiteFlow can still replay it/);
+  assert.match(lost.json.error, /didn't answer in time.*resumes this operation .* until 2026-11-07T12:00:00\.000Z, while Whiteflow can still replay it/);
   assert.equal(lost.json.resumable_until, '2026-11-07T12:00:00.000Z');
   const key = lost.json.idempotency_key;
   assert.equal(calls.filter((c) => c.method === "POST").length, 3); // the first try and two retries, one key
@@ -148,7 +148,7 @@ test("customers, invoices and reminders refuse plainly on testnet, without calli
   ] as const) {
     const r = await call(tool, args);
     assert.equal(r.isError, true, tool);
-    assert.match(r.json.error, /isn't available on the WhiteFlow testnet backend yet/, tool);
+    assert.match(r.json.error, /isn't available on the Whiteflow testnet backend yet/, tool);
     assert.match(r.json.next_action, /create_payment_link/);
   }
   assert.ok(calls.every((c) => new URL(c.url).pathname === "/api/v1/account"));

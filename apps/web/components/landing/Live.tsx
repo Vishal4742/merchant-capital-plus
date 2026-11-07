@@ -1,8 +1,8 @@
 "use client";
 
-// Small live bits of the home page: the hero's IST clock, the quote card's 10:00 lock countdown, and numbers that
+// Small live bits of the home page: the quote card's 10:00 lock countdown, and numbers that
 // scramble into place (ASCII reveal) the first time they scroll into view.
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Reveal } from "@/components/dashboard/Reveal";
 
 const LOCK_SECONDS = 600;
@@ -11,14 +11,6 @@ const everySecond = (tick: () => void) => {
   const id = setInterval(tick, 1000);
   return () => clearInterval(id);
 };
-const istTime = () => new Date().toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata" });
-
-/** The page is static, so the server HTML shows dashes; the real time takes over at hydration. */
-export function IstClock() {
-  const time = useSyncExternalStore(everySecond, istTime, () => "--:--:--");
-  return <span className="num">{time}</span>;
-}
-
 /** The FX quote's lock: counts down from 10:00 and stops at 00:00. */
 export function LockTimer() {
   const [left, setLeft] = useState(LOCK_SECONDS);

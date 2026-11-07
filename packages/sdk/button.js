@@ -1,4 +1,4 @@
-/* WhiteFlow pay button (FR-GW-4): <script src="https://GATEWAY/v1/button.js" data-session="ID"></script>
+/* Whiteflow pay button (FR-GW-4): <script src="https://GATEWAY/v1/button.js" data-session="ID"></script>
  * or data-link="SLUG", optional data-label; or load once and mark your own elements data-mc-session="ID".
  * Opens the hosted checkout on the gateway that served this file. No dependencies, no requests. */
 (function () {
@@ -14,7 +14,7 @@
     return link !== null && ID.test(link) ? origin + "/l/" + link : null;
   }
   function complain() {
-    console.error("WhiteFlow button: bad data-session/data-link (letters, digits, - and _).");
+    console.error("Whiteflow button: bad data-session/data-link (letters, digits, - and _).");
   }
 
   if (window.__mcPayButton !== true) {

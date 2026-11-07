@@ -65,6 +65,17 @@ export function ConnectPanel({ prompts, reason, mcpUrl }: { prompts: PanelPrompt
         </details>
       </fieldset>
 
+      {mcpUrl && <section className="grid gap-2 rounded-[14px] border border-hairline p-4" aria-label="Connection settings">
+        <b>Connect {current.label}</b>
+        <p className="text-sm">Add a custom MCP connector in your assistant and use this server URL:</p>
+        <code className="data break-all">{mcpUrl}</code>
+        <CopyButton text={mcpUrl} name="the MCP endpoint" />
+        <p className="text-sm">Authentication: OAuth. Sign in to WhiteFlow as a workspace Owner and review access.</p>
+        {client === "claude-app" && <p className="text-sm">In Claude, open Customize → Connectors → Add custom connector. Under OAuth client, choose Register automatically.</p>}
+        {client === "chatgpt" && <p className="text-sm">In ChatGPT, add a custom MCP server using OAuth, then install and enable it. Your workspace administrator may need to allow custom connections.</p>}
+        <p className="text-sm">Then ask: “Show my WhiteFlow business profile.” A successful response verifies the connection.</p>
+      </section>}
+
       {current.prompt ? (
         <div className="grid gap-3">
           <div className="flex flex-wrap items-center gap-3">

@@ -41,7 +41,7 @@ The workflow has two jobs. `npm ci` and `npm test` run code from every dependenc
 3. When the run is green, download the artifact and publish it, for example as a GitHub Release:
    ```sh
    gh run download <run id> -n whiteflow-mcpb-<commit sha> -D release
-   gh release create mcpb-v0.3.0 release/* --verify-tag --title "WhiteFlow Merchant MCP 0.3.0"
+   gh release create mcpb-v0.3.0 release/* --verify-tag --title "Whiteflow Merchant MCP 0.3.0"
    ```
    The workflow doesn't publish anything itself, because that would need `contents: write`. Moving the file doesn't break the attestation, which covers the archive's sha256, not where it's hosted.
 
@@ -55,15 +55,15 @@ Once the workflow is on `main`, you can also start it from the Actions tab (Run 
 sha256sum -c whiteflow.mcpb.sha256
 
 # 2. GitHub Actions built these exact bytes in this repository
-gh attestation verify whiteflow.mcpb --repo Vishal4742/merchant-capital-plus
+gh attestation verify whiteflow.mcpb --repo Vishal4742/whiteflow
 
 # 3. Stricter: built by the release workflow, from the release tag, on a GitHub-hosted runner
-gh attestation verify whiteflow.mcpb --repo Vishal4742/merchant-capital-plus \
-  --signer-workflow Vishal4742/merchant-capital-plus/.github/workflows/mcpb-release.yml \
+gh attestation verify whiteflow.mcpb --repo Vishal4742/whiteflow \
+  --signer-workflow Vishal4742/whiteflow/.github/workflows/mcpb-release.yml \
   --source-ref refs/tags/mcpb-v0.3.0 --deny-self-hosted-runners
 
 # 4. The SBOM attestation
-gh attestation verify whiteflow.mcpb --repo Vishal4742/merchant-capital-plus --predicate-type https://cyclonedx.org/bom
+gh attestation verify whiteflow.mcpb --repo Vishal4742/whiteflow --predicate-type https://cyclonedx.org/bom
 ```
 
 To check without the GitHub attestations API, add `--bundle whiteflow.mcpb.provenance.sigstore.json` to step 2 or 3, or `--bundle whiteflow.mcpb.sbom.sigstore.json` to step 4. A checksum alone only shows the download wasn't damaged, and only if the checksum came from a channel you trust. The attestation is what ties the bytes to this repository, workflow and commit.

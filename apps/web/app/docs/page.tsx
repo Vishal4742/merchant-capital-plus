@@ -12,6 +12,8 @@ import { API_ANCHORS, ApiReference, Currencies, Errors, Events, Limits, TestScen
 import { HowItWorks, Quickstart } from "@/components/docs/Start";
 import * as code from "@/components/docs/snippets";
 import { Callout, Code, DocTable, Rich, Section, Snippet, card, grain, textLink } from "@/components/docs/ui";
+import { ThemeToggle } from "@/components/ThemeToggle";
+import { plainToggle } from "@/components/gateway/Frame";
 import { keyFingerprint, merchantConfig, publicOrigin } from "@/lib/config";
 import { EVENT_FIELDS, FX_CURRENCIES, LIMITS } from "@/lib/docs-reference";
 import { currentMerchant } from "@/lib/merchant-session";
@@ -83,14 +85,17 @@ function TopBar() {
         {/* plain <a>: a full load, so leaving the strict CSP of /docs never carries it to / or /proofs (security R2-F3) */}
         {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- the full load is the point (see above) */}
         <a href="/" className="title inline-flex min-h-11 items-center whitespace-nowrap">
-          WhiteFlow
+          Whiteflow
         </a>
         <span className="eyebrow text-ink-muted">Docs</span>
       </span>
-      {/* plain <a>: a full load, so /merchant runs under its own CSP (security review 005 F-N4) */}
-      <a href="/merchant" className="inline-flex min-h-11 items-center text-sm text-accent underline underline-offset-4">
-        Dashboard
-      </a>
+      <span className="flex items-center gap-3">
+        <ThemeToggle className={plainToggle} />
+        {/* plain <a>: a full load, so /merchant runs under its own CSP (security review 005 F-N4) */}
+        <a href="/merchant" className="inline-flex min-h-11 items-center text-sm text-accent underline underline-offset-4">
+          Dashboard
+        </a>
+      </span>
     </header>
   );
 }
@@ -241,7 +246,7 @@ function ServerSdk() {
       title={<>Create, read and list, <span className="emphasis">from your server.</span></>}
       lede={
         <>
-          <Code>@merchant-capital/sdk</Code> is TypeScript with no dependencies. It holds your secret key, so it refuses to run in a browser, refuses a{" "}
+          <Code>@whiteflow/sdk</Code> is TypeScript with no dependencies. It holds your secret key, so it refuses to run in a browser, refuses a{" "}
           <Code>pk_</Code> key and talks only to an https gateway.
         </>
       }

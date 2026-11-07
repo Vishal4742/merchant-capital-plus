@@ -3,8 +3,8 @@ VERDICT: PASS
 # Batch 052 round 1: CI (lane-written per PIPELINE §3a.3: the green GitHub run, plus the local checks)
 
 ## GitHub Actions on PR #45
-https://github.com/Vishal4742/merchant-capital-plus/pull/45. The run is
-https://github.com/Vishal4742/merchant-capital-plus/actions/runs/42290235972 on c2024e2.
+https://github.com/Vishal4742/whiteflow/pull/45. The run is
+https://github.com/Vishal4742/whiteflow/actions/runs/42290235972 on c2024e2.
 
 | Check | Result |
 |---|---|

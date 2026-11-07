@@ -8,6 +8,7 @@ import { DitherScene } from "@/components/DitherScene";
 import { HoldButton } from "@/components/HoldButton";
 import { TRANSPORT_LABEL, getChainClient } from "@/lib/anon";
 import { proveTypedDataSigning } from "@/lib/guest-wallet";
+import { WhiteflowMark } from "@/components/WhiteflowMark";
 
 type Proof =
   | { state: "running" }
@@ -120,7 +121,10 @@ export default function RailProofs() {
         <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-linear-to-r from-scene-night from-25% via-scene-night/70 via-50% to-transparent to-75%" />
         <div className="relative mx-auto max-w-5xl px-4 pt-6 pb-24">
           <header className="flex items-center justify-between gap-4">
-            <span className="title whitespace-nowrap">WhiteFlow</span>
+            <span className="title inline-flex items-center gap-2 whitespace-nowrap">
+              <WhiteflowMark />
+              Whiteflow
+            </span>
             <span className="data hidden sm:inline">Phase 1 · rail proofs</span>
           </header>
           <h1 className="display-xl mt-20 max-w-xl text-balance">

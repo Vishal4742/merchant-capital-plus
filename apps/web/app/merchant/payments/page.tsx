@@ -1,12 +1,13 @@
 // Payments (FR-PAY-8, FR-GW-5's list for the dashboard): every payment to the signed-in wallet, with its receipt, its
 // transaction and a refund. The same sources as GET /api/v1/payments (the Paid log index for ids, payments(id) on chain
-// for amounts and what is left to refund), read on our server for the signed-in wallet: that route needs the shop's
-// secret key, which never reaches a browser.
+// for amounts and what is left to refund), read on our server for the signed-in wallet.
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { Account, EditorialHeader, SignedOut, card } from "@/components/gateway/Frame";
 import { Shell } from "@/components/dashboard/Shell";
 import { Refund } from "@/components/merchant/Refund";
+import { StatusBadge, type StatusTone } from "@/components/ui/Badge";
+import { MetricCard } from "@/components/ui/MetricCard";
 import { authSecret } from "@/lib/auth";
 import { payConfig } from "@/lib/config";
 import { confirmed, formatWbt, paymentRows, WBT_HINT } from "@/lib/dashboard";
@@ -18,27 +19,33 @@ import { listPayments } from "@/lib/sessions";
 import { EXPLORER, formatUsdt } from "@/lib/usdt";
 
 const header = (
-  <EditorialHeader label="Payments" lede="Each payment as the chain recorded it, with its receipt and its transaction. Refund all or part of one from your wallet.">
-    Every payment, <span className="emphasis">on the record.</span>
+  <EditorialHeader
+    label="Payments"
+    lede="Each payment as the chain recorded it, with its receipt and transaction reference. Refund all or part of one directly from your wallet."
+  >
+    Every payment, <span className="emphasis">settled on chain.</span>
   </EditorialHeader>
 );
 
 const when = (ms: number) => new Date(ms).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata" });
-const cellLink = "inline-flex min-h-11 items-center text-accent underline underline-offset-4";
+const cellLink = "inline-flex min-h-10 items-center text-sm font-medium text-accent underline underline-offset-4 hover:text-accent-hover";
 const FEE_ROWS = 50;
 
-// the error's name only: an RPC error's message can carry its URL, and a keyed RPC URL would leak (security 016 F2)
 const logged = (what: string) => (error: unknown) => {
   console.error(`payments: ${what} failed: ${error instanceof Error ? error.name : "error"}`);
   return null;
 };
 
 /** A row's status and what is left to refund, from payments(id) on chain; left is null when it couldn't be read. */
-function refundCell(record: PaymentRecord | null): { status: string; left: bigint | null } {
-  if (!record) return { status: "Paid", left: null };
+function refundCell(record: PaymentRecord | null): { status: string; left: bigint | null; tone: StatusTone } {
+  if (!record) return { status: "Paid", left: null, tone: "paid" };
   const left = record.gross - record.refunded;
-  if (record.refunded === 0n) return { status: "Paid", left };
-  return { status: left === 0n ? "Refunded" : `${formatUsdt(record.refunded)} refunded`, left };
+  if (record.refunded === 0n) return { status: "Paid", left, tone: "paid" };
+  return {
+    status: left === 0n ? "Refunded" : `${formatUsdt(record.refunded)} refunded`,
+    left,
+    tone: "refunded",
+  };
 }
 
 export default function PaymentsPage() {
@@ -47,7 +54,7 @@ export default function PaymentsPage() {
       fallback={
         <Shell active="payments">
           {header}
-          <p className="px-4 py-6 text-ink-muted md:px-8">Loading your payments…</p>
+          <p className="px-4 py-8 text-ink-muted md:px-8">Loading payments…</p>
         </Shell>
       }
     >
@@ -57,7 +64,7 @@ export default function PaymentsPage() {
 }
 
 async function Payments() {
-  await connection(); // live data on every request, never a build-time snapshot
+  await connection();
   const merchant = await currentMerchant();
   if (!merchant) return <SignedOut available={Boolean(authSecret())} />;
   const pay = payConfig();
@@ -81,32 +88,64 @@ async function Payments() {
   const failed = fees.filter((fee) => fee === null).length;
   const covered = known.reduce((sum, fee) => sum + fee, 0n);
 
+  const totalGross = payments.reduce((sum, p) => sum + p.row.amount, 0n);
+
   return (
     <Shell active="payments" account={<Account merchant={merchant} />}>
       {header}
-      <div className="grid gap-4 px-4 py-6 md:px-8 md:py-8">
+      <div className="grid gap-6 px-4 py-6 md:px-8 md:py-8">
+        {/* Metric summary */}
+        <section aria-label="Payments summary" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <MetricCard
+            label="Total settled"
+            value={formatUsdt(totalGross)}
+            unit="USDT"
+            subtext={`${payments.length} transactions`}
+            tone="positive"
+          />
+          <MetricCard
+            label="Payments recorded"
+            value={payments.length}
+            subtext="Confirmed on Whitechain"
+          />
+          <MetricCard
+            label="Covered gas"
+            value={known.length > 0 ? `${formatWbt(covered)}` : "0.0000"}
+            unit="WBT"
+            subtext="Sponsored via relayer"
+          />
+          <MetricCard
+            label="Settlement Rail"
+            value="T+0"
+            subtext="Direct to receiving wallet"
+          />
+        </section>
+
         {!pay && <p className="text-sm text-warning">Payments open when MerchantPay is connected to this server.</p>}
         {pay && logs === null && <p className="text-sm text-warning">We couldn&apos;t read the full payment list just now, so only this server&apos;s own checkouts show. Reload in a minute.</p>}
         {known.length > 0 && (
-          <p className="text-sm text-ink-muted">
-            Your customers paid no network fee. We covered <span className="data text-ink">{formatWbt(covered)} WBT</span> across {known.length}{" "}
+          <p className="text-xs text-ink-muted">
+            Your customers paid zero network fees. Whiteflow covered <span className="font-mono text-ink font-medium">{formatWbt(covered)} WBT</span> across {known.length}{" "}
             {known.length === 1 ? "payment" : "payments"}
-            {failed > 0 ? `; the fee of ${failed} more couldn't be read just now` : ""}
-            {payments.length > FEE_ROWS ? `; fees shown for the newest ${FEE_ROWS}` : ""}. {WBT_HINT}
+            {failed > 0 ? `; fee for ${failed} more couldn't be read` : ""}
+            {payments.length > FEE_ROWS ? `; fees shown for newest ${FEE_ROWS}` : ""}. {WBT_HINT}
           </p>
         )}
-        <section aria-labelledby="all-payments" className={`${card} p-0 md:p-0`}>
-          <h2 id="all-payments" className="px-5 pt-5 text-[15px] font-medium md:px-6">
-            {payments.length} {payments.length === 1 ? "payment" : "payments"}
-          </h2>
+
+        <section aria-labelledby="all-payments" className={`${card} p-0 md:p-0 overflow-hidden`}>
+          <div className="flex items-center justify-between border-b border-hairline px-5 py-4 md:px-6">
+            <h2 id="all-payments" className="text-[16px] font-semibold text-ink">
+              {payments.length} {payments.length === 1 ? "payment" : "payments"}
+            </h2>
+          </div>
+
           {payments.length === 0 ? (
-            <p className="px-5 pb-6 text-sm text-ink-muted md:px-6">No payments yet. Open a test checkout from the dashboard home and pay it to see one land here.</p>
+            <p className="px-5 py-8 text-sm text-ink-muted md:px-6">No payments yet. Open a test checkout from the overview and pay it to see one land here.</p>
           ) : (
-            // a card per payment on a phone, a table row from md up: Refund is never off screen (UX review 005 F2)
             <ul className="grid divide-y divide-hairline text-sm md:table md:w-full md:divide-y-0 md:border-collapse">
-              <li className="hidden bg-surface-sunk text-ink-muted md:table-row" aria-hidden="true">
-                {["Payment", "Amount", "Network fee", "Status", "Receipt", "Refund"].map((h, i) => (
-                  <span key={h} className={`label md:table-cell md:px-6 md:py-3 ${i === 0 ? "text-left" : "text-right"}`}>
+              <li className="hidden bg-surface-sunk text-ink-muted md:table-row font-medium" aria-hidden="true">
+                {["Transaction / Payment", "Amount", "Network Fee", "Status", "Receipt", "Refund"].map((h, i) => (
+                  <span key={h} className={`eyebrow md:table-cell md:px-6 md:py-3.5 ${i === 0 ? "text-left" : "text-right"}`}>
                     {h}
                   </span>
                 ))}
@@ -115,43 +154,41 @@ async function Payments() {
                 const cell = refundCell(record);
                 const fee = fees[i];
                 return (
-                  <li key={row.key} className="grid grid-cols-2 items-center gap-x-4 gap-y-1 px-5 py-4 md:table-row md:border-t md:border-hairline md:hover:bg-accent-soft">
-                    <span className="col-span-2 md:table-cell md:px-6 md:py-3 md:align-middle">
+                  <li key={row.key} className="grid grid-cols-2 items-center gap-x-4 gap-y-1.5 px-5 py-4 md:table-row md:border-t md:border-hairline md:hover:bg-surface-sunk/30 transition-colors">
+                    <span className="col-span-2 md:table-cell md:px-6 md:py-3.5 md:align-middle">
                       {row.txHash ? (
-                        <a className={`${cellLink} data`} href={`${EXPLORER}/tx/${row.txHash}`} target="_blank" rel="noreferrer">
+                        <a className={`${cellLink} data font-mono text-xs`} href={`${EXPLORER}/tx/${row.txHash}`} target="_blank" rel="noreferrer">
                           {row.label} ↗
                         </a>
                       ) : (
-                        <span className="data">{row.label}</span>
+                        <span className="data font-mono text-xs">{row.label}</span>
                       )}
-                      <span className="data text-ink-muted"> · {when(row.paidAt)}</span>
+                      <span className="data text-xs text-ink-muted"> · {when(row.paidAt)}</span>
                     </span>
-                    <span className="tabular-nums md:table-cell md:px-6 md:py-3 md:text-right md:align-middle">
-                      {formatUsdt(row.amount)} <span className="text-ink-muted">USDT</span>
+                    <span className="tabular-nums font-semibold md:table-cell md:px-6 md:py-3.5 md:text-right md:align-middle">
+                      {formatUsdt(row.amount)} <span className="text-xs text-ink-muted font-normal">USDT</span>
                     </span>
-                    <span className="text-ink-muted tabular-nums md:table-cell md:px-6 md:py-3 md:text-right md:align-middle">
-                      <span className="md:hidden">Network fee </span>
+                    <span className="text-xs text-ink-muted tabular-nums md:table-cell md:px-6 md:py-3.5 md:text-right md:align-middle">
+                      <span className="md:hidden font-medium">Relayer fee: </span>
                       {typeof fee === "bigint" ? `${formatWbt(fee)} WBT` : "—"}
                     </span>
-                    <span className="text-right md:table-cell md:px-6 md:py-3 md:align-middle">
-                      <span className={`inline-flex rounded-pill border border-current px-3 py-0.5 text-xs font-medium ${cell.status === "Paid" ? "text-positive" : "text-ink-muted"}`}>{cell.status}</span>
+                    <span className="text-right md:table-cell md:px-6 md:py-3.5 md:align-middle">
+                      <StatusBadge status={cell.tone} label={cell.status} />
                     </span>
-                    <span className="md:table-cell md:px-6 md:py-3 md:text-right md:align-middle">
-                      {/* a full load: the receipt has its own CSP */}
+                    <span className="md:table-cell md:px-6 md:py-3.5 md:text-right md:align-middle">
                       {row.receiptId ? (
                         <a href={`/r/${row.receiptId}`} className={cellLink}>
-                          Receipt
+                          View receipt ↗
                         </a>
                       ) : (
-                        <span className="text-ink-muted">—</span>
+                        <span className="text-xs text-ink-muted">—</span>
                       )}
                     </span>
-                    <span className="text-right md:table-cell md:px-6 md:py-3 md:align-middle">
+                    <span className="text-right md:table-cell md:px-6 md:py-3.5 md:align-middle">
                       {pay && row.paymentId && cell.left !== null && cell.left > 0n ? (
-                        // keyed by what is left: after a refund the control starts again from the new figure (tester R1 #2)
                         <Refund key={`${row.paymentId}:${cell.left}`} merchant={merchant} merchantPay={pay.merchantPay} paymentId={row.paymentId} refundable={cell.left.toString()} />
                       ) : (
-                        <span className="text-ink-muted">{cell.left === null ? "Can't check right now" : "Fully refunded"}</span>
+                        <span className="text-xs text-ink-muted">{cell.left === null ? "Checking" : "Settled"}</span>
                       )}
                     </span>
                   </li>

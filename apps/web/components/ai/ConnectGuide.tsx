@@ -15,8 +15,8 @@ export const SCOPES = [
 ] as const;
 
 const STEPS = [
-  { title: "Copy and set up", text: "Copy the setup prompt and paste it into your assistant. It walks you through adding WhiteFlow as a custom connector in that assistant." },
-  { title: "Authorize WhiteFlow", text: "Sign in to WhiteFlow with your wallet and review the permissions on the consent screen. Read access comes first; creating links is a separate choice." },
+  { title: "Add the connector", text: "Choose your assistant and add the server URL below as a custom MCP connector using OAuth. The optional setup prompt can guide you through these steps." },
+  { title: "Authorize WhiteFlow", text: "Sign in to your WhiteFlow workspace as an Owner and review the permissions. Your workspace needs a linked receiving wallet. Read access comes first; creating links is a separate choice." },
   { title: "Verify", text: "Ask: “Show my WhiteFlow business profile.” The connection counts as verified only after that request succeeds." },
 ] as const;
 

@@ -4,7 +4,7 @@
 // balance, never an address. The amount is what is due now (a held discount code lowers it), as the pay route charges.
 import { isAddress } from "viem";
 import { readUsdtBalance } from "../../../../../../lib/onchain.ts";
-import { clientIp, fail, handle, ok, rateLimit } from "../../../../../../lib/server/http.ts";
+import { clientIp, fail, handle, ok, sharedRateLimit } from "../../../../../../lib/server/http.ts";
 import { amountDue } from "../../../../../../lib/server/vouchers.ts";
 import { getSession } from "../../../../../../lib/sessions.ts";
 
@@ -15,7 +15,9 @@ const NOT_READ = "We couldn't check the balance right now.";
 export const GET = (request: Request, context: { params: Promise<{ id: string }> }) => handle(() => get(request, context));
 
 async function get(request: Request, { params }: { params: Promise<{ id: string }> }): Promise<Response> {
-  rateLimit(`funds:${clientIp(request)}`, CHECKS_PER_MINUTE, 60_000);
+  // FR-OPS-9 (batch 049): one window across instances and restarts; a public balance check, so it stays up on this
+  // instance's memory window if the database is down
+  await sharedRateLimit(`funds:${clientIp(request)}`, CHECKS_PER_MINUTE, 60_000, "memory");
   const payer = new URL(request.url).searchParams.get("payer") ?? "";
   if (!isAddress(payer)) return fail(400, "payer must be an address.");
   const { id } = await params;

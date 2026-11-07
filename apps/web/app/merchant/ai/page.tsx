@@ -13,7 +13,7 @@ import { Account, card, SignedOut } from "@/components/gateway/Frame";
 import { authSecret } from "@/lib/auth";
 import { currentAiConnect } from "@/lib/ai-config";
 import { connectionState, STATE_TEXT, type ConnectionState } from "@/lib/ai-connect";
-import { currentMerchant } from "@/lib/merchant-session";
+import { currentWorkspace } from "@/lib/merchant-session";
 import { logFailure } from "@/lib/gateway-server";
 import { csrfToken, grantState, listGrants, type GrantRow } from "@/lib/server/mcp-grants";
 import { internalSecret } from "@/lib/server/mcp-principal";
@@ -48,17 +48,21 @@ function view(provisioned: boolean, grants: GrantRow[] | null) {
 
 async function Connections() {
   await connection();
-  const merchant = await currentMerchant();
-  if (!merchant) return <SignedOut available={Boolean(authSecret())} />;
+  const workspace = await currentWorkspace();
+  if (!workspace) return <SignedOut available={Boolean(authSecret())} />;
+  const merchant = workspace.merchant;
+  if (workspace.role !== "owner") return <Shell active="ai" account={<Account merchant={merchant} />}><p className="p-6">Only workspace Owners can connect assistants or manage their access.</p></Shell>;
   const config = currentAiConnect("");
   const { prompts, reason } = panelPrompts(config);
   const secret = internalSecret();
   let grants: GrantRow[] | null = null;
   if (config.available) {
-    grants = await listGrants(merchant).catch((error: unknown) => (logFailure("ai connections", error), null)); // the name only
+    grants = await listGrants(merchant, workspace.businessId).catch((error: unknown) => (logFailure("ai connections", error), null)); // the name only
   }
   const { rows, state } = view(config.available, grants);
-  const text = STATE_TEXT[state];
+  const text = config.available && grants === null
+    ? { label: "Connection status unavailable", meaning: "We couldn't load your connections. Reload to check existing access before connecting again." }
+    : STATE_TEXT[state];
   return (
     <Shell active="ai" account={<Account merchant={merchant} />}>
       <ConnectGuide

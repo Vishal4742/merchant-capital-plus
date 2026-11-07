@@ -105,7 +105,7 @@ export function decideClaim(entries: Entry[], scope: string, op: string, payload
     if (now - target.at > RESUME_LIMIT_MS) {
       const flagged = { ...target, last: now, outcome: "needs_reconciliation" as const, note: "outcome unknown and past the server's 24-hour retention: it can no longer be settled by a retry" };
       // stored with the refusal: a caller that ignores it still can't slip a fresh key past it
-      return refuse(new JournalRefusal("An earlier identical request's outcome is still unknown, and WhiteFlow no longer keeps its key, so it can't be safely retried.", flagged), entries.map((e) => (e === target ? flagged : e)));
+      return refuse(new JournalRefusal("An earlier identical request's outcome is still unknown, and Whiteflow no longer keeps its key, so it can't be safely retried.", flagged), entries.map((e) => (e === target ? flagged : e)));
     }
     if (opts.callerKey && target.key !== opts.callerKey) {
       return refuse(new JournalRefusal(`An identical request is still unresolved under idempotency_key ${target.key}. Retry with that key (or leave idempotency_key out) so it can't be created twice; create_another: true makes a second one on purpose.`, target));

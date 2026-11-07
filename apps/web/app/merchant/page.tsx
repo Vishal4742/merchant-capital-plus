@@ -1,13 +1,9 @@
-// Merchant dashboard home (FR-PAY-15, FR-REL-6, FR-PAY-1/2 invoices, FR-PAY-8 refunds) in the approved gateway v2
-// design: the Shell, a night band, Get started (batch 024), six figures, the gross chart, quick actions, invoices,
-// payments and the relayer. Any wallet can sign in; the demo shop's wallet also sees its invoices.
-// Behind "Sign in with your wallet" (SIWE), for the signed-in wallet only, read on our server. Every figure comes from
-// payments confirmed on chain; one we can't read shows "—", never a made-up number.
+// Whiteflow Business Workspace Home (/merchant):
+// Non-custodial settlement, verified metrics, quick actions, invoices, payments and sponsored relayer telemetry.
 import { connection } from "next/server";
 import { Suspense } from "react";
 import type { Address } from "viem";
 import { GrossChart, type GrossRange } from "@/components/dashboard/GrossChart";
-import { buttonClasses } from "@/components/Button";
 import { Reveal } from "@/components/dashboard/Reveal";
 import { GetStarted } from "@/components/dashboard/GetStarted";
 import { Shell } from "@/components/dashboard/Shell";
@@ -15,10 +11,11 @@ import { Account, PlainPage, SignedOut } from "@/components/gateway/Frame";
 import { Invoices, type InvoiceRow } from "@/components/merchant/Invoices";
 import { Refund } from "@/components/merchant/Refund";
 import { StaticScene } from "@/components/StaticScene";
+import { StatusBadge } from "@/components/ui/Badge";
 import { authSecret } from "@/lib/auth";
 import { currentMerchant } from "@/lib/merchant-session";
 import { merchantConfig, payConfig } from "@/lib/config";
-import { change, confirmed, dailyGross, figures, netAfterFees, paymentRows, type Confirmed } from "@/lib/dashboard";
+import { change, confirmed, dailyGross, figures, paymentRows, type Confirmed } from "@/lib/dashboard";
 import { vouchersUsed, type Voucher } from "@/lib/gateway-money";
 import { logFailure, merchantVouchers } from "@/lib/gateway-server";
 import { setupSteps } from "@/lib/onboarding";
@@ -32,11 +29,11 @@ import { EXPLORER, formatUsdt } from "@/lib/usdt";
 
 export default function MerchantPage() {
   return (
-    // the sidebar paints at once, so switching to Home never drops the frame while its data streams in (NFR-13)
+    // the sidebar paints at once, so switching to Overview never drops the frame while its data streams in (NFR-13)
     <Suspense
       fallback={
         <Shell active="home">
-          <p className="px-4 py-6 text-ink-muted md:px-8">Loading the dashboard…</p>
+          <p className="px-4 py-6 text-ink-muted md:px-8">Loading the workspace…</p>
         </Shell>
       }
     >
@@ -46,11 +43,11 @@ export default function MerchantPage() {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const card = "grid min-w-0 content-start gap-3 rounded-[20px] border border-hairline bg-surface p-5 md:px-6";
+const card = "grid min-w-0 content-start gap-4 rounded-[16px] border border-hairline bg-surface p-5 md:px-6 shadow-card";
 const istTime = (ms: number) => new Date(ms).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata" });
 const istDate = (ms: number, options: Intl.DateTimeFormatOptions) => new Date(ms).toLocaleDateString("en-GB", { ...options, timeZone: "Asia/Kolkata" });
 
-/** A relayer figure in WBT, 4 decimals (code review 004 R2 F6: every row has its unit), or "—". */
+/** A relayer figure in WBT, 4 decimals, or "—". */
 function wbt(value: string | null): string {
   const n = value === null ? Number.NaN : Number.parseFloat(value);
   return Number.isFinite(n) ? `${n.toFixed(4)} WBT` : "—";
@@ -85,53 +82,75 @@ const logged = (what: string) => (error: unknown) => {
 };
 
 /** One row's status and what is left to refund, from payments(id) on chain; left is null when it couldn't be read. */
-function refundCell(record: PaymentRecord | null): { status: string; left: bigint | null } {
-  if (!record) return { status: "Paid", left: null };
+function refundCell(record: PaymentRecord | null): { status: string; left: bigint | null; tone: "paid" | "refunded" } {
+  if (!record) return { status: "Paid", left: null, tone: "paid" };
   const left = record.gross - record.refunded;
-  if (record.refunded === 0n) return { status: "Paid", left };
-  return { status: left === 0n ? "Refunded" : `${formatUsdt(record.refunded)} refunded`, left };
+  if (record.refunded === 0n) return { status: "Paid", left, tone: "paid" };
+  return { status: left === 0n ? "Refunded" : `${formatUsdt(record.refunded)} refunded`, left, tone: "refunded" };
 }
 
 interface Tile {
   label: string;
   value: string;
   sub: string;
-  tone?: "up" | "down";
+  tone?: "up" | "down" | "positive";
 }
 
-// a change of 0 is neither up nor down: no arrow and no colour (tester 006 follow-up)
 const arrow = (n: number) => (n === 0 ? "0" : `${n > 0 ? "▲" : "▼"} ${Math.abs(n)}`);
 const toneOf = (n: number | null): Tile["tone"] => (n === null || n === 0 ? undefined : n > 0 ? "up" : "down");
 
 /** Everything on the home that depends on the clock, in one plain function (the render body never reads it). */
-function home(payments: Confirmed[], fee: bigint | null, vouchers: Voucher[] | null) {
+function home(payments: Confirmed[], fee: bigint | null, invoices: Invoice[] | null | undefined, vouchers: Voucher[] | null) {
   const now = Date.now();
   const f = figures(payments, now);
   const vsYesterday = change(f.grossToday, f.grossYesterday);
-  // before the first payment there is nothing to compare or refund: calm zeros with a hint, never "—" (batch 024)
   const none = payments.length === 0;
-  const net = netAfterFees(f.grossToday, fee, f.countToday);
+
+  const openInvoices = (invoices ?? []).filter((i) => i.status === "open");
+  const openTotal = openInvoices.reduce((sum, i) => sum + (i.amount - i.paid), 0n);
+
   const tiles: Tile[] = [
-    { label: "Gross today", value: formatUsdt(f.grossToday), sub: vsYesterday === null ? "USDT, since midnight IST" : `${arrow(vsYesterday)}% vs yesterday`, tone: toneOf(vsYesterday) },
-    none
-      ? { label: "Payments", value: "0", sub: "Your first one shows here" }
-      : { label: "Payments", value: String(f.countToday), sub: `${arrow(f.countToday - f.countYesterday)} vs yesterday`, tone: toneOf(f.countToday - f.countYesterday) },
-    { label: "Fees", value: fee === null ? "—" : formatUsdt(fee * BigInt(f.countToday)), sub: fee === null ? "can't read the fee now" : `${formatUsdt(fee)} each, today` },
-    none
-      ? { label: "Refunds", value: formatUsdt(0n), sub: "None yet" }
-      : { label: "Refunds", value: f.refunded === null ? "—" : formatUsdt(f.refunded), sub: `${f.refundedPayments} ${f.refundedPayments === 1 ? "payment" : "payments"}, all time` },
     {
-      label: "Net today",
-      value: net === null ? "—" : formatUsdt(net),
-      sub: net === null ? "can't read the fee now" : "gross minus fees, settled in the payment's transaction",
+      label: "Gross today",
+      value: formatUsdt(f.grossToday),
+      sub: vsYesterday === null ? "USDT, since midnight IST" : `${arrow(vsYesterday)}% vs yesterday`,
+      tone: toneOf(vsYesterday),
+    },
+    none
+      ? { label: "Payments today", value: "0", sub: "First payment will show here" }
+      : {
+          label: "Payments today",
+          value: String(f.countToday),
+          sub: `${arrow(f.countToday - f.countYesterday)} vs yesterday`,
+          tone: toneOf(f.countToday - f.countYesterday),
+        },
+    {
+      label: "Outstanding",
+      value: invoices ? formatUsdt(openTotal) : "—",
+      sub: invoices ? `${openInvoices.length} open ${openInvoices.length === 1 ? "invoice" : "invoices"}` : "Invoices unavailable",
+      tone: openInvoices.length > 0 ? "up" : undefined,
+    },
+    none
+      ? { label: "Refunds", value: formatUsdt(0n), sub: "None requested" }
+      : {
+          label: "Refunds",
+          value: f.refunded === null ? "—" : formatUsdt(f.refunded),
+          sub: `${f.refundedPayments} ${f.refundedPayments === 1 ? "payment" : "payments"}, all time`,
+        },
+    {
+      label: "Relayer fees",
+      value: fee === null ? "—" : formatUsdt(fee * BigInt(f.countToday)),
+      sub: fee === null ? "Can't read fee" : `${formatUsdt(fee)} each, sponsored`,
     },
     { label: "Vouchers used", ...vouchersUsed(vouchers, now) },
   ];
+
   const series = dailyGross(
     payments.map(({ row }) => row),
     60,
     now,
   );
+
   const range = (days: 7 | 30): GrossRange => {
     const current = series.slice(-days), before = series.slice(-2 * days, -days);
     const total = current.reduce((a, b) => a + b, 0n);
@@ -144,33 +163,38 @@ function home(payments: Confirmed[], fee: bigint | null, vouchers: Voucher[] | n
       toText: "Today",
     };
   };
+
   const when = `${istDate(now, { weekday: "short", day: "numeric", month: "short" })} · ${istTime(now)} IST`;
   return { tiles, ranges: [range(7), range(30)], when, today: new Date(now).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }) };
 }
 
 function Band({ shop, when, note }: { shop: string; when: string; note?: string }) {
   return (
-    // taller on a phone, where the greeting takes two lines, with a lighter wash so the scene shows (UX review 006 F1)
-    <div className="relative h-[180px] overflow-hidden bg-scene-night text-glass-ink md:h-[150px]">
+    <div className="relative h-[160px] overflow-hidden bg-scene-night text-glass-ink md:h-[150px]">
       <StaticScene />
       <div
         aria-hidden="true"
-        className="absolute inset-0 bg-linear-to-t from-scene-night/85 via-scene-night/30 via-50% to-transparent md:bg-linear-to-r md:from-scene-night md:from-10% md:via-scene-night/60 md:via-45% md:to-transparent md:to-80%"
+        className="absolute inset-0 bg-linear-to-t from-scene-night/95 via-scene-night/50 via-50% to-transparent md:bg-linear-to-r md:from-scene-night md:from-10% md:via-scene-night/70 md:via-50% md:to-transparent md:to-80%"
       />
-      <div className="absolute right-4 bottom-[18px] left-4 md:left-8">
-        <p className="eyebrow opacity-75">
-          {shop} · {when}
-        </p>
-        <h1 className="mt-1.5 text-[32px] leading-[1.05] font-medium tracking-[-0.035em] md:text-[40px]">
-          Tonight at <span className="emphasis">{shop}.</span>
+      <div className="absolute right-4 bottom-[20px] left-4 md:left-8">
+        <div className="flex flex-wrap items-center gap-x-2 text-xs">
+          <span className="eyebrow text-accent font-semibold tracking-wide">
+            Whiteflow Workspace
+          </span>
+          <span className="text-ink-muted">·</span>
+          <span className="eyebrow opacity-80">{shop}</span>
+          <span className="text-ink-muted">·</span>
+          <span className="eyebrow opacity-80">{when}</span>
+        </div>
+        <h1 className="mt-1 text-[26px] leading-tight font-semibold tracking-[-0.03em] text-white md:text-[34px]">
+          One invoice. <span className="emphasis text-accent">Clear settlement.</span>
         </h1>
-        {note && <p className="mt-1.5 text-sm opacity-80">{note}</p>}
+        {note && <p className="mt-1 text-xs opacity-75">{note}</p>}
       </div>
     </div>
   );
 }
 
-/** What Get started needs that the home doesn't already read: the merchant's links and keys (null: unreadable). */
 async function setupFacts(merchant: Address) {
   const unread = (what: string) => (error: unknown) => {
     logFailure(`get started: ${what}`, error);
@@ -181,10 +205,10 @@ async function setupFacts(merchant: Address) {
   return { links: links?.length ?? null, keys: keys?.length ?? null, payHref: open ? `/l/${open.slug}` : null };
 }
 
-const action = "lift flex min-h-12 w-full items-center justify-between gap-3 rounded-[14px] border border-hairline px-4 py-3 text-left text-[15px]";
+const action = "lift flex min-h-11 w-full items-center justify-between gap-3 rounded-[10px] border border-hairline bg-surface px-4 py-2.5 text-left text-sm transition-colors hover:border-accent";
 
 async function Dashboard() {
-  await connection(); // live data on every request, never a build-time snapshot
+  await connection();
   const merchant = await currentMerchant();
   if (!merchant) return <SignedOut available={Boolean(authSecret())} />;
   const config = merchantConfig();
@@ -219,8 +243,8 @@ async function Dashboard() {
   const records = pay ? await Promise.all(candidates.map((row) => (row.paymentId ? readPayment(pay.merchantPay, BigInt(row.paymentId)).catch(logged(`payments(${row.paymentId})`)) : null))) : [];
   const payments = confirmed(candidates, records, merchant);
   const isShopWallet = merchant.toLowerCase() === config.merchant.toLowerCase();
-  const shop = isShopWallet ? config.merchantName : "your shop";
-  const { tiles, ranges, when, today } = home(payments, fee, await vouchers);
+  const shop = isShopWallet ? config.merchantName : "your workspace";
+  const { tiles, ranges, when, today } = home(payments, fee, invoices, await vouchers);
   // the owner may change relayFee (≤ 0.25 USDT): every fee the merchant reads comes from the chain (code review 005 F7)
   const feeText = fee === null ? null : formatUsdt(fee);
   const steps = setupSteps({ ...(await setup), payments: payments.length });
@@ -228,65 +252,67 @@ async function Dashboard() {
 
   return (
     <Shell active="home" account={<Account merchant={merchant} />}>
-      <Band shop={shop} when={when} note={payments.length === 0 ? "No sales yet. Your first one shows here the moment it's paid." : undefined} />
+      <Band shop={shop} when={when} note={payments.length === 0 ? "No sales yet. Real-time payments appear the moment settlement confirms on chain." : undefined} />
       <div className="grid gap-6 px-4 py-6 md:px-8 md:py-7">
-        <div className="flex flex-wrap items-center gap-3">
-          <a href="/merchant/links" className={buttonClasses("primary")}>
-            Create payment link
-          </a>
-          <a href="/merchant/ai" className={buttonClasses("glass", "border-ink/30 text-ink")}>
-            Connect your AI
-          </a>
-          <span className="eyebrow text-ink-muted">Whitechain Testnet · USDT test tokens, no real money</span>
-        </div>
         <GetStarted steps={steps} />
 
-        <section aria-label="Today at a glance" className="grid grid-cols-2 gap-px overflow-hidden rounded-[20px] border border-hairline bg-hairline md:grid-cols-3 xl:grid-cols-6">
+        {/* Financial Metrics Row */}
+        <section aria-label="Financial overview" className="grid grid-cols-2 gap-px overflow-hidden rounded-[16px] border border-hairline bg-hairline md:grid-cols-3 xl:grid-cols-6 shadow-card">
           {tiles.map((tile) => (
-            <div key={tile.label} className="grid content-start gap-1.5 bg-surface p-4 md:p-[18px]">
+            <div key={tile.label} className="grid content-start gap-1 bg-surface p-4 md:p-[18px]">
               <h2 className="eyebrow text-ink-muted">{tile.label}</h2>
-              <b className="text-[28px] leading-none font-medium tracking-[-0.03em] tabular-nums">
+              <b className="text-[26px] leading-none font-semibold tracking-[-0.03em] tabular-nums text-ink">
                 <Reveal text={tile.value} />
               </b>
-              <span className={`text-xs ${tile.tone === "up" ? "text-positive" : tile.tone === "down" ? "text-warning" : "text-ink-muted"}`}>{tile.sub}</span>
+              <span className={`text-xs ${tile.tone === "up" ? "text-positive" : tile.tone === "down" ? "text-warning" : tile.tone === "positive" ? "text-emerald-600" : "text-ink-muted"}`}>
+                {tile.sub}
+              </span>
             </div>
           ))}
         </section>
 
+        {/* Charts & Quick Actions */}
         <div className="grid gap-6 lg:grid-cols-[1.6fr_1fr]">
           <GrossChart ranges={ranges} />
-          <section aria-labelledby="quick" className={`${card} gap-3.5`}>
-            <h2 id="quick" className="text-[15px] font-medium">
+          <section aria-labelledby="quick" className={`${card} gap-3`}>
+            <h2 id="quick" className="text-sm font-semibold text-ink">
               Quick actions
             </h2>
-            <ul className="grid gap-2.5">
+            <ul className="grid gap-2">
+              <li>
+                <a href="/merchant/invoices" className={action}>
+                  <span>Create an invoice</span>
+                  <span className="eyebrow text-accent font-medium">Invoices ↗</span>
+                </a>
+              </li>
+              <li>
+                <a href="/merchant/links" className={action}>
+                  <span>Generate payment link</span>
+                  <span className="eyebrow text-accent font-medium">Links ↗</span>
+                </a>
+              </li>
               <li>
                 <form method="post" action="/api/demo-checkout">
-                  {/* the demo checkout is always the demo shop's: from another wallet it says so (batch 024) */}
-                  <button type="submit" className={`${action} cursor-pointer hover:border-accent`}>
-                    {isShopWallet ? "Open a test checkout" : "Try the demo shop's checkout"} <span className="eyebrow text-ink-muted">{isShopWallet ? "Test" : "Demo"}</span>
+                  <button type="submit" className={`${action} cursor-pointer`}>
+                    <span>{isShopWallet ? "Open test checkout" : "Sample customer checkout"}</span>
+                    <span className="eyebrow text-ink-muted">{isShopWallet ? "Test" : "Demo"}</span>
                   </button>
                 </form>
               </li>
-              {pay && isShopWallet && (
-                <li>
-                  <a href="#invoices" className={`${action} hover:border-accent`}>
-                    Send an invoice <span className="eyebrow text-ink-muted">↓</span>
-                  </a>
-                </li>
-              )}
               <li>
-                <a href="/docs" className={`${action} hover:border-accent`}>
-                  Add the gateway to your shop <span className="eyebrow text-ink-muted">Docs</span>
+                <a href="/merchant/connections" className={action}>
+                  <span>API keys &amp; webhooks</span>
+                  <span className="eyebrow text-ink-muted">APIs</span>
                 </a>
               </li>
               <li>
-                <a href="/merchant/links" className={`${action} hover:border-accent`}>
-                  Create a payment link <span className="eyebrow text-ink-muted">Links</span>
+                <a href="/merchant/settings" className={action}>
+                  <span>Settlement policy</span>
+                  <span className="eyebrow text-ink-muted">Settings</span>
                 </a>
               </li>
               <li>
-                <a href="/merchant/capital" className={`${action} hover:border-accent`}>
+                <a href="/merchant/capital" className={action}>
                   Get paid early <span className="eyebrow text-ink-muted">Capital</span>
                 </a>
               </li>
@@ -294,17 +320,17 @@ async function Dashboard() {
           </section>
         </div>
 
+        {/* Invoices Component */}
         {pay && isShopWallet ? (
           <Invoices merchant={merchant} merchantPay={pay.merchantPay} invoices={invoices ? invoiceRows(invoices, logs ?? [], acks) : null} today={today} feeText={feeText} />
         ) : (
-          // the menu's Invoices lands here too; /pay serves only the demo shop's invoices (human, 2026-11-06 02:3x)
           <section className={`${card} scroll-mt-4`} aria-labelledby="invoices">
-            <h2 id="invoices" className="label text-ink-muted">
+            <h2 id="invoices" className="text-base font-semibold text-ink">
               Invoices
             </h2>
             {pay ? (
-              <p className="text-sm text-ink-muted">
-                In this test build, invoices go out from the demo shop&apos;s wallet only ({config.merchantName}, <span className="data">{shopWallet}</span>). To bill a
+              <p className="text-sm text-ink-muted leading-relaxed">
+                In this test build, invoices go out from the demo shop&apos;s wallet only ({config.merchantName}, <span className="data font-mono text-ink">{shopWallet}</span>). To bill a
                 customer from your own wallet, send them a{" "}
                 <a href="/merchant/links" className="text-accent underline underline-offset-4">
                   payment link
@@ -317,52 +343,57 @@ async function Dashboard() {
           </section>
         )}
 
-        <section className="rounded-[20px] border border-hairline bg-surface" aria-labelledby="payments">
-          <h2 id="payments" className="scroll-mt-4 px-6 pt-5 text-[15px] font-medium">
-            Latest payments
-          </h2>
+        {/* Latest Payments Table */}
+        <section className="rounded-[16px] border border-hairline bg-surface shadow-card overflow-hidden" aria-labelledby="payments-heading">
+          <div className="flex items-center justify-between border-b border-hairline px-6 py-4">
+            <h2 id="payments-heading" className="text-[16px] font-semibold text-ink">
+              Latest payments
+            </h2>
+            <a href="/merchant/payments" className="text-xs font-medium text-accent underline underline-offset-4">
+              View all ({payments.length}) ↗
+            </a>
+          </div>
+
           {payments.length === 0 ? (
-            <p className="px-6 pt-3 pb-6 text-sm text-ink-muted">
+            <p className="px-6 py-8 text-sm text-ink-muted">
               {isShopWallet
-                ? "No payments yet. Open a test checkout above and pay it to see one land here."
-                : "No payments yet. Pay your own payment link with test USDT and it lands here."}
+                ? "No payments recorded yet. Open a test checkout above and pay it to see settlement land here."
+                : "No payments recorded yet. Create and pay your own payment link with test USDT to see it settle."}
             </p>
           ) : (
-            // a card per payment on a phone, a table row from sm up: Refund is never off screen (UX review 005 F2)
-            <ul className="mt-3 grid divide-y divide-hairline text-sm sm:table sm:w-full sm:divide-y-0 sm:border-collapse">
-              <li className="hidden bg-surface-sunk text-ink-muted sm:table-row" aria-hidden="true">
-                {["Payment", "Amount", "Status", "Refund"].map((h, i) => (
-                  <span key={h} className={`label sm:table-cell sm:px-6 sm:py-3 ${i === 0 ? "text-left" : "text-right"}`}>
+            <ul className="grid divide-y divide-hairline text-sm sm:table sm:w-full sm:divide-y-0 sm:border-collapse">
+              <li className="hidden bg-surface-sunk text-ink-muted sm:table-row font-medium" aria-hidden="true">
+                {["Transaction / Payment", "Amount", "Status", "Refund"].map((h, i) => (
+                  <span key={h} className={`eyebrow sm:table-cell sm:px-6 sm:py-3 ${i === 0 ? "text-left" : "text-right"}`}>
                     {h}
                   </span>
                 ))}
               </li>
-              {payments.map(({ row, record }) => {
+              {payments.slice(0, 10).map(({ row, record }) => {
                 const cell = refundCell(record);
                 return (
-                  <li key={row.key} className="grid grid-cols-2 items-center gap-x-4 gap-y-2 px-6 py-4 sm:table-row sm:border-t sm:border-hairline sm:hover:bg-accent-soft">
+                  <li key={row.key} className="grid grid-cols-2 items-center gap-x-4 gap-y-2 px-6 py-3.5 sm:table-row sm:border-t sm:border-hairline sm:hover:bg-surface-sunk/30 transition-colors">
                     <span className="col-span-2 sm:table-cell sm:px-6 sm:py-3 sm:align-middle">
                       {row.txHash ? (
-                        <a className="data inline-flex min-h-11 items-center text-accent underline underline-offset-4" href={`${EXPLORER}/tx/${row.txHash}`} target="_blank" rel="noreferrer">
+                        <a className="data font-mono text-xs text-accent underline underline-offset-4 inline-flex items-center gap-1" href={`${EXPLORER}/tx/${row.txHash}`} target="_blank" rel="noreferrer">
                           {row.label} ↗
                         </a>
                       ) : (
-                        <span className="data">{row.label}</span>
+                        <span className="data font-mono text-xs">{row.label}</span>
                       )}
-                      <span className="data text-ink-muted"> · {istTime(row.paidAt)}</span>
+                      <span className="data text-xs text-ink-muted"> · {istTime(row.paidAt)}</span>
                     </span>
-                    <span className="tabular-nums sm:table-cell sm:px-6 sm:py-3 sm:text-right sm:align-middle">
-                      {formatUsdt(row.amount)} <span className="text-ink-muted sm:hidden">USDT</span>
+                    <span className="tabular-nums font-semibold sm:table-cell sm:px-6 sm:py-3 sm:text-right sm:align-middle">
+                      {formatUsdt(row.amount)} <span className="text-xs text-ink-muted font-normal sm:hidden">USDT</span>
                     </span>
                     <span className="text-right sm:table-cell sm:px-6 sm:py-3 sm:align-middle">
-                      <span className={`inline-flex rounded-pill border border-current px-3 py-0.5 text-xs font-medium ${cell.status === "Paid" ? "text-positive" : "text-ink-muted"}`}>{cell.status}</span>
+                      <StatusBadge status={cell.tone} label={cell.status} />
                     </span>
                     <span className="col-span-2 sm:table-cell sm:px-6 sm:py-3 sm:text-right sm:align-middle">
                       {pay && row.paymentId && cell.left !== null && cell.left > 0n ? (
-                        // keyed by what is left: after a refund the control starts again from the new figure (tester R1 #2)
                         <Refund key={`${row.paymentId}:${cell.left}`} merchant={merchant} merchantPay={pay.merchantPay} paymentId={row.paymentId} refundable={cell.left.toString()} />
                       ) : (
-                        <span className="text-sm text-ink-muted">{cell.left === null ? "Can't check right now" : "Fully refunded"}</span>
+                        <span className="text-xs text-ink-muted">{cell.left === null ? "Checking status" : "Settled"}</span>
                       )}
                     </span>
                   </li>
@@ -372,36 +403,38 @@ async function Dashboard() {
           )}
         </section>
 
-        <section className={card} aria-labelledby="gas">
-          <h2 id="gas" className="label text-ink-muted">
-            Who pays gas
-          </h2>
-          <p className="text-sm text-ink-muted">Your customers never hold or pay for gas. Our relayer pays it and recovers {feeText ? `${feeText} USDT` : "a small fee"} per payment.</p>
+        {/* Infrastructure & Gas Sponsorship Telemetry */}
+        <section className={card} aria-labelledby="gas-heading">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-hairline pb-3">
+            <h2 id="gas-heading" className="text-sm font-semibold text-ink">
+              Sponsored Relayer &amp; Network Health
+            </h2>
+            <StatusBadge status={health && !health.paused ? "paid" : "warning"} label={health && !health.paused ? "Running" : "Standby"} />
+          </div>
+          <p className="text-xs text-ink-muted leading-relaxed">
+            Customers pay zero network gas on Whitechain. The Whiteflow relayer sponsors transaction gas and deducts a transparent {feeText ? `${feeText} USDT` : "nominal"} fee upon settlement.
+          </p>
           {health ? (
-            <dl className="grid gap-2 text-sm md:grid-cols-5 md:gap-6">
+            <dl className="grid gap-2 text-xs md:grid-cols-4 md:gap-4 pt-1">
               {[
                 ["Relayer balance", wbt(health.wbt)],
                 ["Gas spent today", wbt(health.gasSpentToday)],
                 ["Budget left today", wbt(health.budgetLeft)],
-                ["Fees not yet swapped", health.usdtFeesUnswapped ? `${health.usdtFeesUnswapped} USDT` : "—"],
+                ["Unswapped fees", health.usdtFeesUnswapped ? `${health.usdtFeesUnswapped} USDT` : "0.0000 USDT"],
               ].map(([term, value]) => (
-                <div key={term} className="flex justify-between gap-3 border-t border-hairline pt-2 md:grid md:justify-start md:gap-1">
-                  <dt>{term}</dt>
-                  <dd className="data">{value}</dd>
+                <div key={term} className="flex justify-between gap-3 border-t border-hairline pt-2 md:grid md:justify-start md:gap-0.5">
+                  <dt className="text-ink-muted">{term}</dt>
+                  <dd className="font-mono font-medium text-ink">{value}</dd>
                 </div>
               ))}
-              <div className="flex justify-between gap-3 border-t border-hairline pt-2 md:grid md:justify-start md:gap-1">
-                <dt>Status</dt>
-                <dd className={health.paused ? "text-warning" : "text-positive"}>{health.paused ? "Paused" : "Running"}</dd>
-              </div>
             </dl>
           ) : (
-            <p className="text-sm text-warning">{pay ? "The relayer isn't answering right now." : "The relayer isn't connected to this server yet."}</p>
+            <p className="text-xs text-warning">{pay ? "Relayer status check pending." : "Relayer not configured on this server."}</p>
           )}
         </section>
+
         <p className="text-xs text-ink-muted">
-          Amounts are what customers paid. A sale&apos;s {feeText ? `${feeText} USDT ` : ""}gas fee comes out of it; an invoice&apos;s is added on top. The rest goes to your wallet in the same
-          transaction, or first to your investors while you repay an advance. Refunds come from your wallet, in full or in part.
+          All payments settle directly to your Whitechain receiving wallet in the settlement transaction (T+0). Whiteflow maintains non-custodial accounting; transaction amounts are customer payments, not a pooled custodial balance.
         </p>
       </div>
     </Shell>

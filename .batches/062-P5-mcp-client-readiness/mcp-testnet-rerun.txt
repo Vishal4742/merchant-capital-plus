@@ -1,0 +1,23 @@
+2026-11-07T02:45:53.169Z whiteflow-mcp info started in sandbox mode (sandbox data in C:\Users\nothi\AppData\Local\Temp\wf-mcp-test-JjghWI)
+2026-11-07T02:45:53.174Z whiteflow-mcp info started in testnet mode against https://gateway.test
+✔ profile: testnet label, the business time zone falls back to WHITEFLOW_TIMEZONE, no scopes on testnet keys (165.1862ms)
+✔ create_payment_link posts the live shape with the key and an Idempotency-Key, and returns the absolute URL (28.6051ms)
+✔ a lost reply is retried with the same Idempotency-Key, so the gateway can replay instead of duplicating (38.8952ms)
+✔ timeout with an unknown outcome: the tool says it's safe to retry, and the retry (no key given) reuses the same key (39.8925ms)
+✔ a lost reply then 429s, or a 'still being processed' 409, stays ambiguous: the next call reuses the key (review 052 M1) (86.3185ms)
+✔ a definite refusal frees the journal: a corrected request gets a fresh key (31.2476ms)
+✔ 401 and 403 become plain reasons that never contain the key (10.9662ms)
+✔ customers, invoices and reminders refuse plainly on testnet, without calling routes the backend doesn't have (23.6526ms)
+✔ list_payments and get_payment_link: verified records with explorer links; the summary is in the business zone (24.8063ms)
+✔ ids "." and ".." are refused before any fetch: they would be another same-origin path, sent with the key (7.1346ms)
+✔ a dashboard link priced finer than its currency's minor unit (10.555 INR) is shown as stored, not rounded or refused (9.4254ms)
+✔ startup refuses bad settings without repeating the key; sandbox is the default mode (19.2712ms)
+✔ the old MCP_SECRET_KEY alone stops startup, naming WHITEFLOW_API_KEY, instead of silently starting the sandbox (4.3052ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 13
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1440.6939

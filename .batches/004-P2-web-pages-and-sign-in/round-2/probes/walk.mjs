@@ -127,8 +127,8 @@ await visit("checkout-two-attempts", `/checkout/${SID}`, {
   act: async (p) => { await pressPay(p, 1500); await pressPay(p, 1500); return {}; },
 });
 if (scheme === "light") await visit("checkout-error-real", `/checkout/${SID}`, { scan: true, act: (p) => pressPay(p, 5000) });
-await visit("checkout-notfound", "/checkout/00000000-0000-0000-0000-000000000000", { scan: true, act: async (p) => ({ h1: await p.locator("h1").allInnerTexts(), homeLink: await p.getByRole("link", { name: /Go to Merchant Capital/ }).getAttribute("href"), linkH: (await p.getByRole("link", { name: /Go to Merchant Capital/ }).boundingBox())?.height }) });
-await visit("receipt-notfound", `/r/00000000-0000-0000-0000-000000000000`, { scan: true, act: async (p) => ({ h1: await p.locator("h1").allInnerTexts(), homeLink: await p.getByRole("link", { name: /Go to Merchant Capital/ }).getAttribute("href") }) });
+await visit("checkout-notfound", "/checkout/00000000-0000-0000-0000-000000000000", { scan: true, act: async (p) => ({ h1: await p.locator("h1").allInnerTexts(), homeLink: await p.getByRole("link", { name: /Go to Whiteflow/ }).getAttribute("href"), linkH: (await p.getByRole("link", { name: /Go to Whiteflow/ }).boundingBox())?.height }) });
+await visit("receipt-notfound", `/r/00000000-0000-0000-0000-000000000000`, { scan: true, act: async (p) => ({ h1: await p.locator("h1").allInnerTexts(), homeLink: await p.getByRole("link", { name: /Go to Whiteflow/ }).getAttribute("href") }) });
 await visit("receipt-unpaid-real-id", `/r/${SID}`, { scan: true });
 await visit("home", "/", { waitMs: 3500 });
 await visit("merchant-signed-out", "/merchant");

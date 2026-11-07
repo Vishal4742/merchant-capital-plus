@@ -71,7 +71,8 @@ const HOST_STEPS: Record<Client, (mcpUrl: string) => string> = {
     "\nSetup steps for the Claude app (names as in Anthropic's custom connector guide; on Team and Enterprise only an owner can add a connector):\n" +
     "1. Open Customize, then Connectors, click + Add, then Add custom connector.\n" +
     `2. Enter the name WhiteFlow and the remote MCP URL ${mcpUrl}, then continue.\n` +
-    "3. Choose to sign in now, and finish WhiteFlow's consent screen in the browser. Check the permissions it shows.",
+    "3. Choose OAuth and Sign in now. Under OAuth client, choose Register automatically (WhiteFlow supports dynamic registration).\n" +
+    "4. Finish WhiteFlow's consent screen as a workspace Owner. Check the permissions it shows, then enable the connector in your conversation.",
   "claude-code": (mcpUrl) =>
     "\nAdvanced setup for Claude Code (a terminal client; the Claude app steps are the usual way):\n" +
     `1. Run: claude mcp add --transport http whiteflow ${mcpUrl}\n` +

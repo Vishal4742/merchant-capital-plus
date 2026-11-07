@@ -44,14 +44,14 @@ export function registerBusinessTools(server: McpServer, ctx: Ctx): void {
           network: account.network,
           settlement: account.settlement,
           price_currencies: account.price_currencies,
-          price_currency_note: "Links may be priced in any of these. A price that isn't USDT is converted to USDT by WhiteFlow at a rate locked when the customer opens the checkout; the customer pays, and you receive, USDT.",
+          price_currency_note: "Links may be priced in any of these. A price that isn't USDT is converted to USDT by Whiteflow at a rate locked when the customer opens the checkout; the customer pays, and you receive, USDT.",
           invoice_currencies: account.capabilities.invoices ? [...INVOICE_CURRENCIES] : [],
           payment_methods: account.payment_methods,
           payment_limits: account.payment_limits,
-          permissions: scopes ?? "This testnet key is a full merchant secret key: WhiteFlow keys have no scopes yet.",
+          permissions: scopes ?? "This testnet key is a full merchant secret key: Whiteflow keys have no scopes yet.",
           publication: account.capabilities.invoices
             ? account.publish_policy === "owner_approval"
-              ? "An Owner approves each invoice on the review page before it is published (enforced by WhiteFlow)."
+              ? "An Owner approves each invoice on the review page before it is published (enforced by Whiteflow)."
               : "Invoices are published as soon as they're finalized."
             : null,
           credential_expires_at: account.credential.expires_at,

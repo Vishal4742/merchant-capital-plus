@@ -403,3 +403,13 @@ test("the /pay page 404s another merchant's invoice before it reads attempt stat
   assert.ok(gate > 0, "the shop gate is in the page");
   assert.ok(gate < page.indexOf("invoiceState("), "and comes before invoiceState");
 });
+
+test("batch 031 review F2: a relayed 200 whose chain confirmation fails stays pending AND keeps the relayer's tx reference", async () => {
+  confirmed = async () => {
+    throw new Error("rpc down");
+  };
+  const res = await callPay(await signed());
+  assert.equal(res.status, 504);
+  assert.match((await res.json()).error, /Don't pay again/);
+  assert.equal((await invoiceAttempt(String(id))).pending?.txHash, `0x${"ab".repeat(32)}`);
+});
