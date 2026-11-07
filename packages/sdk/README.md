@@ -1,6 +1,6 @@
 # @merchant-capital/sdk
 
-Two pieces for shops on the Merchant Capital+ gateway (Whitechain testnet):
+Two pieces for shops on the WhiteFlow gateway (Whitechain testnet):
 - **`index.ts`:** the server SDK (FR-GW-5).
 - **`button.js`:** the one-line pay button (FR-GW-4).
 
