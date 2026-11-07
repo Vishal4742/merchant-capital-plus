@@ -63,7 +63,7 @@ export function gatewayOrigin(text: string, name = "WHITEFLOW_BASE_URL"): URL {
   const url = URL.canParse(text) ? new URL(text) : null;
   const secure = url && (url.protocol === "https:" || (url.protocol === "http:" && LOCAL_HOSTS.has(url.hostname)));
   if (!url || !secure || url.username || url.password || url.search || url.hash || (url.pathname !== "/" && url.pathname !== "")) {
-    throw new Error(`${name} must be an https origin, like https://whiteflow-app.vercel.app (http only for localhost).`);
+    throw new Error(`${name} must be an https origin, like https://whiteflow.org (http only for localhost).`);
   }
   return new URL(url.origin);
 }
