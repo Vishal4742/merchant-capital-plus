@@ -5,6 +5,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { getAddress, type Address } from "viem";
 import { query } from "./db.ts";
 import { HttpError, newId, signedInMerchant } from "./http.ts";
+import { internalCaller } from "./mcp-principal.ts";
 
 export type KeyKind = "pk" | "sk";
 export const MAX_KEYS = 20; // live keys per merchant
@@ -80,7 +81,7 @@ export async function merchantByCookieOrSecretKey(request: Request): Promise<Add
   throw new HttpError(401, "Sign in to your merchant dashboard, or send your secret API key.");
 }
 
-export type Caller = { merchant: Address; via: "session" | "secret_key"; keyId: string | null };
+export type Caller = { merchant: Address; via: "session" | "secret_key" | "mcp_grant"; keyId: string | null };
 
 /** Like merchantByCookieOrSecretKey, for the routes the assistant connector uses (batch 052, FR-GW-16 proposed), and it
  *  says which credential it was: 401 without a session or a live key, 403 for a publishable key (it is shipped to
@@ -90,6 +91,12 @@ export async function callerMerchant(request: Request): Promise<Caller> {
     return { merchant: signedInMerchant(request), via: "session", keyId: null };
   } catch (err) {
     if (!(err instanceof HttpError) || err.status !== 401) throw err;
+  }
+  // an assistant connection (batch 058): a signed assertion checked against its grant (lib/server/mcp-principal.ts)
+  const internal = await internalCaller(request);
+  if (internal) {
+    if ("error" in internal) throw new HttpError(internal.status, internal.error);
+    return { merchant: internal.merchant, via: "mcp_grant", keyId: null };
   }
   const key = await authenticateKey(request);
   if (!key) throw new HttpError(401, "Sign in to your merchant dashboard, or send a live secret API key (sk_test_…).");

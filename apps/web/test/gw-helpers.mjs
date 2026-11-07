@@ -16,7 +16,7 @@ export const MERCHANT = "0x1111111111111111111111111111111111111111";
 export const OTHER_MERCHANT = "0x2222222222222222222222222222222222222222";
 
 let pg;
-/** One PGlite per test file (startup is slow); call resetDb() in beforeEach to empty the app_gw_* and app_web_* tables. */
+/** One PGlite per test file (startup is slow); call resetDb() in beforeEach to empty the app_gw_*, app_web_* and app_mcp_* tables. */
 export async function setupDb() {
   pg = new PGlite();
   const dir = new URL("../db/", import.meta.url);
@@ -37,7 +37,7 @@ export async function setupDb() {
 }
 
 export async function resetDb() {
-  const { rows } = await pg.query("SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'app_gw_%' OR table_name LIKE 'app_web_%'");
+  const { rows } = await pg.query("SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'app_gw_%' OR table_name LIKE 'app_web_%' OR table_name LIKE 'app_mcp_%'");
   if (rows.length) await pg.exec(`TRUNCATE ${rows.map((r) => r.table_name).join(", ")} CASCADE`);
   resetRateLimits(); // the in-memory limiter would otherwise carry counts from one test into the next
   resetRateCache(); // and the FX cache would serve one test's mocked rates to the next

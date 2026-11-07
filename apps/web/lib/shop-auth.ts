@@ -6,6 +6,7 @@ import { merchantConfig, shopAuthorized } from "./config.ts";
 import { DbUnavailable } from "./server/db.ts";
 import { merchantName } from "./server/http.ts";
 import { authenticateKey } from "./server/keys.ts";
+import { internalCaller } from "./server/mcp-principal.ts";
 
 export type Shop = { merchant: Address; merchantName: string };
 export type Refusal = { status: number; error: string };
@@ -13,6 +14,9 @@ export type Refusal = { status: number; error: string };
 export async function shopCaller(request: Request): Promise<Shop | Refusal> {
   const config = merchantConfig();
   if (config && shopAuthorized(request, config.apiKey)) return { merchant: config.merchant, merchantName: config.merchantName };
+  // an assistant connection reading payments (batch 058): the route's scope is checked against its grant
+  const internal = await internalCaller(request).catch((error: unknown) => (error instanceof DbUnavailable ? { status: 401, error: "Missing or wrong API key." } : { status: 503, error: "We can't check this connection right now. Try again in a minute." }));
+  if (internal) return "error" in internal ? { status: internal.status, error: internal.error } : { merchant: internal.merchant, merchantName: merchantName(internal.merchant) };
   let key: Awaited<ReturnType<typeof authenticateKey>>;
   try {
     key = await authenticateKey(request);
