@@ -5,12 +5,14 @@
 // they stay in this browser's localStorage, never go on chain.
 import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
-import type { Address } from "viem";
+import { getAddress, isAddress, zeroAddress, type Address } from "viem";
 import { Button } from "@/components/Button";
+import { DebtorAck } from "@/components/DebtorAck";
 import { QrActions } from "@/components/gateway/Share";
 import { StatusBadge, type StatusTone } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { cancelInvoice, connectMerchant, createInvoice, walletError } from "@/lib/merchant-wallet";
+import type { DebtorAckView } from "@/lib/server/invoice-acks";
 import { parseUsdt } from "@/lib/usdt";
 
 export interface InvoiceRow {
@@ -22,6 +24,8 @@ export interface InvoiceRow {
   paidText: string | null;
   /** The payment that paid it in full, when the log index has it. */
   receiptId: string | null;
+  /** The debtor's acknowledgement of an open invoice (batch 047, FR-INV-8), or null. */
+  ack: DebtorAckView | null;
 }
 
 interface InvoicesProps {
@@ -234,6 +238,7 @@ export function Invoices({ merchant, merchantPay, invoices, today, feeText }: In
                       {invoice.paidText && (
                         <span className="block text-xs text-ink-muted mt-0.5 font-mono">{invoice.paidText} credited</span>
                       )}
+                      {invoice.status === "open" && <DebtorAck ack={invoice.ack} />}
                     </span>
                     <span className="col-span-2 sm:table-cell sm:px-4 sm:py-3.5 sm:text-right sm:align-middle">
                       <InvoiceActions invoice={invoice} merchant={merchant} merchantPay={merchantPay} />
@@ -262,6 +267,7 @@ function NewInvoice({
   const [created, setCreated] = useState<string | null>(null);
   const customerRef = useRef<HTMLInputElement>(null);
   const labelRef = useRef<HTMLInputElement>(null);
+  const walletRef = useRef<HTMLInputElement>(null); // no form name either: read from the ref, never put in a URL
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -278,11 +284,19 @@ function NewInvoice({
     const due = String(data.get("due") ?? "");
     const dueMs = /^\d{4}-\d{2}-\d{2}$/.test(due) ? Date.parse(`${due}T23:59:59+05:30`) : NaN;
     if (!(dueMs > Date.now() + 60_000)) return setError("Pick a due date from today on.");
+    // batch 047 (security H1): a named customer wallet goes on chain, and only it can then acknowledge the invoice
+    const wallet = walletRef.current?.value.trim() ?? "";
+    if (wallet && !isAddress(wallet)) return setError("Enter your customer's wallet address (0x and 40 characters), or leave it empty.");
+    // all lowercase carries no checksum, so a mistyped character would bind the wrong wallet (re-review); isAddress
+    // already refused a mixed-case address whose checksum is wrong
+    if (wallet && wallet !== getAddress(wallet)) return setError("Paste the checksummed address (with its capital letters) from your customer's wallet.");
+    if (wallet && wallet.toLowerCase() === merchant.toLowerCase()) return setError("That's your own wallet. Enter your customer's, or leave it empty.");
+    const customer: Address = wallet ? getAddress(wallet) : zeroAddress;
     const note = { customer: customerRef.current?.value.trim().slice(0, 60) || undefined, label: labelRef.current?.value.trim().slice(0, 60) || undefined };
     setBusy(true);
     try {
       const w = await connectMerchant(window.ethereum, merchant, merchantPay);
-      const id = (await createInvoice(w, amount, BigInt(Math.floor(dueMs / 1000)))).toString();
+      const id = (await createInvoice(w, amount, BigInt(Math.floor(dueMs / 1000)), customer)).toString();
       if (note.customer || note.label) saveNote(key, id, note);
       setCreated(id);
       form.reset();
@@ -299,7 +313,8 @@ function NewInvoice({
   return (
     <div className="grid gap-3 rounded-[12px] border border-hairline bg-surface-sunk/40 p-4">
       <h3 className="text-sm font-semibold text-ink">Create new invoice</h3>
-      <form onSubmit={submit} onChange={() => setError(null)} className="grid items-end gap-3 md:grid-cols-[1fr_1fr_1.3fr_1.3fr_auto]">
+      {/* a stale error goes as soon as anything changes (UX review 005 F6) */}
+      <form onSubmit={submit} onChange={() => setError(null)} className="grid items-end gap-3 md:grid-cols-3 xl:grid-cols-[1fr_1fr_1.3fr_1.3fr_1.3fr_auto]">
         <label className="grid gap-1 text-xs">
           <span className="font-medium text-ink-muted">Amount (1.00 to 1,000.00 USDT)</span>
           <input name="amount" inputMode="decimal" autoComplete="off" placeholder="25.00" required className={field} />
@@ -316,12 +331,19 @@ function NewInvoice({
           <span className="font-medium text-ink-muted">Description / Memo</span>
           <input ref={labelRef} maxLength={60} autoComplete="off" placeholder="Design Sprint Q4" className={field} />
         </label>
+        <label className="grid gap-1 text-xs">
+          <span className="font-medium text-ink-muted">Customer wallet (optional)</span>
+          <input ref={walletRef} maxLength={42} autoComplete="off" spellCheck={false} placeholder="0x…" className={`${field} data`} />
+        </label>
         <Button type="submit" aria-disabled={busy} className="h-10 px-5 text-sm font-medium">
           {busy ? "Signing in wallet…" : "Issue invoice"}
         </Button>
       </form>
       <p className="text-xs text-ink-muted">
         Your connected wallet issues the invoice on Whitechain. Customer adds {feeText ? `${feeText} USDT relayer fee` : "a small fee"} on top, settling the invoice amount to your wallet in full. Customer notes remain private in this browser.
+        <span className="block">
+          A customer wallet, if you add one, goes on chain with the invoice: only that wallet can then acknowledge it, and investors see &quot;Acknowledged by the wallet the merchant named&quot;. Investors don&apos;t see other wallets&apos; acknowledgements.
+        </span>
       </p>
       {error && (
         <p role="alert" className="text-xs text-critical font-medium">

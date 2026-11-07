@@ -6,6 +6,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// a file path on every OS (URL.pathname is "/P:/…" on Windows, which join() turned into "P:\P:\…"; as batch 049 did for docs-reference)
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const sources = ["app", "components", "lib"].flatMap((dir) =>
   readdirSync(join(ROOT, dir), { recursive: true })

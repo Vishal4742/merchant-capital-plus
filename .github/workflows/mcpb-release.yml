@@ -1,0 +1,126 @@
+# Release build for the WhiteFlow Merchant MCP bundle (batch 055, production review F8; FR-MCP-12, NFR-17).
+# Builds whiteflow.mcpb from the checked-out commit, refuses an archive that holds a key-shaped string, attests it
+# (SLSA build provenance and its CycloneDX SBOM, signed by Sigstore through GitHub artifact attestations) and uploads it
+# with its checksums. This is provenance, not an MCPB signature: see packages/mcp/RELEASE.md.
+# Two jobs, so dependency code never runs next to the OIDC token (review 055 M2): `build` runs npm with contents: read
+# only; `attest` holds id-token: write and runs no npm or node, only the artifact and attest actions.
+# Not a required check, and ci.yml is unchanged.
+name: mcpb-release
+on:
+  workflow_dispatch:
+  push:
+    tags: ["mcpb-v*"]
+
+permissions: {}
+
+concurrency:
+  group: mcpb-release-${{ github.ref }}
+  cancel-in-progress: false   # never cancel a release build halfway through its attestations
+
+jobs:
+  build:
+    runs-on: ubuntu-latest   # GitHub-hosted only: gh attestation verify --deny-self-hosted-runners relies on it
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: packages/mcp
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          package-manager-cache: false   # a release build restores nothing another workflow wrote
+      - name: The tag names the manifest version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          have=$(node -p "require('./manifest.json').version")
+          if [ "${GITHUB_REF_NAME#mcpb-v}" != "$have" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not name manifest.json version $have"; exit 1
+          fi
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run pack
+      - name: The archive matches its checksum file
+        working-directory: packages/mcp/dist
+        run: sha256sum -c whiteflow.mcpb.sha256
+      - name: Unpack the archive and refuse key-shaped strings (prints file names, never the match)
+        run: |
+          out="$RUNNER_TEMP/unpacked"
+          npx --no-install mcpb unpack dist/whiteflow.mcpb "$out"
+          for f in manifest.json server/index.mjs sbom.cdx.json; do
+            [ -f "$out/$f" ] || { echo "::error::$f is missing from the unpacked archive"; exit 1; }
+          done
+          # tools/githooks/pre-push's secret regexes, plus test, live and sandbox API keys (sk_test_ at config.ts's
+          # 16-character minimum) and a bare 32-byte hex value, a private key without PRIVATE_KEY= (NFR-17). The bare
+          # 0x pattern was checked against a freshly packed and unpacked bundle: no bundled library hash or constant hits.
+          keys='PRIVATE_KEY=0x[0-9a-fA-F]{64}|-----BEGIN [A-Z ]*PRIVATE KEY|(^|[^a-z])sk-[A-Za-z0-9_-]{20,}|sm_[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|sk_test_[A-Za-z0-9_-]{16,}|sk_live_[A-Za-z0-9_-]{16,}|wf_sbx_[A-Za-z0-9_-]{32}|0x[0-9a-fA-F]{64}'
+          status=0
+          hits=$(grep -rlE -- "$keys" "$out") || status=$?
+          if [ "$status" -eq 0 ]; then
+            while IFS= read -r f; do echo "::error::key-shaped string in ${f#"$out"/}"; done <<< "$hits"
+            exit 1
+          elif [ "$status" -ne 1 ]; then
+            echo "::error::the key scan failed (grep exit $status)"; exit 1
+          fi
+          echo "no key-shaped strings in $(find "$out" -type f | wc -l) files"
+          cp "$out/sbom.cdx.json" dist/whiteflow.mcpb.sbom.cdx.json   # attest the SBOM that ships, not a rebuild
+      - name: Hand the checked archive to the attest job
+        uses: actions/upload-artifact@v7
+        with:
+          name: whiteflow-mcpb-unattested-${{ github.sha }}
+          path: |
+            packages/mcp/dist/whiteflow.mcpb
+            packages/mcp/dist/whiteflow.mcpb.sha256
+            packages/mcp/dist/whiteflow.mcpb.contents.sha256
+            packages/mcp/dist/whiteflow.mcpb.sbom.cdx.json
+          if-no-files-found: error
+          retention-days: 1
+
+  attest:
+    needs: build
+    runs-on: ubuntu-latest   # GitHub-hosted only, as above
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write       # the OIDC token Sigstore exchanges for a short-lived signing certificate
+      attestations: write   # stores the attestations on this repository
+    steps:   # no checkout, npm or node: nothing from the repository or its dependencies runs here
+      - uses: actions/download-artifact@v8
+        with:
+          name: whiteflow-mcpb-unattested-${{ github.sha }}
+          path: dist
+      - name: Attest build provenance (SLSA)
+        id: provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/whiteflow.mcpb
+      - name: Attest the SBOM (CycloneDX)
+        id: sbom
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/whiteflow.mcpb
+          sbom-path: dist/whiteflow.mcpb.sbom.cdx.json
+      - name: Keep the Sigstore bundles next to the archive
+        env:
+          PROVENANCE_BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+          SBOM_BUNDLE: ${{ steps.sbom.outputs.bundle-path }}
+        run: |
+          cp "$PROVENANCE_BUNDLE" dist/whiteflow.mcpb.provenance.sigstore.json
+          cp "$SBOM_BUNDLE" dist/whiteflow.mcpb.sbom.sigstore.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: whiteflow-mcpb-${{ github.sha }}
+          path: |
+            dist/whiteflow.mcpb
+            dist/whiteflow.mcpb.sha256
+            dist/whiteflow.mcpb.contents.sha256
+            dist/whiteflow.mcpb.sbom.cdx.json
+            dist/whiteflow.mcpb.provenance.sigstore.json
+            dist/whiteflow.mcpb.sbom.sigstore.json
+          if-no-files-found: error
+          retention-days: 90

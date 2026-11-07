@@ -4,6 +4,7 @@ import { createPublicClient, encodeAbiParameters, getAddress, http, isAddress, k
 import { whitechainSepolia } from "viem/chains";
 import { plainUsdt } from "../usdt.ts";
 import { HttpError, merchantName } from "./http.ts";
+import type { DebtorAckView } from "./invoice-acks.ts";
 
 // packages/shared addresses (contracts frozen 03:05). test/capital-core pins them and these fragments to the shared ABI;
 // importing packages/shared from Next needs turbopack.root outside apps/web (the lib/onchain.ts reason).
@@ -94,8 +95,10 @@ export function offerStatus(o: ChainOffer, now = nowSeconds()): OfferStatus | nu
 export interface ArkivMatch { entityKey: string; matches: boolean; terms: Record<string, string> }
 
 /** claude-contracts' 08:53 offer shape with the 10:49 decisions: face and price always (an advance's face is its cap),
- *  principal and cap for advances only, holdback_pct 0 for invoices (Q12); arkiv.terms is the entity's values (D3). */
-export function offerJson(o: ChainOffer, now = nowSeconds(), arkiv?: ArkivMatch) {
+ *  principal and cap for advances only, holdback_pct 0 for invoices (Q12); arkiv.terms is the entity's values (D3).
+ *  debtor_ack (batch 047, FR-INV-8): the invoice's acks, from our database, never from Arkiv; debtor_acknowledged only
+ *  when the customer wallet the invoice names on chain signed it (security 047 H1), never for a pay-link holder's. */
+export function offerJson(o: ChainOffer, now = nowSeconds(), arkiv?: ArkivMatch, ack?: DebtorAckView) {
   const advance = o.kind === "advance";
   return {
     id: o.claimId.toString(),
@@ -112,6 +115,8 @@ export function offerJson(o: ChainOffer, now = nowSeconds(), arkiv?: ArkivMatch)
     units_left: (o.face - o.sold).toString(),
     status: offerStatus(o, now),
     arkiv: { entity_key: arkiv?.entityKey ?? null, matches: arkiv?.matches ?? false, terms: arkiv?.terms ?? null },
+    debtor_acknowledged: ack?.verified ?? false,
+    debtor_ack: ack ?? null,
   };
 }
 export type OfferJson = ReturnType<typeof offerJson>;
