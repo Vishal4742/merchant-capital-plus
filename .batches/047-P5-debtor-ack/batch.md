@@ -15,3 +15,5 @@ Log:
 - Security review round 1: CHANGES (H1 overstated claim, M1 squatting, L1 join). Fixed on the branch: red 55fd9f6,
   server f150be1, labels + pay page a273e0f, customer wallet field c4d6682. 051 rewritten while unapplied (key now
   (merchant_pay, invoice_id, debtor) + merchant, amount, due_date, customer_bound). ci PASS: tests 724 (722 pass).
+- round-2 fixes by claude-contracts (owner 05:34: fix the PRs, then merge): offer book passes only a verified ack (2528aa8, M1);
+  neutral label "Acknowledged by the wallet the merchant named", no ✓ or success colour (fa82679, M2).
