@@ -89,3 +89,36 @@ export function buildSetupPrompt(input: { client: unknown; setupUrl: unknown; mc
   if (!setupUrl || !mcpUrl) return { ok: false, reason: UNAVAILABLE };
   return { ok: true, client, prompt: CORE(setupUrl, mcpUrl) + "\n" + HOST_STEPS[client](mcpUrl) };
 }
+
+// ── connection state ──
+// What the page may say about a connection. "Verified" has exactly one source: an authenticated, successful tool call
+// recorded against the grant (lastToolOkAt). Copying a prompt, finishing consent or a health check never sets it, and
+// the page shows when it last happened rather than implying a live link.
+
+export type ConnectionState = "setup_required" | "awaiting_verification" | "verified" | "reauthorization_required" | "revoked" | "unavailable";
+
+export interface GrantFacts {
+  revokedAt: number | null;
+  expiresAt: number;
+  reauthRequired: boolean;
+  /** When an authenticated tool call under this grant last succeeded; null until one has. */
+  lastToolOkAt: number | null;
+}
+
+export function connectionState(input: { provisioned: boolean; grant: GrantFacts | null; now: number }): ConnectionState {
+  const { provisioned, grant, now } = input;
+  if (!provisioned) return "unavailable";
+  if (!grant) return "setup_required";
+  if (grant.revokedAt !== null) return "revoked";
+  if (grant.reauthRequired || grant.expiresAt <= now) return "reauthorization_required";
+  return grant.lastToolOkAt === null ? "awaiting_verification" : "verified";
+}
+
+export const STATE_TEXT: Record<ConnectionState, { label: string; meaning: string }> = {
+  setup_required: { label: "Setup required", meaning: "No assistant is connected. Copy the setup prompt, add WhiteFlow in your assistant, then authorize it." },
+  awaiting_verification: { label: "Authorized, awaiting verification", meaning: "You approved access. It counts as verified only after your assistant makes a successful WhiteFlow request." },
+  verified: { label: "Verified", meaning: "Your assistant made a successful WhiteFlow request at the time shown. This does not mean it is connected right now." },
+  reauthorization_required: { label: "Reauthorization required", meaning: "The permission expired or must be approved again. Authorize WhiteFlow in your assistant to continue." },
+  revoked: { label: "Revoked", meaning: "You disconnected this assistant. It can no longer read or create anything." },
+  unavailable: { label: "Service unavailable", meaning: "The WhiteFlow connection service isn't switched on for this server, so setup can't start yet." },
+};

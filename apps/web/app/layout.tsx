@@ -9,7 +9,7 @@ const instrumentSerif = Instrument_Serif({ variable: "--font-instrument-serif", 
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Merchant Capital+",
+  title: "WhiteFlow",
   description: "Get paid in USDT and raise cash from your future sales.",
 };
 

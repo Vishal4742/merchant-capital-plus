@@ -71,6 +71,8 @@ const nextConfig: NextConfig = {
       // the page that shows a new API key or webhook secret once keeps the strict policy: no outside host to send it to if
       // a script were ever injected (security review 018 F1); it shows no private-reads meter
       { source: "/merchant/developers", headers: csp },
+      // the public AI setup guide loads nothing third-party and creates no grant (batch 058)
+      { source: "/connect", headers: csp },
       // /docs loads nothing third-party either, and hosts "Simulate a payment" (security review 006 F3)
       { source: "/docs", headers: csp },
     ];

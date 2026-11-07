@@ -1,4 +1,5 @@
-// The merchant dashboard's sections (approved gateway v2 design), every one a built screen. Between screens that send the
+// The merchant dashboard's sections (approved gateway v2 design), every one a built screen. The first group is what a
+// merchant does daily (batch 058); everything that was here before is still reachable under More and Developers. Between screens that send the
 // same CSP a link is next/link (a client navigation, the shell prefetched, NFR-13); every other link is a plain <a>, a full
 // load under its own headers (security review 005 F-N4, lib/soft-nav.ts).
 // At phone width the list folds into a <details> menu (no JS); from md up it is the sidebar.
@@ -10,18 +11,19 @@ const SECTIONS = [
   {
     title: null,
     items: [
-      { key: "home", label: "Home", href: "/merchant" },
+      { key: "home", label: "Overview", href: "/merchant" },
+      { key: "links", label: "Payment links", href: "/merchant/links" },
       { key: "payments", label: "Payments", href: "/merchant/payments" },
-      { key: "links", label: "Links", href: "/merchant/links" },
-      { key: "pages", label: "Pages", href: "/merchant/pages" },
-      { key: "invoices", label: "Invoices", href: "/merchant#invoices" },
-      { key: "vouchers", label: "Vouchers", href: "/merchant/vouchers" },
+      { key: "reports", label: "Reports", href: "/merchant/reports" },
+      { key: "ai", label: "AI connections", href: "/merchant/ai" },
     ],
   },
   {
-    title: "Money",
+    title: "More",
     items: [
-      { key: "reports", label: "Reports", href: "/merchant/reports" },
+      { key: "pages", label: "Pages", href: "/merchant/pages" },
+      { key: "invoices", label: "Invoices", href: "/merchant#invoices" },
+      { key: "vouchers", label: "Vouchers", href: "/merchant/vouchers" },
       { key: "settlements", label: "Settlements", href: "/merchant/settlements" },
       { key: "capital", label: "Capital", href: "/merchant/capital" },
     ],

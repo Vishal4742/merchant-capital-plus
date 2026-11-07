@@ -46,7 +46,7 @@ async function LinkLoader({ params, searchParams }: PageProps<"/l/[slug]">) {
     const copy = closedLinkCopy(link.status, link.merchant_name);
     // a paid link shows when it was paid (paid_at); no receipt link, which would let anyone with the link open it
     return (
-      <HostedNotice eyebrow={link.merchant_name} title={copy.title} detail={<LinkSummary link={link} />} action={{ href: "/", label: "About Merchant Capital+" }}>
+      <HostedNotice eyebrow={link.merchant_name} title={copy.title} detail={<LinkSummary link={link} />} action={{ href: "/", label: "About WhiteFlow" }}>
         {copy.body}
       </HostedNotice>
     );

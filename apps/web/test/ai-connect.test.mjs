@@ -95,3 +95,61 @@ test("an unknown client is refused", () => {
 test("examples cover only what the real backend does", () => {
   assert.deepEqual([...MCP_TOOLS_FOR_EXAMPLES].sort(), ["create_payment_link", "get_business_profile", "get_collection_summary", "get_operation_status", "get_payment_link", "list_payments"]);
 });
+
+// ── connection state (batch 058 A2): copying a prompt or finishing consent never reads as Verified ──
+const { connectionState, STATE_TEXT } = await import("../lib/ai-connect.ts");
+const NOW = 1_800_000_000_000;
+const grant = (over = {}) => ({ revokedAt: null, expiresAt: NOW + 86_400_000, reauthRequired: false, lastToolOkAt: null, ...over });
+
+test("state: not provisioned is Service unavailable, whatever else is known", () => {
+  assert.equal(connectionState({ provisioned: false, grant: grant({ lastToolOkAt: NOW - 1 }), now: NOW }), "unavailable");
+});
+
+test("state: provisioned with no grant is Setup required", () => {
+  assert.equal(connectionState({ provisioned: true, grant: null, now: NOW }), "setup_required");
+});
+
+test("state: consent alone is Authorized, awaiting verification, never Verified", () => {
+  assert.equal(connectionState({ provisioned: true, grant: grant(), now: NOW }), "awaiting_verification");
+});
+
+test("state: Verified needs a successful authenticated tool call on that grant", () => {
+  assert.equal(connectionState({ provisioned: true, grant: grant({ lastToolOkAt: NOW - 5_000 }), now: NOW }), "verified");
+});
+
+test("state: revoked, expired and reauthorization-required are never Verified", () => {
+  assert.equal(connectionState({ provisioned: true, grant: grant({ lastToolOkAt: NOW - 1, revokedAt: NOW - 1 }), now: NOW }), "revoked");
+  assert.equal(connectionState({ provisioned: true, grant: grant({ lastToolOkAt: NOW - 1, expiresAt: NOW - 1 }), now: NOW }), "reauthorization_required");
+  assert.equal(connectionState({ provisioned: true, grant: grant({ lastToolOkAt: NOW - 1, reauthRequired: true }), now: NOW }), "reauthorization_required");
+});
+
+test("state text: every state has a label and a meaning that doesn't claim continuous connectivity", () => {
+  assert.deepEqual(Object.keys(STATE_TEXT).sort(), ["awaiting_verification", "reauthorization_required", "revoked", "setup_required", "unavailable", "verified"]);
+  for (const text of Object.values(STATE_TEXT)) assert.doesNotMatch(text.meaning, /\b(always|currently connected|live connection|online)\b/i);
+  assert.equal(STATE_TEXT.verified.label, "Verified");
+});
+
+// ── server config: the page offers setup only when the owner has switched the remote service on ──
+const { aiConnectConfig } = await import("../lib/ai-config.ts");
+const ENV = { WHITEFLOW_MCP_PUBLIC_URL: "https://whiteflow.example/mcp", PUBLIC_ORIGIN: "https://whiteflow.example", WHITEFLOW_MCP_REMOTE: "on" };
+
+test("config: switched on with public https URLs is available, setup page is /connect on the public origin", () => {
+  const c = aiConnectConfig(ENV, "http://localhost:3000");
+  assert.equal(c.available, true);
+  assert.equal(c.mcpUrl, "https://whiteflow.example/mcp");
+  assert.equal(c.setupUrl, "https://whiteflow.example/connect");
+});
+
+test("config: a URL alone is not enough; the owner flag must say the endpoint is deployed", () => {
+  assert.equal(aiConnectConfig({ ...ENV, WHITEFLOW_MCP_REMOTE: undefined }, "https://x.example").available, false);
+  assert.equal(aiConnectConfig({ ...ENV, WHITEFLOW_MCP_REMOTE: "off" }, "https://x.example").available, false);
+});
+
+test("config: missing, http or localhost URLs are unavailable and never fall back to localhost or a sandbox", () => {
+  for (const url of [undefined, "", "http://whiteflow.example/mcp", "https://localhost/mcp"]) {
+    const c = aiConnectConfig({ ...ENV, WHITEFLOW_MCP_PUBLIC_URL: url }, "https://whiteflow.example");
+    assert.equal(c.available, false, String(url));
+    assert.equal(c.mcpUrl, null);
+  }
+  assert.equal(aiConnectConfig({ ...ENV, PUBLIC_ORIGIN: undefined }, "http://localhost:3000").available, false);
+});
