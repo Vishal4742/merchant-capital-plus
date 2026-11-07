@@ -14,7 +14,7 @@ const source = (file) => readFileSync(new URL(`../${file}`, import.meta.url), "u
 const { privyAttempt, endPrivySession, clearPrivyStorage, OPENED_FAILED } = await import("../lib/privy-session.ts");
 const { WALLET_CANCELLED } = await import("../lib/outcome.ts");
 const walletPay = source("components/WalletPay.tsx");
-const PRIVACY_URL = "https://whiteflow-app.vercel.app/docs";
+const PRIVACY_URL = "https://whiteflow.org/docs";
 
 const APP_ID = "clabcdefghij0123456789xyz"; // the shape of a Privy app ID (not a real one)
 const WC_ID = "0123456789abcdef0123456789abcdef"; // the shape of a WalletConnect project ID (not a real one)
