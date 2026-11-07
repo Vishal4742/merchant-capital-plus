@@ -15,7 +15,7 @@ export function Shell({ active, account, children, privateReads = true }: { acti
           {/* a full load: home must not run inside this page's CSP (security review 005 F-N4) */}
           {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
           <a href="/" className="order-1 inline-flex min-h-11 items-center text-[17px] font-medium tracking-[-0.02em] whitespace-nowrap md:mb-3 md:px-2.5 md:text-[19px]">
-            Merchant Capital+
+            WhiteFlow
           </a>
           {account && <div className="order-2 ml-auto flex items-center gap-x-1 text-sm whitespace-nowrap text-ink-muted md:order-4 md:mt-auto md:ml-0 md:flex-wrap md:gap-x-2 md:px-2.5 md:pt-4">{account}</div>}
           {/* the private-read meter (FR-PRIV-3) leads the menu's row at phone width and sits under the wordmark from md up,

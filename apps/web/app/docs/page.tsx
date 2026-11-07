@@ -83,7 +83,7 @@ function TopBar() {
         {/* plain <a>: a full load, so leaving the strict CSP of /docs never carries it to / or /proofs (security R2-F3) */}
         {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- the full load is the point (see above) */}
         <a href="/" className="title inline-flex min-h-11 items-center whitespace-nowrap">
-          Merchant Capital+
+          WhiteFlow
         </a>
         <span className="eyebrow text-ink-muted">Docs</span>
       </span>
