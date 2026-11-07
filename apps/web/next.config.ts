@@ -42,7 +42,7 @@ const nextConfig: NextConfig = {
         "connect-src 'self'",
         "connect-src 'self' blob: https://ethereum-rpc.publicnode.com https://cdn.jsdelivr.net https://unpkg.com https://raw.githubusercontent.com https://validator.nymtech.net wss:",
       ) + "; worker-src blob:";
-    const merchantCsp = [{ key: "Content-Security-Policy", value: merchantPolicy }];
+    const merchantCsp = [{ key: "Content-Security-Policy", value: withPrivy(merchantPolicy) }];
     return [
       {
         source: "/(.*)",
@@ -67,7 +67,7 @@ const nextConfig: NextConfig = {
       { source: "/capital/:path*", headers: merchantCsp },
       // after the rules above: for the same header the last match wins (Next docs, headers)
       { source: "/p/:path*", headers: logoCsp },
-      { source: "/merchant/pages", headers: [{ key: "Content-Security-Policy", value: merchantPolicy.replace("img-src 'self' data:", "img-src 'self' data: https:") }] },
+      { source: "/merchant/pages", headers: [{ key: "Content-Security-Policy", value: withPrivy(merchantPolicy.replace("img-src 'self' data:", "img-src 'self' data: https:")) }] },
       // the page that shows a new API key or webhook secret once keeps the strict policy: no outside host to send it to if
       // a script were ever injected (security review 018 F1); it shows no private-reads meter
       { source: "/merchant/developers", headers: csp },
