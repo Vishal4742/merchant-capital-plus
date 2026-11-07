@@ -67,8 +67,8 @@ Generate secrets without printing them, for example `openssl rand -hex 32 | verc
 ## Order of operations (after approval)
 
 1. Owner (or me, if authorised to run provisioning) creates the Neon project and the two Vercel projects, sets the env above, and creates the GitHub environment `staging` with its secret and variables.
-2. Push `wf/ai-connect` as a branch and open the PR (CI runs; no deployment).
-3. Fast-forward `wf/ai-staging` to it and push: the staging workflow guards, migrates, deploys, smoke-checks.
+2. Push `wf/ai-connect-058` (058 only, merged with current main; see DELIVERY.md §0.3) and open the PR (CI runs; no deployment).
+3. Point `wf/ai-staging` at the same commit and push: the staging workflow guards, migrates, deploys, smoke-checks.
 4. Hosted verification (section below), then client acceptance. `WHITEFLOW_MCP_REMOTE=on` was already staging-only.
 
 ## Hosted verification to run (and record) on staging, not substituted by PGlite

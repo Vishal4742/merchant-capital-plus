@@ -1,5 +1,42 @@
 # Batch 058 delivery: prompt-led AI connection, hosted MCP, OAuth
 
+## 0. Corrections and current state (continuation, 2026-11-07 ~07:45 IST)
+
+The first delivery below is kept as written; these corrections supersede it where they disagree.
+
+- **Commit count.** The first delivery said "9 local commits". It was 10: nine code commits plus the docs commit `c22e498`. The branch has since grown (section 0.2).
+- **"Real Postgres (PGlite)" means in-process Postgres, not a hosted database.** Every database test so far ran on PGlite (Postgres compiled to WASM, inside the test process). That proves the SQL and the compare-and-swap logic. It does **not** prove: connectivity and latency to the hosted Neon database, the Neon HTTP driver's value types in production, behaviour across separate serverless instances, or the migration on a real server. Those are hosted-staging evidence and none exists yet (`STAGING.md`).
+- **Bundle path.** The deployable bundle is now `apps/mcp/api/index.mjs` (the Vercel function), not `dist/index.mjs`; `vercel.json` rewrites every path to it. Built from a clean `git archive` with only `apps/mcp` installed: OK, 3.08 MB. Not yet run on Vercel.
+- **Missing env var.** Web needs `PUBLIC_ORIGIN` (the public https origin); without it `/connect` and `/merchant/ai` say setup is unavailable even when everything else is set (code review M2). Listed in `STAGING.md`.
+- **Base.** PRs #45, #48 and #49 have since merged into main, and main has also merged #55 (name), #43 (Stage 2 port: relayer schema), #57 (logo). The branch inherits only two commits main lacks: batch 057's `e23fa6a` (a sign-in isolation test) and `d87d3ac` (log the relayer's refusal code).
+- **Migration numbering.** Main now has `051_invoice_acks.sql`, `051_webhook_outbox.sql` and `052_rate_limits.sql`. This batch's `051_mcp_remote.sql` keeps its name: main already has two `051_` files, `migrate.mjs` sorts by full name, and the three are independent and idempotent.
+
+### 0.1 Round-1 reviews and fixes
+
+Independent reviewer-security and reviewer-code agents (round 1, `round-1/`) each returned `VERDICT: CHANGES` with one HIGH:
+- **Security H1, consent phishing** (any client could register as "ChatGPT"): fixed. Registration refuses vendor names whose redirects go to another host and strips format characters; the consent screen titles the app by the redirect host, always shows "Access is sent to <host>", and warns for any other host (`describeClient`). Tests on both sides.
+- **Code H1, duplicate link after a journal hiccup** (a failed "done" settle became "refused", so the retry minted a new key): fixed. Recording an outcome is best effort; only a definite refusal from WhiteFlow settles "refused"; anything else stays pending and the retry resumes the same key. Three tests, written red first.
+- Also fixed: issuer byte-identical to the SDK's (`iss` had no trailing slash, so RFC 9207 clients would reject every authorization); assistant link creates need an Idempotency-Key; refresh checks the resource before spending the token and always issues the grant's scopes; the code exchange tolerates the slash; a registered-client cap; a `family_id` index; JournalBusy wording.
+- Round 2 (verification of these fixes) is in `round-2/`.
+
+### 0.2 Branch state and a concurrent writer
+
+- `wf/ai-connect` is 20 commits ahead of and 19 behind `origin/main`. A trial merge with main has 5 conflicts (`merchant/page.tsx`, `dashboard/Nav.tsx`, `landing/Hero.tsx`, `lib/relay.ts`, `test/gw-helpers.mjs`). Not merged yet (see below).
+- **Another agent is writing in this same worktree** under batch `059-P5-real-frontend` (claude-frontend lane): it moved `.batches/ACTIVE`, committed `3bb8613` and `a9f3c3b`, and also committed a snapshot of this batch's uncommitted round-1 fixes as `0992bb9` (content verified, but not made by this session). It is not a session I can message (the two reachable sessions are other batches). The merge with main touches files it is editing, so I have not merged; resolving conflicts under a live writer risks committing conflict markers. **It needs its own worktree.**
+- Its landing change breaks one existing test (`test/capital-entry.test.mjs`, part-funded invoice card); not this batch's code.
+
+### 0.3 Recommended landing sequence (no history rewritten or discarded)
+
+1. Move batch 059 to its own worktree and branch (its two commits stay where they are; it continues from its own branch).
+2. Merge `origin/main` into `wf/ai-connect` once nothing else writes there; resolve the 5 conflicts; rerun all suites.
+3. Open **one PR for batch 058** from a branch that carries only 058 (plus the two 057 commits, which are small and were part of the verified base): `wf/ai-connect-058`, created from `0992bb9` with `28eb86a` and `42d83cb` cherry-picked (new commits; `wf/ai-connect` itself is untouched), then merged with main.
+4. Batch 059 opens its own PR afterwards, from its branch on top of 058 (its commits build on 058's UI).
+5. The production go-live switch (`vars.VERCEL_MCP_PROJECT_ID`, `WHITEFLOW_MCP_REMOTE` on production web) is a separate, later approval.
+
+---
+
+Original delivery (2026-11-07 06:39), unchanged below except where section 0 corrects it.
+
 Branch `wf/ai-connect` (worktree `P:\wf-ai`), 9 local commits on `wf/int-testnet-e2e@d87d3ac`. **Nothing is pushed, merged, deployed or migrated.**
 
 ## 1. What is verified and what is not
