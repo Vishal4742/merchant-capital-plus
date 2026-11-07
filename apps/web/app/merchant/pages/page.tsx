@@ -10,7 +10,7 @@ import { authSecret } from "@/lib/auth";
 import { publicOrigin } from "@/lib/config";
 import { merchantPages, originOf, readFailure } from "@/lib/gateway-server";
 import { currentMerchant } from "@/lib/merchant-session";
-import { merchantName } from "@/lib/server/http";
+import { merchantName, merchantVerified } from "@/lib/server/http";
 
 const header = (
   <EditorialHeader label="Payment pages" lede="Your logo, your colour, your items. Customers pick what they want on one page and pay on the hosted checkout.">
@@ -50,7 +50,7 @@ async function Pages() {
           <Problem>{result.error}</Problem>
         </div>
       ) : (
-        <PagesScreen pages={result.pages} origin={publicOrigin(originOf(h))} merchantName={merchantName(merchant)} />
+        <PagesScreen pages={result.pages} origin={publicOrigin(originOf(h))} merchantName={merchantName(merchant)} merchantVerified={merchantVerified(merchant)} />
       )}
     </Shell>
   );
