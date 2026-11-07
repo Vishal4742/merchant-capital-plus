@@ -2,6 +2,8 @@
 # Builds whiteflow.mcpb from the checked-out commit, refuses an archive that holds a key-shaped string, attests it
 # (SLSA build provenance and its CycloneDX SBOM, signed by Sigstore through GitHub artifact attestations) and uploads it
 # with its checksums. This is provenance, not an MCPB signature: see packages/mcp/RELEASE.md.
+# Two jobs, so dependency code never runs next to the OIDC token (review 055 M2): `build` runs npm with contents: read
+# only; `attest` holds id-token: write and runs no npm or node, only the artifact and attest actions.
 # Not a required check, and ci.yml is unchanged.
 name: mcpb-release
 on:
@@ -16,13 +18,11 @@ concurrency:
   cancel-in-progress: false   # never cancel a release build halfway through its attestations
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest   # GitHub-hosted only: gh attestation verify --deny-self-hosted-runners relies on it
     timeout-minutes: 20
     permissions:
       contents: read
-      id-token: write       # the OIDC token Sigstore exchanges for a short-lived signing certificate
-      attestations: write   # stores the attestations on this repository
     defaults:
       run:
         working-directory: packages/mcp
@@ -69,17 +69,42 @@ jobs:
           fi
           echo "no key-shaped strings in $(find "$out" -type f | wc -l) files"
           cp "$out/sbom.cdx.json" dist/whiteflow.mcpb.sbom.cdx.json   # attest the SBOM that ships, not a rebuild
+      - name: Hand the checked archive to the attest job
+        uses: actions/upload-artifact@v7
+        with:
+          name: whiteflow-mcpb-unattested-${{ github.sha }}
+          path: |
+            packages/mcp/dist/whiteflow.mcpb
+            packages/mcp/dist/whiteflow.mcpb.sha256
+            packages/mcp/dist/whiteflow.mcpb.contents.sha256
+            packages/mcp/dist/whiteflow.mcpb.sbom.cdx.json
+          if-no-files-found: error
+          retention-days: 1
+
+  attest:
+    needs: build
+    runs-on: ubuntu-latest   # GitHub-hosted only, as above
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write       # the OIDC token Sigstore exchanges for a short-lived signing certificate
+      attestations: write   # stores the attestations on this repository
+    steps:   # no checkout, npm or node: nothing from the repository or its dependencies runs here
+      - uses: actions/download-artifact@v8
+        with:
+          name: whiteflow-mcpb-unattested-${{ github.sha }}
+          path: dist
       - name: Attest build provenance (SLSA)
         id: provenance
         uses: actions/attest@v4
         with:
-          subject-path: packages/mcp/dist/whiteflow.mcpb
+          subject-path: dist/whiteflow.mcpb
       - name: Attest the SBOM (CycloneDX)
         id: sbom
         uses: actions/attest@v4
         with:
-          subject-path: packages/mcp/dist/whiteflow.mcpb
-          sbom-path: packages/mcp/dist/whiteflow.mcpb.sbom.cdx.json
+          subject-path: dist/whiteflow.mcpb
+          sbom-path: dist/whiteflow.mcpb.sbom.cdx.json
       - name: Keep the Sigstore bundles next to the archive
         env:
           PROVENANCE_BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
@@ -91,11 +116,11 @@ jobs:
         with:
           name: whiteflow-mcpb-${{ github.sha }}
           path: |
-            packages/mcp/dist/whiteflow.mcpb
-            packages/mcp/dist/whiteflow.mcpb.sha256
-            packages/mcp/dist/whiteflow.mcpb.contents.sha256
-            packages/mcp/dist/whiteflow.mcpb.sbom.cdx.json
-            packages/mcp/dist/whiteflow.mcpb.provenance.sigstore.json
-            packages/mcp/dist/whiteflow.mcpb.sbom.sigstore.json
+            dist/whiteflow.mcpb
+            dist/whiteflow.mcpb.sha256
+            dist/whiteflow.mcpb.contents.sha256
+            dist/whiteflow.mcpb.sbom.cdx.json
+            dist/whiteflow.mcpb.provenance.sigstore.json
+            dist/whiteflow.mcpb.sbom.sigstore.json
           if-no-files-found: error
           retention-days: 90
