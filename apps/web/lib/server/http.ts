@@ -46,7 +46,11 @@ export async function handle(run: () => Promise<Response>): Promise<Response> {
 
 /** The request body as a JSON object, at most `maxBytes`. */
 export async function readJson(request: Request, maxBytes = 16_384): Promise<Record<string, unknown>> {
-  const text = await request.text();
+  return jsonObject(await request.text(), maxBytes);
+}
+
+/** A body already read as text (a route that also hashes it for Idempotency-Key, batch 052) → a JSON object. */
+export function jsonObject(text: string, maxBytes = 16_384): Record<string, unknown> {
   if (text.length > maxBytes) throw new HttpError(413, "That request is too large.");
   let body: unknown;
   try {
@@ -113,6 +117,13 @@ export function merchantName(merchant: Address): string {
   const config = merchantConfig();
   if (config && config.merchant.toLowerCase() === merchant.toLowerCase()) return config.merchantName;
   return `${merchant.slice(0, 6)}…${merchant.slice(-4)}`;
+}
+
+/** Whether the pay pages show this shop's verified tick: only for a shop we actually checked (SRS v3.0 FR-BIZ-5), as a
+ * name is the merchant's own text. ponytail: one checked shop today, the operator's configured MERCHANT_ADDRESS; a
+ * per-merchant flag (World ID, FR-WLD-1, or business checks) replaces this body when it exists. */
+export function merchantVerified(merchant: string): boolean {
+  return merchantConfig()?.merchant.toLowerCase() === merchant.toLowerCase();
 }
 
 export const newId = (prefix: string) => `${prefix}_${randomBytes(12).toString("base64url")}`;

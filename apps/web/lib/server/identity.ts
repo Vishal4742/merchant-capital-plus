@@ -40,8 +40,9 @@ export const ROLE_SCOPES: Readonly<Record<Role, ReadonlySet<Scope>>> = {
   viewer: new Set<Scope>(["account:read", "invoices:read", "payments:read"]),
 };
 
-/** R2-1: API keys carry a fixed scope set; they never manage members, policy, keys or the business. */
-export const SECRET_KEY_SCOPES: ReadonlySet<Scope> = new Set<Scope>(["checkout:create", "payments:read", "invoices:read", "webhooks:manage"]);
+/** R2-1: API keys carry a fixed scope set; they never manage members, policy, keys or the business. invoices:draft
+ *  (approved, R2-1): main's assistant connector creates payment links with a secret key (POST /api/v1/links). */
+export const SECRET_KEY_SCOPES: ReadonlySet<Scope> = new Set<Scope>(["checkout:create", "payments:read", "invoices:read", "invoices:draft", "webhooks:manage"]);
 
 /** The signed-in person: a Privy user (FR-BIZ-6 v3.1), never a wallet. `wallets` are the external wallets Privy verified
  *  for them (lowercase); only these can sign an Owner's policy approval. */

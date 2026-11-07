@@ -35,6 +35,7 @@ const NOT_SIGNER = "That signature isn't from this wallet. Sign with the merchan
 const BAD_SIGNATURE = "That signature isn't valid.";
 const OBLIGATIONS_DOWN = "We couldn't check this wallet's Capital obligations, so nothing was linked. Try again in a minute.";
 const KEY_NOT_LINKED = "This API key's merchant account isn't linked to a WhiteFlow workspace yet. An Owner can link it in Settings.";
+const PK_FORBIDDEN = "A publishable key (pk_test_…) can't do this: use your secret key (sk_test_…), on your server only.";
 
 type OwnerContext = AuthContext & { principalId: string; businessId: string };
 function ownerContext(ctx: AuthContext): OwnerContext {
@@ -239,9 +240,15 @@ const SAFE_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD", "OPTIONS"]);
 
 /** v1 gateway routes after the cutover (032 R2-1): the caller's workspace role must hold `scope`, and the workspace
  *  must have linked a legacy merchant wallet (409 otherwise). Unsafe methods also require our own origin (CSRF).
- *  `secretKey: true` (webhooks GET/POST only) also takes a live sk_ key whose merchant is linked to a workspace. */
-export async function legacyAccess(request: Request, scope: Scope, { secretKey = false }: { secretKey?: boolean } = {}): Promise<LegacyCaller> {
-  if (secretKey && (request.headers.get("authorization") ?? "").startsWith("Bearer ")) return keyAccess(request, scope);
+ *  `secretKey: true` also takes a live sk_ key whose merchant is linked to a workspace: webhooks GET/POST, and main's
+ *  connector routes (batch 052/054: links, links/{id}, reports, account, operations), which also pass
+ *  `publishableForbidden` so a live pk_ key gets their 403 "use your secret key" instead of webhooks' 401. */
+export async function legacyAccess(
+  request: Request,
+  scope: Scope,
+  { secretKey = false, publishableForbidden = false }: { secretKey?: boolean; publishableForbidden?: boolean } = {},
+): Promise<LegacyCaller> {
+  if (secretKey && (request.headers.get("authorization") ?? "").startsWith("Bearer ")) return keyAccess(request, scope, publishableForbidden);
   // CSRF only matters when the browser sends the session cookie; without one the caller is simply not signed in (401)
   const csrf = !SAFE_METHODS.has(request.method.toUpperCase()) && cookieFrom(request, WF_SESSION_COOKIE) !== undefined;
   const ctx = csrf ? await mutationContext(request) : await contextFromRequest(request);
@@ -251,8 +258,10 @@ export async function legacyAccess(request: Request, scope: Scope, { secretKey =
   return { ctx, merchant };
 }
 
-async function keyAccess(request: Request, scope: Scope): Promise<LegacyCaller> {
+async function keyAccess(request: Request, scope: Scope, publishableForbidden: boolean): Promise<LegacyCaller> {
   const key = await authenticateKey(request);
+  // a pk_ key ships to browsers, so it never reads or creates merchant records (main's batch 052)
+  if (key?.kind === "pk" && publishableForbidden) throw new Forbidden(PK_FORBIDDEN);
   if (!key || key.kind !== "sk") throw new AuthError("Sign in to your WhiteFlow workspace, or send your secret API key.");
   if (!SECRET_KEY_SCOPES.has(scope)) throw new Forbidden("API keys can't do that.");
   if (key.businessId === null) throw new HttpError(409, KEY_NOT_LINKED);

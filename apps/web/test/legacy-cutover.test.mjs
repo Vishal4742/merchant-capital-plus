@@ -41,7 +41,13 @@ const ROUTES = [
   ["reports.csv GET", "reports.csv", "GET", "/api/v1/reports.csv?from=2026-11-05&to=2026-11-05", ALL],
   ["settlements GET", "settlements", "GET", "/api/v1/settlements?from=2026-11-05&to=2026-11-05", ALL],
   ["capital/merchant GET", "capital/merchant", "GET", "/api/v1/capital/merchant", ALL],
+  // main's assistant-connector routes (batch 052/054), cut over in the merge: invoices:read
+  ["links/[id] GET", "links/[id]", "GET", "/api/v1/links/lnk_nope", ALL, undefined, { id: "lnk_nope" }],
+  ["account GET", "account", "GET", "/api/v1/account", ALL],
+  ["operations GET", "operations/[key]", "GET", "/api/v1/operations/op-nope", ALL, undefined, { key: "op-nope" }],
 ];
+// the routes a linked sk_ key reaches: webhooks GET/POST (051) and main's connector routes (batch 052/054)
+const KEY_ROUTES = new Set(["webhooks GET", "webhooks POST", "links POST", "links GET", "links/[id] GET", "reports GET", "account GET", "operations GET"]);
 const allows = (cls, role) => cls === ALL || role === "owner" || (cls === DRAFT && role === "operator");
 
 async function hit([, folder, method, url, , body, p], headers) {
@@ -127,9 +133,17 @@ test("keys: a linked sk_ key manages its own workspace's webhooks; unlinked sk_ 
   assert.equal((await hooks.GET(req("GET", "/api/v1/webhooks", { headers: bearer(pk.key) }))).status, 401);
   assert.equal((await hooks.GET(req("GET", "/api/v1/webhooks", { headers: bearer("sk_test_nope") }))).status, 401);
 
-  // only webhooks GET/POST take a key: everything else still needs a signed-in member
-  for (const r of ROUTES.filter(([label]) => !label.startsWith("webhooks GET") && !label.startsWith("webhooks POST"))) {
+  // only the key routes take a key: everything else still needs a signed-in member
+  for (const r of ROUTES.filter(([label]) => !KEY_ROUTES.has(label))) {
     assert.equal((await hit(r, { ...bearer(key), origin: ORIGIN })).status, 401, `${r[0]} with a secret key`);
+  }
+  // main's connector routes reach their service with the linked key (links POST: 400, it needs an Idempotency-Key), and
+  // answer a publishable key 403 (batch 052), where webhooks keep the 401 above
+  for (const r of ROUTES.filter(([label]) => KEY_ROUTES.has(label) && !label.startsWith("webhooks"))) {
+    const { status, text } = await hit(r, { ...bearer(key), origin: ORIGIN });
+    assert.ok(![401, 403, 409, 500].includes(status), `${r[0]} with a secret key: ${status} ${text}`);
+    assert.equal((await hit(r, { ...bearer(pk.key), origin: ORIGIN })).status, 403, `${r[0]} with a publishable key`);
+    assert.equal((await hit(r, { ...bearer(loose.key), origin: ORIGIN })).status, 409, `${r[0]} with an unlinked key`);
   }
 });
 
