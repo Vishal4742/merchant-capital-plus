@@ -1,6 +1,7 @@
 // Server-only settings, read from the environment (never NEXT_PUBLIC_: none of these go to the browser).
 import { createHash, timingSafeEqual } from "node:crypto";
 import { isAddress, type Address } from "viem";
+import { SLUG } from "./gateway-client.ts";
 
 export interface MerchantConfig {
   merchant: Address;
@@ -43,4 +44,12 @@ export function publicOrigin(fallback: string): string {
   if (!configured || !URL.canParse(configured)) return fallback;
   const url = new URL(configured);
   return url.protocol === "https:" || url.protocol === "http:" ? url.origin : fallback;
+}
+
+/** The landing's working examples (batch 062): the demo shop's payment link and page by slug (DEMO_LINK_SLUG,
+ *  DEMO_PAGE_SLUG; null when unset or not a slug, and the tiles then stay plain drawings) and the site's origin for the
+ *  copied URL and the button snippet. Read at build time: the home page is prerendered. */
+export function landingDemo(): { origin: string; link: string | null; page: string | null } {
+  const slug = (value: string | undefined) => (value && SLUG.test(value) ? value : null);
+  return { origin: publicOrigin("https://whiteflow.org"), link: slug(process.env.DEMO_LINK_SLUG), page: slug(process.env.DEMO_PAGE_SLUG) };
 }

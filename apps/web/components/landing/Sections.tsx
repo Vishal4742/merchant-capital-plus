@@ -2,6 +2,8 @@
 // the "$" poster, the stat reveal and the quote's lock timer are the only islands.
 // Code samples use the real SDK names from /docs, not the design's placeholders.
 import { buttonClasses } from "@/components/Button";
+import { CopyButton } from "@/components/CopyButton";
+import { landingDemo } from "@/lib/config";
 import { mulberry32 } from "@/lib/dither";
 import { Glyph } from "./Glyph";
 import { LockTimer, RevealOnView } from "./Live";
@@ -18,9 +20,24 @@ function qrPath(): string {
   }
   return d;
 }
-const QR_PATH = qrPath();
+const QR_PATH = qrPath(); // a drawing, shown only when no demo link is configured (batch 062)
+
+/** The payment-page tile's preview: the demo shop's name and items. */
+const MiniPage = () => (
+  <>
+    <div className="bar" />
+    <div className="in">
+      <b>Bandra Beans</b>
+      <span className="num muted">Cold brew · 5.00 &nbsp; Croissant · 3.50</span>
+    </div>
+  </>
+);
 
 export function Accept() {
+  // working examples when the demo link and page are configured; plain drawings otherwise (batch 062)
+  const demo = landingDemo();
+  const linkUrl = demo.link && `${demo.origin}/l/${demo.link}`;
+  const host = new URL(demo.origin).host;
   return (
     <section className="lp-ed" id="accept">
       <div className="wrap">
@@ -37,10 +54,16 @@ export function Accept() {
             <p>An amount, a currency, a link. Send it in a chat; it works once or every time.</p>
             <div className="obj">
               <div className="lp-linkpill">
-                <span>pay.mc/l/cold-brew</span>
-                <span className="copy" aria-hidden="true">
-                  Copy
-                </span>
+                {linkUrl ? (
+                  <>
+                    <a href={linkUrl} className="min-w-0 truncate">
+                      {host}/l/{demo.link}
+                    </a>
+                    <CopyButton text={linkUrl} name="the demo payment link" className="copy" />
+                  </>
+                ) : (
+                  <span className="min-w-0 truncate">{host}/l/cold-brew</span>
+                )}
               </div>
             </div>
           </div>
@@ -48,35 +71,46 @@ export function Accept() {
             <span className="n" aria-hidden="true">02</span>
             <h3>Payment pages</h3>
             <p>Your logo, your colour, your items. A shop page without a shop.</p>
-            <div className="obj lp-minipage">
-              <div className="bar" />
-              <div className="in">
-                <b>Bandra Beans</b>
-                <span className="num muted">Cold brew · 5.00 &nbsp; Croissant · 3.50</span>
+            {demo.page ? (
+              <a href={`/p/${demo.page}`} className="obj lp-minipage" aria-label="Open the demo payment page">
+                <MiniPage />
+              </a>
+            ) : (
+              <div className="obj lp-minipage">
+                <MiniPage />
               </div>
-            </div>
+            )}
           </div>
           <div className="rv">
             <span className="n" aria-hidden="true">03</span>
             <h3>QR at the counter</h3>
             <p>Every link and page prints as a QR. Customers scan, hold, done.</p>
-            <div className="obj lp-qr">
-              <svg viewBox="0 0 25 25" shapeRendering="crispEdges" role="img" aria-label="Example QR code">
-                <path d={QR_PATH} fill="currentColor" fillRule="evenodd" />
-                <rect x="10" y="10" width="5" height="5" fill="var(--scene-dot)" />
-              </svg>
-            </div>
+            {linkUrl ? (
+              // the real QR of the demo link, drawn by our /qr route (lib/qr.ts); a phone camera opens the link
+              <a href={linkUrl} className="obj lp-qr">
+                {/* eslint-disable-next-line @next/next/no-img-element -- a same-origin SVG, no optimisation to do */}
+                <img src={`/qr/l/${demo.link}`} alt="QR code for the demo payment link" width={108} height={108} loading="lazy" />
+              </a>
+            ) : (
+              <div className="obj lp-qr" aria-hidden="true">
+                <svg viewBox="0 0 25 25" shapeRendering="crispEdges">
+                  <path d={QR_PATH} fill="currentColor" fillRule="evenodd" />
+                  <rect x="10" y="10" width="5" height="5" fill="var(--scene-dot)" />
+                </svg>
+              </div>
+            )}
           </div>
           <div className="rv">
             <span className="n" aria-hidden="true">04</span>
             <h3>A one-line button</h3>
             <p>Paste one tag into any site. It opens the same hosted checkout.</p>
-            <div className="obj">
+            <div className="obj grid gap-1">
               <pre className="code">
-                <span className="k">&lt;script</span> src=<span className="s">&quot;…/v1/button.js&quot;</span>
-                {"\n  "}data-link=<span className="s">&quot;cold-brew&quot;</span>
+                <span className="k">&lt;script</span> src=<span className="s">&quot;{demo.origin}/v1/button.js&quot;</span>
+                {"\n  "}data-link=<span className="s">&quot;{demo.link ?? "your-link"}&quot;</span>
                 <span className="k">&gt;&lt;/script&gt;</span>
               </pre>
+              {demo.link && <CopyButton text={`<script src="${demo.origin}/v1/button.js" data-link="${demo.link}"></script>`} name="the button snippet" />}
             </div>
           </div>
         </div>
