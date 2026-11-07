@@ -1,8 +1,8 @@
 // Shared pieces of the WhiteFlow gateway screens:
 // Editorial header, card styles, input field tokens, account badges, and signed-out states.
 import type { ReactNode } from "react";
-import { SignIn, SignOut } from "@/components/merchant/SignIn";
 import { WhiteFlowWordmark } from "@/components/WhiteFlowLogo";
+import { LegacyAccess, WorkspaceSignOut } from "@/components/workspace/LegacyAccess";
 
 export const card = "grid min-w-0 content-start gap-4 rounded-[16px] border border-hairline bg-surface p-5 md:p-6 shadow-card";
 export const field = "h-11 w-full min-w-0 rounded-[8px] border border-hairline bg-surface px-3 text-ink text-sm focus:border-accent focus:ring-1 focus:ring-accent transition-colors";
@@ -61,7 +61,7 @@ export function Account({ merchant }: { merchant: string }) {
       <span className="data text-xs font-mono text-ink bg-surface-sunk px-2 py-1 rounded-[6px] border border-hairline">
         {merchant.slice(0, 6)}…{merchant.slice(-4)}
       </span>
-      <SignOut />
+      <WorkspaceSignOut />
     </div>
   );
 }
@@ -91,8 +91,11 @@ const GETS = [
   ["AI & Developer Ready", "Access through your dashboard, API keys, webhooks, or Model Context Protocol (MCP)."],
 ] as const;
 
-/** Every dashboard page, signed out: what a business gets, and the three steps to sign in. */
-export function SignedOut({ available }: { available: boolean }) {
+/** Every dashboard page without a linked workspace (batch 051): what a business gets, and the way in: WhiteFlow
+ *  sign-in, a workspace, then an Owner links the merchant wallet (LegacyAccess). `available` (the retired wallet
+ *  cookie's secret) is ignored; the SIWE cleanup batch removes it from the pages. */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function SignedOut(props: { available?: boolean }) {
   return (
     <PlainPage>
       <div className="mt-8 grid gap-8 md:mt-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:grid-rows-[auto_1fr] lg:gap-x-16 lg:gap-y-8">
@@ -104,17 +107,17 @@ export function SignedOut({ available }: { available: boolean }) {
             One invoice. <span className="text-accent">Clear settlement.</span>
           </h1>
           <p className="max-w-[48ch] text-sm text-ink-muted leading-relaxed">
-            Request business payments, accept supported crypto, and receive exact USDT settlement in your Whitechain wallet. Connect with your receiving wallet to start.
+            Request business payments, accept supported crypto, and receive exact USDT settlement in your Whitechain wallet. Sign in to WhiteFlow to start.
           </p>
         </div>
         <section aria-labelledby="setup" className={`${card} gap-3 shadow-card lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-start`}>
           <h2 id="setup" className="text-base font-semibold text-ink">
-            Connect receiving wallet
+            Open your workspace
           </h2>
           <p className="text-xs text-ink-muted">
-            Sign in with the wallet that will receive invoice settlements on Whitechain testnet.
+            Already used the dashboard with your wallet? Sign in to WhiteFlow, then link that wallet once: your links, keys and payments come with it.
           </p>
-          <SignIn available={available} />
+          <LegacyAccess />
           <div className="grid gap-2 border-t border-hairline pt-4">
             <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
               <form method="post" action="/api/demo-checkout">

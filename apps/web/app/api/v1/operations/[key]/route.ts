@@ -2,16 +2,18 @@
 // (batch 054, FR-MCP-15; production review F2: an assistant can resolve an unknown outcome instead of guessing). Links
 // and checkouts share the slot table: "links:<merchant>:<key>" and "<merchant>:<key>". Session or secret key; another
 // merchant's key, an unknown one or one older than the 24-hour retention is a 404.
+// Batch 051 R2-1 invoices:read (any member, or the linked workspace's secret key; pk_ 403): the read side of the link
+// writes it reports on; the reply is only status, time and the created id, so payments:read's money figures aren't needed.
 import { HttpError, handle, ok } from "../../../../../lib/server/http.ts";
 import { query } from "../../../../../lib/server/db.ts";
 import { ABANDONED_MS, IDEMPOTENCY_MS, MAX_IDEMPOTENCY_KEY } from "../../../../../lib/server/idempotency.ts";
-import { callerMerchant } from "../../../../../lib/server/keys.ts";
+import { legacyAccess } from "../../../../../lib/server/legacy.ts";
 
 const NOT_FOUND = "No operation with that Idempotency-Key for this merchant (or it is older than 24 hours).";
 
 export async function GET(request: Request, { params }: { params: Promise<{ key: string }> }) {
   return handle(async () => {
-    const { merchant } = await callerMerchant(request);
+    const { merchant } = await legacyAccess(request, "invoices:read", { secretKey: true, publishableForbidden: true });
     const { key } = await params;
     if (!key || key.length > MAX_IDEMPOTENCY_KEY) throw new HttpError(404, NOT_FOUND);
     const m = merchant.toLowerCase();

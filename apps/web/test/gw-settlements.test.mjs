@@ -4,11 +4,12 @@
 import { test, beforeEach, afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import { encodeAbiParameters, encodeEventTopics, parseAbi, toHex } from "viem";
-import { MERCHANT, OTHER_MERCHANT, req, signedIn } from "./gw-helpers.mjs";
+import { MERCHANT, OTHER_MERCHANT, req, setupDb, signedIn } from "./gw-helpers.mjs";
 
 const MERCHANT_PAY = "0xab817593253a0a37de723072827d88fe0ca54251";
 process.env.MERCHANT_PAY_ADDRESS = MERCHANT_PAY;
 process.env.RELAYER_URL = "https://relayer.test";
+await setupDb(); // batch 051: the signed-in workspace (who the merchant is) lives in the database
 
 // the wallet's USDT balance is a chain read (lib/onchain.ts has its own tests)
 const balanceReads = [];

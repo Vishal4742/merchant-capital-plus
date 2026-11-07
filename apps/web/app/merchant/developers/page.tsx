@@ -8,10 +8,9 @@ import { ApiKeys, type KeyRow } from "@/components/gateway/ApiKeys";
 import { Account, EditorialHeader, Problem, SignedOut } from "@/components/gateway/Frame";
 import { Setup } from "@/components/gateway/Setup";
 import { Webhooks, type WebhookRow } from "@/components/gateway/Webhooks";
-import { authSecret } from "@/lib/auth";
 import { keyOf, setupSteps, webhookOf } from "@/lib/gateway-dev";
 import { readFailure } from "@/lib/gateway-server";
-import { currentMerchant } from "@/lib/merchant-session";
+import { currentWorkspace } from "@/lib/merchant-session";
 import { keyJson, listKeys } from "@/lib/server/keys";
 import { deliveredEvents, listWebhooks } from "@/lib/server/webhooks";
 
@@ -72,8 +71,18 @@ async function read(merchant: `0x${string}`): Promise<{ keys: Read<KeyRow>; webh
 
 async function Developers() {
   await connection(); // live data on every request, never a build-time snapshot
-  const merchant = await currentMerchant();
-  if (!merchant) return <SignedOut available={Boolean(authSecret())} />;
+  const workspace = await currentWorkspace();
+  if (!workspace) return <SignedOut />;
+  const { merchant } = workspace;
+  // batch 051 (032 R2-1): keys and webhooks are Owner-only, on this page as in the API
+  if (!workspace.scopes.has("keys:manage")) {
+    return (
+      <Shell active="keys" privateReads={false} account={<Account merchant={merchant} />}>
+        {header}
+        <p className="px-4 py-6 text-ink-muted md:px-8">Only Owners can see API keys and webhooks.</p>
+      </Shell>
+    );
+  }
   const { keys, webhooks } = await read(merchant);
   return (
     <Shell active="keys" privateReads={false} account={<Account merchant={merchant} />}>

@@ -5,7 +5,8 @@
 import { test, before, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import dns from "node:dns/promises";
-import { setupDb, resetDb, signedIn, req, params, MERCHANT } from "./gw-helpers.mjs";
+// batch 051: this file wraps setTestDb itself (crash injection), so it seeds the signed-in workspace explicitly
+import { setupDb, resetDb, seedWorkspace, req, params, MERCHANT } from "./gw-helpers.mjs";
 
 const { setTestDb, query } = await import("../lib/server/db.ts");
 const { onSessionPaid, eventIdFor } = await import("../lib/server/events.ts");
@@ -288,7 +289,7 @@ test("A4: a delivery whose lease is live is skipped by dispatch and refused by r
   // another instance is attempting it right now
   await query("UPDATE app_gw_deliveries SET leased_until = $2 WHERE id = $1", [d.id, Date.now() + MIN]);
   assert.equal(await dispatchDue(Date.now()), 0, "dispatch skips a leased delivery");
-  const res = await replay(req("POST", `/api/v1/webhooks/deliveries/${d.id}/replay`, { headers: signedIn() }), params({ id: d.id }));
+  const res = await replay(req("POST", `/api/v1/webhooks/deliveries/${d.id}/replay`, { headers: (await seedWorkspace()).headers }), params({ id: d.id }));
   assert.equal(res.status, 409);
   assert.equal(calls.length, 0, "nothing sent twice");
 });
@@ -299,7 +300,7 @@ test("A5: a failed replay of a delivered event keeps it succeeded and schedules 
   const [d] = await deliveries();
   assert.equal(d.status, "succeeded");
   reply = async () => new Response("", { status: 500 });
-  const res = await replay(req("POST", `/api/v1/webhooks/deliveries/${d.id}/replay`, { headers: signedIn() }), params({ id: d.id }));
+  const res = await replay(req("POST", `/api/v1/webhooks/deliveries/${d.id}/replay`, { headers: (await seedWorkspace()).headers }), params({ id: d.id }));
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.deepEqual([body.status, body.attempts, body.response_status, body.next_attempt_at], ["succeeded", 2, 500, null]);
