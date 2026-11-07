@@ -5,8 +5,8 @@ name: deploy
 # allows 100 deployments a day and every push used to create 3.
 #
 # After main changes it waits for a quiet spell: a later push cancels this run, so a
-# burst of merges deploys once. Then it starts a build of main (deploy hook) only for
-# the projects whose folders changed since the last successful run.
+# burst of merges deploys once. Then it builds main here and deploys it (prebuilt) to
+# production, only for the projects whose folders changed since the last successful run.
 on:
   push:
     branches: [main]
@@ -37,11 +37,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
       - name: Deploy the projects that changed
         env:
           GH_TOKEN: ${{ github.token }}
           FORCE: ${{ inputs.force && '1' || '0' }}
-          HOOK_WEB: ${{ secrets.VERCEL_HOOK_WEB }}
-          HOOK_RELAYER: ${{ secrets.VERCEL_HOOK_RELAYER }}
-          HOOK_SHOP: ${{ secrets.VERCEL_HOOK_SHOP }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: bash tools/vercel-deploy.sh
