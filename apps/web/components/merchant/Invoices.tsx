@@ -229,7 +229,7 @@ function NewInvoice({ merchant, merchantPay, today, feeText, notesKey: key }: Om
         Your wallet sends the invoice and pays a small WBT fee. Your customer adds {feeText ? `a ${feeText} USDT` : "a small"} payment fee on top, so you get the invoice amount in full. The customer and label stay in
         this browser and are never sent anywhere.
         <span className="block">
-          A customer wallet, if you add one, goes on chain with the invoice: only that wallet can then acknowledge it, and investors see &quot;Named customer wallet acknowledged&quot;.
+          A customer wallet, if you add one, goes on chain with the invoice: only that wallet can then acknowledge it, and investors see &quot;Acknowledged by the wallet the merchant named&quot;. Investors don&apos;t see other wallets&apos; acknowledgements.
         </span>
       </p>
       {error && (

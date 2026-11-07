@@ -1,7 +1,8 @@
 // FR-INV-8 (batch 047): an invoice's acknowledgement, for investors (the offer book) and the merchant. Only the customer
-// wallet the invoice names on chain earns the checked label (security 047 H1); the shop chooses that wallet, so it says
-// "named customer wallet", never "debtor" (re-review). Any other ack is an unchecked wallet's. `debtor` is the short
-// address our server sends, never the signature; the time is when our server accepted it.
+// wallet the invoice names on chain is verified (security 047 H1), and the offer book shows only that one. The merchant
+// chooses that wallet and could name a second wallet of its own, so the label states the fact in neutral ink: no tick,
+// no success colour, never "debtor" (round 2). Any other ack is an unchecked wallet's. `debtor` is the short address our
+// server sends, never the signature; the time is when our server accepted it.
 import { istDateTime } from "@/components/capital/investor/format";
 import type { DebtorAckView } from "@/lib/server/invoice-acks";
 
@@ -16,8 +17,8 @@ export function DebtorAck({ ack }: { ack: DebtorAckView | null }) {
   const more = ack.count > 1 ? ` · ${ackCount(ack.count)} acknowledgements` : "";
   if (ack.verified) {
     return (
-      <span className="block text-xs text-positive">
-        Named customer wallet acknowledged ✓ <span className="data">{ack.debtor}</span> · {time}
+      <span className="block text-xs text-ink">
+        Acknowledged by the wallet the merchant named · <span className="data">{ack.debtor}</span> · {time}
         {more}
       </span>
     );

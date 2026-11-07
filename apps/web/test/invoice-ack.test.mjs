@@ -1,7 +1,8 @@
 // Batch 047 (FR-INV-8, FR-ARK-4): the debtor acknowledges an invoice with an EIP-712 message (no transaction, no money),
 // POST /api/v1/invoices/:id/acknowledge checks it against the invoice our server reads on chain and keeps each key's
-// first ack (at most 5 unchecked ones), and the offer book shows it honestly: "Named customer wallet acknowledged ✓"
-// only when the invoice names that wallet on chain (security review 047 H1), otherwise an unchecked wallet's ack.
+// first ack (at most 5 unchecked ones). The offer book shows an ack only when the invoice names that wallet on chain
+// (security review 047 H1, round 2), as "Acknowledged by the wallet the merchant named"; the merchant's invoice list
+// also shows an unchecked wallet's ack.
 // A real Postgres in-process (PGlite); the chain read is faked. Run from apps/web: npm test
 import { test, before, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
@@ -324,17 +325,18 @@ test("pay page M1: this key's own ack vs another key's, the count, and the named
   assert.match(ack, /Only the customer wallet this invoice names \(\{customer\}\) can acknowledge it\./);
 });
 
-test("investor and merchant views: ✓ only for the named customer wallet's ack; any other is an unchecked wallet's", () => {
+test("investor and merchant views: the named wallet's ack is stated plainly, no ✓; any other is an unchecked wallet's", () => {
   const view = source("components/DebtorAck.tsx");
-  assert.match(view, /if \(ack\.verified\) \{\s*return \(\s*<span[^>]*>\s*Named customer wallet acknowledged ✓/);
-  assert.equal(view.split("✓").length, 2, "one ✓, in the verified branch only");
+  assert.match(view, /if \(ack\.verified\) \{\s*return \(\s*<span className="block text-xs text-ink">\s*Acknowledged by the wallet the merchant named · <span className="data">\{ack\.debtor\}<\/span>/);
+  assert.doesNotMatch(view, /✓|text-positive/, "round 2 M: the merchant can name its own second wallet, so no tick and no success colour");
   assert.doesNotMatch(view, /Debtor acknowledged/, "re-review copy: the shop chooses the wallet, so not 'Debtor'");
   assert.match(view, /Acknowledged by an unchecked wallet · <span className="data">\{ack\.debtor\}<\/span>/);
   assert.match(view, /\$\{ackCount\(ack\.count\)\} acknowledgements/);
   assert.match(view, /Not acknowledged yet/);
   const offerBookUi = source("components/capital/investor/OfferBook.tsx");
   assert.match(offerBookUi, /\{o\.kind === "invoice" && <DebtorAck ack=\{o\.debtor_ack\} \/>\}/);
-  assert.match(offerBookUi, /the shop chooses this wallet; it is not an identity check\./, "one line explains the two labels");
+  assert.match(offerBookUi, /the shop chooses this wallet; it is not an identity check\./, "one line explains the label");
+  assert.doesNotMatch(offerBookUi, /✓/);
   assert.match(source("components/capital/merchant/MyOffers.tsx"), /\{!advance && <DebtorAck ack=\{o\.debtor_ack\} \/>\}/);
   assert.match(source("components/merchant/Invoices.tsx"), /\{invoice\.status === "open" && <DebtorAck ack=\{invoice\.ack\} \/>\}/);
 });
