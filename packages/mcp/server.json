@@ -1,0 +1,26 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "io.github.Vishal4742/whiteflow",
+  "title": "Whiteflow",
+  "description": "USDT payment links, payments and collection summaries on Whitechain testnet. Can't move money.",
+  "websiteUrl": "https://whiteflow.org/mcp",
+  "repository": {
+    "url": "https://github.com/Vishal4742/whiteflow",
+    "source": "github",
+    "subfolder": "packages/mcp"
+  },
+  "version": "0.3.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "whiteflow-mcp",
+      "version": "0.3.0",
+      "transport": { "type": "stdio" },
+      "environmentVariables": [
+        { "name": "WHITEFLOW_MODE", "description": "sandbox (default: local simulator, no key) or testnet", "isRequired": false, "default": "sandbox" },
+        { "name": "WHITEFLOW_API_KEY", "description": "Your sk_test_ key from the Whiteflow dashboard (testnet only)", "isRequired": false, "isSecret": true },
+        { "name": "WHITEFLOW_TIMEZONE", "description": "Business time zone for due dates and weekly summaries, e.g. Asia/Kolkata", "isRequired": false, "default": "UTC" }
+      ]
+    }
+  ]
+}

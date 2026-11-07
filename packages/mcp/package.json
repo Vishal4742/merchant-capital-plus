@@ -15,7 +15,8 @@
     "typecheck": "tsc --noEmit",
     "manifest": "node scripts/manifest.mjs",
     "build": "node scripts/build.mjs",
-    "pack": "node scripts/pack.mjs"
+    "pack": "node scripts/pack.mjs",
+    "npm-package": "node scripts/npm-package.mjs"
   },
   "engines": {
     "node": ">=22.18"
