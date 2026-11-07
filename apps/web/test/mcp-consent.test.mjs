@@ -54,7 +54,7 @@ test("approve returns the client's callback with a code, and the grant belongs t
   assert.equal(`${url.origin}${url.pathname}`, REDIRECT);
   assert.ok(url.searchParams.get("code"));
   assert.equal(url.searchParams.get("state"), "abc");
-  assert.equal(url.searchParams.get("iss"), "https://mcp.example");
+  assert.equal(url.searchParams.get("iss"), "https://mcp.example/", "byte-identical to the SDK's advertised issuer (review 058 R1 M1)");
   const [grant] = await listGrants(MERCHANT);
   assert.deepEqual(grant.scopes, ["account:read", "links:read"], "exactly what was ticked, so links:write stays off");
   assert.equal((await listGrants(OTHER_MERCHANT)).length, 0);

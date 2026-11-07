@@ -5,7 +5,10 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { ALL_SCOPES, MERCHANT_A, MERCHANT_B, READ_SCOPES, REDIRECT, SECRET, pkce, sha, start } from "./helpers.ts";
-import { verifyConsentRequest } from "../../web/lib/server/mcp-grants.ts";
+import { issuerOf, verifyConsentRequest } from "../../web/lib/server/mcp-grants.ts";
+import { createOAuthMetadata } from "@modelcontextprotocol/sdk/server/auth/router.js";
+import { parseConfig } from "../src/config.ts";
+import { PgOAuthProvider } from "../src/provider.ts";
 
 const open: { close: () => Promise<void> }[] = [];
 const boot = async (opts: Parameters<typeof start>[0] = {}) => {
@@ -302,4 +305,64 @@ test("20 simultaneous identical creates through the endpoint all carry ONE idemp
   const links = new Set(results.filter((r) => !r.isError).map((r) => JSON.parse(r.content[0].text).link.id));
   assert.equal(links.size, 1);
   await Promise.all(clients.map((client) => client.close()));
+});
+
+// ── review 058 round 1 ──
+test("H1: a client can't register under a vendor's name unless its redirects go to that vendor; invisible characters are stripped", async () => {
+  const s = await boot();
+  const reg = (name: string, redirect: string) => s.json("/register", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ client_name: name, redirect_uris: [redirect], token_endpoint_auth_method: "none" }) });
+  for (const name of ["ChatGPT", "chat gpt", "OpenAI connector", "Claude", "Anthropic", "ＣｈａｔＧＰＴ", "Chat​GPT"]) {
+    assert.equal((await reg(name, "https://attacker.example/cb")).status, 400, name);
+  }
+  assert.equal((await reg("ChatGPT", "https://chatgpt.com/connector_platform_oauth_redirect")).status, 201);
+  assert.equal((await reg("Claude", "https://claude.ai/api/mcp/auth_callback")).status, 201);
+  assert.equal((await reg("Claude Code", "http://localhost:3118/callback")).status, 201, "Claude Code's own loopback callback");
+  const odd = await reg("My‮app​", "https://tool.example/cb");
+  assert.equal(odd.status, 201);
+  assert.equal(odd.body.client_name, "Myapp");
+});
+
+test("M1: the issuer the SDK advertises and the iss the dashboard returns are byte-identical", () => {
+  const before = process.env.WHITEFLOW_MCP_PUBLIC_URL;
+  process.env.WHITEFLOW_MCP_PUBLIC_URL = "https://mcp.example/mcp";
+  try {
+    const parsed = parseConfig({ WHITEFLOW_MCP_PUBLIC_URL: "https://mcp.example/mcp", WHITEFLOW_WEB_ORIGIN: "https://web.example", MCP_INTERNAL_SECRET: SECRET, DATABASE_URL: "postgres://unused" });
+    assert.ok(parsed.ok);
+    const provider = new PgOAuthProvider({ sql: { query: async () => [] }, config: parsed.config, now: Date.now });
+    const advertised = createOAuthMetadata({ provider, issuerUrl: parsed.config.issuerUrl }).issuer;
+    assert.equal(issuerOf(), advertised);
+  } finally {
+    if (before === undefined) delete process.env.WHITEFLOW_MCP_PUBLIC_URL;
+    else process.env.WHITEFLOW_MCP_PUBLIC_URL = before;
+  }
+});
+
+test("code review M3: a refresh naming a scope the grant lacks gets the granted scopes; a wrong resource doesn't burn the token", async () => {
+  const s = await boot();
+  const c = await s.connect(MERCHANT_A, READ_SCOPES);
+  const wrong = await s.token({ grant_type: "refresh_token", client_id: c.clientId, refresh_token: c.tokens.refresh_token, resource: "https://other.example/mcp" });
+  assert.equal(wrong.status, 400);
+  const asked = await s.token({ grant_type: "refresh_token", client_id: c.clientId, refresh_token: c.tokens.refresh_token, scope: ALL_SCOPES.join(" ") });
+  assert.equal(asked.status, 200, "the same refresh token still works: the refused attempt didn't spend it");
+  assert.equal(asked.body.scope, READ_SCOPES.join(" "), "the answer says what was really granted; links:write was never approved");
+  const [g] = await s.sql.query("SELECT revoked_at FROM app_mcp_grants WHERE id = $1", [c.grantId]);
+  assert.equal(g.revoked_at, null, "no reuse alarm");
+});
+
+test("code review L2: the code exchange accepts the resource with or without its trailing slash, like authorize does", async () => {
+  const s = await boot();
+  const { clientId } = await s.register();
+  const { verifier, challenge } = pkce();
+  const a = await s.authorize(clientId, {}, challenge);
+  const c = await s.consent(a.location, MERCHANT_A);
+  const t = await s.token({ grant_type: "authorization_code", client_id: clientId, code: c.code, code_verifier: verifier, redirect_uri: REDIRECT, resource: `${s.config.mcpUrl.href}/` });
+  assert.equal(t.status, 200);
+});
+
+test("M3: registration stops at the client cap instead of growing without bound", async () => {
+  const s = await boot();
+  await s.sql.query("INSERT INTO app_mcp_clients (client_id, metadata, created_at) SELECT 'bulk_' || g, '{}'::jsonb, 0 FROM generate_series(1, 5000) g");
+  const r = await s.register();
+  assert.equal(r.status, 400);
+  assert.match(r.text, /too many|limit/i);
 });

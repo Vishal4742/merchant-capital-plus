@@ -105,36 +105,48 @@ export function makeContext(base: Omit<Ctx, "profile" | "require" | "write" | "t
         throw new ToolRefusal(error.message, { outcome: e?.outcome ?? "blocked", idempotency_key: e?.key ?? null, since: e ? iso(e.at) : null, note: e?.note ?? null, next_action: NEXT_RECONCILE });
       }
       const until = iso(claim.since + SERVER_RETENTION_MS);
-      try {
-        const result = await send(claim.key);
+      // Recording an outcome is best effort (review 058 R1 code H1). If the journal can't be written (a Postgres hiccup, a
+      // busy journal), the entry simply stays "pending": the next identical call resumes THE SAME key and WhiteFlow replays
+      // the same record. It must never turn into "refused", which would let a retry mint a new key and create a duplicate.
+      const record = async (outcome: "done" | "refused" | "needs_reconciliation", note?: string) => {
         try {
-          verify?.(result.data);
+          await base.journal.settle(scope, claim.key, outcome, note);
         } catch (error) {
-          // ANY failure while checking a write's reply (a mismatch, or a value the connector's own arithmetic can't read)
-          // leaves the write for reconciliation: the server may have created it, so it must never be settled "refused"
-          // and then re-created under a fresh key (round-2 security probe)
-          const reason = error instanceof Mismatch ? error.message : "a reply the connector couldn't verify";
-          await base.journal.settle(scope, claim.key, "needs_reconciliation", reason);
-          throw new ToolRefusal(`WhiteFlow's reply doesn't match what was asked: ${reason}. Don't share or use this record; the operation is marked for reconciliation.`, {
-            outcome: "needs_reconciliation",
-            idempotency_key: claim.key,
-            next_action: "Tell the merchant. Check the record in the WhiteFlow dashboard before doing anything else with it.",
-          });
+          base.log.error(`journal settle (${outcome}) failed; the write stays pending and a retry resumes key ${claim.key}`, error);
         }
-        await base.journal.settle(scope, claim.key, "done");
-        return { ...result, key: claim.key, source: claim.source };
+      };
+      let result: Awaited<ReturnType<typeof send>>;
+      try {
+        result = await send(claim.key);
       } catch (error) {
-        if (error instanceof ToolRefusal) throw error;
-        if (error instanceof ApiError && error.ambiguous) {
-          // outcome unknown: the journal keeps it pending, so the next same call resumes it with this key
-          throw new ToolRefusal(
-            `${error.message} Calling this tool again with the same input resumes this operation (idempotency key ${claim.key}) until ${until}, while WhiteFlow can still replay it, so it won't create a duplicate. After that, check the record before creating another.`,
-            { outcome: "unknown", idempotency_key: claim.key, resumable_until: until },
-          );
+        if (error instanceof ApiError && !error.ambiguous) {
+          // a definite answer from WhiteFlow (4xx, or a 5xx it reported as not applied): nothing was created
+          await record("refused");
+          throw error;
         }
-        await base.journal.settle(scope, claim.key, "refused");
-        throw error;
+        // an ambiguous reply, or anything unexpected: the write may have happened, so it stays pending under this key
+        const reason = error instanceof ApiError ? error.message : "The connector couldn't tell whether WhiteFlow received this request.";
+        throw new ToolRefusal(
+          `${reason} Calling this tool again with the same input resumes this operation (idempotency key ${claim.key}) until ${until}, while WhiteFlow can still replay it, so it won't create a duplicate. After that, check the record before creating another.`,
+          { outcome: "unknown", idempotency_key: claim.key, resumable_until: until },
+        );
       }
+      try {
+        verify?.(result.data);
+      } catch (error) {
+        // ANY failure while checking a write's reply (a mismatch, or a value the connector's own arithmetic can't read)
+        // leaves the write for reconciliation: the server may have created it, so it must never be settled "refused"
+        // and then re-created under a fresh key (round-2 security probe)
+        const reason = error instanceof Mismatch ? error.message : "a reply the connector couldn't verify";
+        await record("needs_reconciliation", reason);
+        throw new ToolRefusal(`WhiteFlow's reply doesn't match what was asked: ${reason}. Don't share or use this record; the operation is marked for reconciliation.`, {
+          outcome: "needs_reconciliation",
+          idempotency_key: claim.key,
+          next_action: "Tell the merchant. Check the record in the WhiteFlow dashboard before doing anything else with it.",
+        });
+      }
+      await record("done");
+      return { ...result, key: claim.key, source: claim.source };
     },
   };
   return ctx;

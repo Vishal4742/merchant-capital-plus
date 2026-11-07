@@ -14,11 +14,49 @@ export const CONSENT_TTL_MS = 10 * 60_000;
 export const CODE_TTL_MS = 60_000;
 export const GRANT_TTL_MS = 30 * 24 * 60 * 60_000;
 
-/** The authorization server's issuer (the MCP endpoint's origin, https), or null when the service isn't configured here. */
+/** The authorization server's issuer, or null when the service isn't configured here. It must be byte-identical to the
+ *  `issuer` the MCP service advertises, which the SDK writes as `new URL(origin).href` (with the trailing slash): clients that
+ *  check RFC 9207's `iss` compare the two exactly (review 058 R1 M1). */
 export const issuerOf = (): string | null => {
   const url = process.env.WHITEFLOW_MCP_PUBLIC_URL;
-  return url && URL.canParse(url) && new URL(url).protocol === "https:" ? new URL(url).origin : null;
+  return url && URL.canParse(url) && new URL(url).protocol === "https:" ? new URL(new URL(url).origin).href : null;
 };
+
+// ── who is asking (review 058 R1 H1) ──
+// Anyone can register a client and call it "ChatGPT". The name is chosen by the client, so it proves nothing; where the
+// authorization code is SENT is what decides who gets access. The consent screen therefore names a vendor only when the
+// redirect goes to that vendor's own host, and otherwise shows the real host with a warning.
+const VENDOR_HOSTS: { vendor: string; hosts: string[] }[] = [
+  { vendor: "ChatGPT", hosts: ["chatgpt.com", "openai.com"] },
+  { vendor: "Claude", hosts: ["claude.ai", "claude.com"] },
+];
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+const onHost = (hostname: string, host: string) => hostname === host || hostname.endsWith(`.${host}`);
+
+/** A client-chosen name, made safe to show: no control, format (zero-width, bidi) or surrogate characters, spaces collapsed. */
+export const cleanName = (name: string): string =>
+  name.normalize("NFKC").replace(/[\p{Cc}\p{Cf}\p{Cs}\p{Co}]/gu, "").replace(/\s+/g, " ").trim().slice(0, 100) || "An app";
+
+export interface ClientDescription {
+  /** what the page calls it: the vendor when proven by the redirect host, else the client's own name marked unverified */
+  title: string;
+  /** the host the code will be sent to */
+  host: string;
+  verifiedAs: string | null;
+  /** shown prominently whenever the vendor isn't proven; null for a verified vendor */
+  warning: string | null;
+}
+
+export function describeClient(name: string, redirectUri: string): ClientDescription {
+  const host = URL.canParse(redirectUri) ? new URL(redirectUri).hostname.toLowerCase() : "an unknown address";
+  const vendor = VENDOR_HOSTS.find((v) => v.hosts.some((h) => onHost(host, h)))?.vendor ?? null;
+  if (vendor) return { title: vendor, host, verifiedAs: vendor, warning: null };
+  const named = `“${cleanName(name)}” (unverified app)`;
+  if (LOOPBACK_HOSTS.has(host)) {
+    return { title: named, host, verifiedAs: null, warning: `This app runs on your own computer (it returns to ${host}), for example Claude Code. Allow it only if you started this connection from a program on this computer just now.` };
+  }
+  return { title: named, host, verifiedAs: null, warning: `WhiteFlow can't confirm who runs this app. If you allow access, it is sent to ${host}. Only continue if you started this connection yourself and recognise that address.` };
+}
 
 /** A refusal worded for the merchant (safe to show); anything else thrown here is an internal failure. */
 export class GrantRefusal extends Error {}

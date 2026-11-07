@@ -98,7 +98,7 @@ export async function start(opts: { clock?: { now: number }; gatewayDown?: boole
 
   /** Registers a public client (what ChatGPT or Claude do), returning its id. */
   const register = async (redirectUris = [REDIRECT]) => {
-    const r = await json("/register", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ client_name: "Claude", redirect_uris: redirectUris, token_endpoint_auth_method: "none", grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] }) });
+    const r = await json("/register", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ client_name: "Test assistant", redirect_uris: redirectUris, token_endpoint_auth_method: "none", grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] }) });
     return { ...r, clientId: r.body.client_id as string };
   };
 

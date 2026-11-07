@@ -7,9 +7,82 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { Journal, JournalRefusal, SERVER_RETENTION_MS } from "../src/journal.ts";
 import { PROMPTS } from "../src/prompts.ts";
-import { BASE, NOW, TESTNET_KEY, connect, fakeFetch, tempDir } from "./helpers.ts";
+import { ApiError } from "../src/client.ts";
+import { Mismatch, makeContext } from "../src/tools/context.ts";
+import { replier, redactor } from "../src/safety.ts";
+import { BASE, NOW, TESTNET_KEY, connect, fakeFetch, memoryLog, tempDir } from "./helpers.ts";
 
 const HOUR = 60 * 60_000;
+
+// ── review 058 R1 code H1: a journal hiccup after WhiteFlow answered must never turn a created record into "refused" ──
+const PROFILE = { merchant: { address: "0x37F9315EDF71d9C27b0F650c59e4c96aD6a442B1", name: "Shop" }, environment: "test", capabilities: { links: true }, timezone: null };
+
+/** A context over a real file journal whose settle() throws the first time it is asked for `failOn`. */
+function flakyContext(failOn: string) {
+  const journal = new Journal(join(tempDir(), "journal.json"), () => NOW);
+  let failed = false;
+  const flaky = {
+    claim: journal.claim.bind(journal),
+    find: journal.find.bind(journal),
+    unresolved: journal.unresolved.bind(journal),
+    settle: (scope: string, key: string, outcome: Parameters<Journal["settle"]>[2], note?: string | null) => {
+      if (outcome === failOn && !failed) {
+        failed = true;
+        throw new Error("neon: fetch failed");
+      }
+      return journal.settle(scope, key, outcome, note);
+    },
+  };
+  const client = { origin: new URL(BASE), account: async () => ({ data: PROFILE, replayed: false }) };
+  const log = memoryLog();
+  const ctx = makeContext({ mode: "testnet", client: client as never, journal: flaky, reply: replier(redactor([]), log, {}), log, now: () => NOW, configuredZone: null, trustedOrigins: [] });
+  return { ctx, journal, log };
+}
+
+test("a failed 'done' settle after a successful create keeps the write's identity: the retry sends the SAME key", async () => {
+  const { ctx, journal, log } = flakyContext("done");
+  const keys: string[] = [];
+  const send = async (key: string) => {
+    keys.push(key);
+    return { data: { id: "lnk_1" }, replayed: keys.length > 1 };
+  };
+  const first = await ctx.write("create_payment_link", { amount: "25.00" }, {}, send);
+  assert.equal(first.data.id, "lnk_1", "the created record is reported, not hidden behind a journal error");
+  const scope = (await ctx.profile()).scope;
+  assert.notEqual(journal.find(scope, keys[0])?.outcome, "refused", "never 'refused': WhiteFlow said yes");
+  assert.ok(log.lines.some((l) => /settle/i.test(l)), "the journal failure is logged");
+  await ctx.write("create_payment_link", { amount: "25.00" }, {}, send);
+  assert.equal(new Set(keys).size, 1, "one key across both calls, so the gateway replays instead of creating a second link");
+});
+
+test("a failed 'needs_reconciliation' settle after a mismatching reply never becomes 'refused' either", async () => {
+  const { ctx, journal } = flakyContext("needs_reconciliation");
+  const keys: string[] = [];
+  const send = async (key: string) => (keys.push(key), { data: { id: "lnk_wrong" }, replayed: false });
+  const verify = () => {
+    throw new Mismatch("amount 99 instead of 25.00");
+  };
+  await assert.rejects(ctx.write("create_payment_link", { amount: "25.00" }, {}, send, verify));
+  const scope = (await ctx.profile()).scope;
+  assert.notEqual(journal.find(scope, keys[0])?.outcome, "refused");
+  await assert.rejects(ctx.write("create_payment_link", { amount: "25.00" }, {}, send, verify));
+  assert.equal(new Set(keys).size, 1, "the retry resumes the same key; it never mints a fresh one");
+});
+
+test("only a definite refusal from WhiteFlow settles 'refused'; an unexpected error leaves the write pending", async () => {
+  const { ctx, journal } = flakyContext("never");
+  const scope = (await ctx.profile()).scope;
+  await assert.rejects(ctx.write("create_payment_link", { amount: "1.00" }, {}, async () => {
+    throw new ApiError(422, "amount too small");
+  }));
+  assert.equal(journal.unresolved(scope).length, 0, "a 422 is a definite no");
+  const keys: string[] = [];
+  await assert.rejects(ctx.write("create_payment_link", { amount: "2.00" }, {}, async (key) => {
+    keys.push(key);
+    throw new TypeError("something unexpected");
+  }));
+  assert.equal(journal.unresolved(scope)[0]?.key, keys[0], "an unknown failure is not proof nothing was created");
+});
 const SCOPE = "scope-a";
 const PAYLOAD = { amount: "25.00", currency: "USDT", description: "Beans" };
 const journalAt = (clock: { now: number }) => new Journal(join(tempDir(), "journal.json"), () => clock.now);

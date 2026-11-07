@@ -26,6 +26,21 @@ const sha256 = (text: string) => createHash("sha256").update(text).digest("hex")
 const opaque = () => randomBytes(32).toString("base64url");
 const sameUrl = (a: string | URL, b: string | URL) => String(a).replace(/\/$/, "") === String(b).replace(/\/$/, "");
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+// ponytail: a hard ceiling on registered clients (open dynamic registration). Real use is a handful per merchant; past this,
+// registration refuses until old rows are reviewed. Upgrade: expire clients that never completed a grant.
+export const MAX_CLIENTS = 5000;
+
+/** Names only a vendor may use, and the hosts its redirects must go to (loopback: the vendor's own local tool, Claude Code). */
+const RESERVED_NAMES: { pattern: RegExp; hosts: string[]; loopback: boolean }[] = [
+  { pattern: /chat\s*gpt|open\s*ai/i, hosts: ["chatgpt.com", "openai.com"], loopback: false },
+  { pattern: /claude|anthropic/i, hosts: ["claude.ai", "claude.com"], loopback: true },
+];
+const onHost = (hostname: string, host: string) => hostname === host || hostname.endsWith(`.${host}`);
+
+/** The client's own name made safe to show (review 058 R1 H1): full-width forms folded, no control, format (zero-width,
+ *  bidi), surrogate or private-use characters, spaces collapsed. The consent screen still trusts only the redirect host. */
+export const cleanName = (name: string): string =>
+  name.normalize("NFKC").replace(/[\p{Cc}\p{Cf}\p{Cs}\p{Co}]/gu, "").replace(/\s+/g, " ").trim().slice(0, MAX_NAME);
 
 interface GrantRow {
   id: string;
@@ -69,9 +84,19 @@ export class PgOAuthProvider implements OAuthServerProvider {
           const safe = url && !url.hash && !url.username && !url.password && (url.protocol === "https:" || (url.protocol === "http:" && LOOPBACK.has(url.hostname)));
           if (!safe) throw new InvalidClientMetadataError("Every redirect URI must be https (http only for localhost), with no credentials or fragment.");
         }
+        const name = cleanName(String(client.client_name ?? "")) || "An AI assistant";
+        // a vendor's name is reserved for clients whose every redirect goes to that vendor (review 058 R1 H1): an app called
+        // "ChatGPT" that sends codes to its own server is refused here, and the consent screen labels by host anyway
+        const hosts = uris.map((raw) => new URL(String(raw)).hostname.toLowerCase());
+        for (const reserved of RESERVED_NAMES) {
+          if (!reserved.pattern.test(name.replace(/[^\p{L}\p{N}\s]/gu, ""))) continue;
+          const allowed = hosts.every((h) => reserved.hosts.some((v) => onHost(h, v)) || (reserved.loopback && LOOPBACK.has(h)));
+          if (!allowed) throw new InvalidClientMetadataError("That client name belongs to another company's app. Use your own app's name.");
+        }
+        const [{ n }] = await this.#sql.query("SELECT count(*)::int AS n FROM app_mcp_clients");
+        if (Number(n) >= MAX_CLIENTS) throw new InvalidClientMetadataError("Too many apps are registered with this server right now. Try again later.");
         const clientId = `client_${randomBytes(16).toString("base64url")}`;
         const now = this.#now();
-        const name = String(client.client_name ?? "An AI assistant").replace(/[\u0000-\u001f\u007f]/g, "").slice(0, MAX_NAME) || "An AI assistant";
         const metadata = { client_name: name, redirect_uris: uris.map(String), grant_types: grants, response_types: ["code"], token_endpoint_auth_method: "none", scope: SCOPES.join(" ") };
         await this.#sql.query("INSERT INTO app_mcp_clients (client_id, metadata, created_at) VALUES ($1, $2::jsonb, $3)", [clientId, JSON.stringify(metadata), now]);
         return { ...metadata, client_id: clientId, client_id_issued_at: Math.floor(now / 1000) } as OAuthClientInformationFull;
@@ -110,7 +135,7 @@ export class PgOAuthProvider implements OAuthServerProvider {
     const now = this.#now();
     // one atomic statement spends the code: of two concurrent redemptions exactly one gets a row
     const [spent] = await this.#sql.query(
-      "UPDATE app_mcp_codes SET used_at = $2 WHERE code_hash = $1 AND client_id = $3 AND used_at IS NULL AND expires_at > $2 AND ($4::text IS NULL OR redirect_uri = $4) AND ($5::text IS NULL OR resource = $5) RETURNING grant_id",
+      "UPDATE app_mcp_codes SET used_at = $2 WHERE code_hash = $1 AND client_id = $3 AND used_at IS NULL AND expires_at > $2 AND ($4::text IS NULL OR redirect_uri = $4) AND ($5::text IS NULL OR rtrim(resource, '/') = rtrim($5, '/')) RETURNING grant_id",
       [sha256(authorizationCode), now, client.client_id, redirectUri ?? null, resource ? resource.href : null],
     );
     if (!spent) throw new InvalidGrantError("The authorization code, redirect URI or resource doesn't match, or it was already used or expired.");
@@ -119,9 +144,17 @@ export class PgOAuthProvider implements OAuthServerProvider {
     return this.#issue(grant, `family_${randomBytes(9).toString("base64url")}`);
   }
 
-  async exchangeRefreshToken(client: OAuthClientInformationFull, refreshToken: string, scopes?: string[], resource?: URL): Promise<OAuthTokens> {
+  async exchangeRefreshToken(client: OAuthClientInformationFull, refreshToken: string, _scopes?: string[], resource?: URL): Promise<OAuthTokens> {
     const now = this.#now();
     const hash = sha256(refreshToken);
+    // Check the request BEFORE spending the token (code review 058 M3): a refused request must leave the token usable, or
+    // the client's corrected retry would look like reuse and revoke the grant. Requested scopes are not checked: the tokens
+    // always carry exactly the grant's approved scopes (read from the grant on every request), and `scope` in the answer
+    // says what they are. A client re-sending scopes it once asked for therefore can't widen anything, and isn't broken.
+    if (resource) {
+      const [target] = await this.#sql.query("SELECT g.resource FROM app_mcp_tokens t JOIN app_mcp_grants g ON g.id = t.grant_id WHERE t.token_hash = $1 AND t.kind = 'refresh' AND g.client_id = $2", [hash, client.client_id]);
+      if (target && !sameUrl(resource, target.resource as string)) throw new InvalidTargetError("That resource isn't the one this authorization was issued for.");
+    }
     const [spent] = await this.#sql.query(
       "UPDATE app_mcp_tokens t SET used_at = $2 FROM app_mcp_grants g WHERE t.token_hash = $1 AND t.kind = 'refresh' AND t.used_at IS NULL AND t.revoked_at IS NULL AND t.expires_at > $2 AND g.id = t.grant_id AND g.client_id = $3 RETURNING t.grant_id, t.family_id",
       [hash, now, client.client_id],
@@ -133,9 +166,6 @@ export class PgOAuthProvider implements OAuthServerProvider {
     }
     const grant = await this.#liveGrant(spent.grant_id as string);
     if (!grant) throw new InvalidGrantError("This authorization was revoked or has expired.");
-    if (resource && !sameUrl(resource, grant.resource)) throw new InvalidTargetError("That resource isn't the one this authorization was issued for.");
-    const granted = grant.scopes.split(" ");
-    if (scopes?.some((s) => !granted.includes(s))) throw new InvalidScopeError("A refresh can't widen the approved permissions.");
     return this.#issue(grant, spent.family_id as string);
   }
 

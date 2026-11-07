@@ -110,3 +110,44 @@ test("a loopback redirect may use any port (RFC 8252: Claude Code picks one), bu
   await assert.rejects(approve({ request: { ...REQUEST, redirectUri: "http://evil.example:51234/callback" } }), /redirect/i, "another host");
   await assert.rejects(approve({ request: { ...REQUEST, redirectUri: "https://claude.ai:8443/api/mcp/auth_callback" } }), /redirect/i, "a non-loopback address needs an exact match");
 });
+
+// ── review 058 R1 H1: an app can't pass itself off as ChatGPT or Claude on the consent screen ──
+const { describeClient, issuerOf } = await import("../lib/server/mcp-grants.ts");
+
+test("the consent screen trusts the redirect host, never the name: a 'ChatGPT' that sends codes elsewhere is unverified", () => {
+  const fake = describeClient("ChatGPT", "https://attacker.example/cb");
+  assert.equal(fake.verifiedAs, null);
+  assert.equal(fake.host, "attacker.example");
+  assert.match(fake.title, /unverified/i);
+  assert.ok(fake.warning && /attacker\.example/.test(fake.warning));
+  const real = describeClient("anything at all", "https://chatgpt.com/connector_platform_oauth_redirect");
+  assert.deepEqual([real.verifiedAs, real.host, real.warning], ["ChatGPT", "chatgpt.com", null]);
+  assert.equal(describeClient("Claude", "https://claude.ai/api/mcp/auth_callback").verifiedAs, "Claude");
+  assert.equal(describeClient("Claude", "https://claude.com/api/mcp/auth_callback").verifiedAs, "Claude");
+  assert.equal(describeClient("x", "https://chatgpt.com.attacker.example/cb").verifiedAs, null, "a look-alike suffix is not chatgpt.com");
+  assert.equal(describeClient("x", "https://evilchatgpt.com/cb").verifiedAs, null);
+});
+
+test("a loopback redirect is a program on the merchant's own computer (Claude Code), labelled as such, not as a vendor", () => {
+  const local = describeClient("Claude Code", "http://localhost:51234/callback");
+  assert.equal(local.verifiedAs, null);
+  assert.equal(local.host, "localhost");
+  assert.match(local.warning, /your own computer/);
+});
+
+test("invisible and bidi characters can't disguise a name on the consent screen", () => {
+  const d = describeClient("Chat​GPT‮", "https://attacker.example/cb");
+  assert.doesNotMatch(d.title, /[​‮]/);
+  assert.match(d.title, /unverified/i);
+});
+
+test("review 058 R1 M1: the iss the dashboard returns is byte-identical to the issuer the SDK advertises (with its slash)", () => {
+  const before = process.env.WHITEFLOW_MCP_PUBLIC_URL;
+  process.env.WHITEFLOW_MCP_PUBLIC_URL = "https://mcp.example/mcp";
+  try {
+    assert.equal(issuerOf(), "https://mcp.example/", "new URL(origin).href, as the SDK's createOAuthMetadata uses");
+  } finally {
+    if (before === undefined) delete process.env.WHITEFLOW_MCP_PUBLIC_URL;
+    else process.env.WHITEFLOW_MCP_PUBLIC_URL = before;
+  }
+});
