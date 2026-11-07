@@ -129,6 +129,9 @@ test("GET /api/v1/operations/{key}: the caller's own write, succeeded or pending
   assert.equal((await read("never-used-key")).status, 404);
   await query("INSERT INTO app_web_idempotency (slot, owner, hash, created_at) VALUES ($1, 'live', 'x', $2)", [`links:${MERCHANT.toLowerCase()}:in-flight-key`, Date.now()]);
   assert.equal((await (await read("in-flight-key")).json()).state, "pending");
+  // a slot that stored no reply within ABANDONED_MS died with its instance and is free again: 404, never "pending" (review L1)
+  await query("INSERT INTO app_web_idempotency (slot, owner, hash, created_at) VALUES ($1, 'dead', 'x', $2)", [`links:${MERCHANT.toLowerCase()}:dead-key`, Date.now() - 6 * 60_000]);
+  assert.equal((await read("dead-key")).status, 404);
   // a checkout's key is found too
   const checkout = await sessionsRoute(req("POST", "/api/v1/sessions", { body: { amount: "5.00" }, headers: { authorization: `Bearer ${sk}`, "idempotency-key": "co-key-0001" } }));
   const session = await checkout.json();

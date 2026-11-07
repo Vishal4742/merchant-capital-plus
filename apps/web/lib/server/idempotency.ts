@@ -6,7 +6,7 @@ import { query } from "./db.ts";
 
 export const MAX_IDEMPOTENCY_KEY = 255;
 export const IDEMPOTENCY_MS = 24 * 60 * 60 * 1000;
-const ABANDONED_MS = 300_000; // = the function's maximum duration (security 026 F4): a first request that stored no reply by now died with its instance, so its key is free again
+export const ABANDONED_MS = 300_000; // = the function's maximum duration (security 026 F4): a first request that stored no reply by now died with its instance, so its key is free again
 const WAIT_GAP_MS = 100;
 const WAIT_TRIES = 100; // a second request waits up to 10 s for the first one's reply (an FX quote takes at most 5 s)
 const STILL_CREATING = "A request with this Idempotency-Key is still being processed. Try again in a moment.";

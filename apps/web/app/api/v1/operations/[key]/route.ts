@@ -4,7 +4,7 @@
 // merchant's key, an unknown one or one older than the 24-hour retention is a 404.
 import { HttpError, handle, ok } from "../../../../../lib/server/http.ts";
 import { query } from "../../../../../lib/server/db.ts";
-import { IDEMPOTENCY_MS, MAX_IDEMPOTENCY_KEY } from "../../../../../lib/server/idempotency.ts";
+import { ABANDONED_MS, IDEMPOTENCY_MS, MAX_IDEMPOTENCY_KEY } from "../../../../../lib/server/idempotency.ts";
 import { callerMerchant } from "../../../../../lib/server/keys.ts";
 
 const NOT_FOUND = "No operation with that Idempotency-Key for this merchant (or it is older than 24 hours).";
@@ -15,9 +15,11 @@ export async function GET(request: Request, { params }: { params: Promise<{ key:
     const { key } = await params;
     if (!key || key.length > MAX_IDEMPOTENCY_KEY) throw new HttpError(404, NOT_FOUND);
     const m = merchant.toLowerCase();
+    // a slot with no reply after ABANDONED_MS died with its instance and is free again (idempotency.ts): 404, not pending (054 review L1)
+    const now = Date.now();
     const rows = await query<{ slot: string; status: number | null; body: string | null; created_at: string }>(
-      "SELECT slot, status, body::text AS body, created_at::text FROM app_web_idempotency WHERE slot = ANY($1) AND created_at >= $2 ORDER BY created_at DESC LIMIT 1",
-      [[`links:${m}:${key}`, `${m}:${key}`], Date.now() - IDEMPOTENCY_MS],
+      "SELECT slot, status, body::text AS body, created_at::text FROM app_web_idempotency WHERE slot = ANY($1) AND created_at >= $2 AND (status IS NOT NULL OR created_at >= $3) ORDER BY created_at DESC LIMIT 1",
+      [[`links:${m}:${key}`, `${m}:${key}`], now - IDEMPOTENCY_MS, now - ABANDONED_MS],
     );
     const row = rows[0];
     if (!row) throw new HttpError(404, NOT_FOUND);
