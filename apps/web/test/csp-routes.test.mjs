@@ -13,7 +13,7 @@ test("csp: /capital/:path* (which also matches /capital) sends exactly the merch
   assert.ok(capital, "no CSP rule for /capital/:path*");
   assert.equal(capital, cspOf(rules[at("/merchant/:path*")]));
   assert.match(capital, /frame-ancestors 'none'/);
-  assert.match(capital, /connect-src 'self' blob: [^;]*https:\/\/validator\.nymtech\.net/);
+  assert.match(capital, /connect-src 'self' [^;]*blob: [^;]*https:\/\/validator\.nymtech\.net/);
 });
 
 test("csp: no later rule overrides /capital (for one header the last matching rule wins)", () => {
@@ -53,5 +53,9 @@ test("csp: the other strict pages stay 'self' only (no Privy, no WalletConnect)"
     assert.doesNotMatch(csp, /privy|walletconnect|frame-src/, source);
   }
   assert.match(cspOf(rules[at("/p/:path*")]), /img-src 'self' data: https:/, "/p keeps the merchant's logo");
-  for (const source of ["/merchant/:path*", "/capital/:path*"]) assert.doesNotMatch(cspOf(rules[at(source)]), /privy|walletconnect/, source);
+  for (const source of ["/merchant/:path*", "/capital/:path*"]) {
+    const csp = cspOf(rules[at(source)]);
+    assert.match(csp, /https:\/\/auth\.privy\.io/, `${source}: allows Privy auth for onboarding (batch 050)`);
+    assert.match(csp, /frame-src [^;]*https:\/\/auth\.privy\.io/, `${source}: allows Privy frame for onboarding`);
+  }
 });
