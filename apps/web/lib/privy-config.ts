@@ -32,7 +32,14 @@ export const whitechainTestnet = defineChain({
 /** PrivyProvider's config: chain 1874 only; a wallet (browser, or a phone app over WalletConnect) or email. A wallet is
  *  only connected (no sign-in message); an email customer gets Privy's wallet for this app. No Coinbase: its relay
  *  isn't in the pay pages' CSP. */
-export function privyConfig(wcProjectId: string | null) {
+/** Server-only Privy configuration (batch 050): returns { appId, appSecret } or null. */
+export function serverPrivyConfig(): { appId: string; appSecret: string } | null {
+  const appId = pick(process.env.PRIVY_APP_ID || process.env.NEXT_PUBLIC_PRIVY_APP_ID, PRIVY_APP_ID);
+  const appSecret = process.env.PRIVY_APP_SECRET?.trim();
+  return appId && appSecret ? { appId, appSecret } : null;
+}
+
+export function privyConfig(wcProjectId: string | null, landingHeader = "Pay with your wallet") {
   return {
     loginMethods: ["wallet", "email"] as ("wallet" | "email")[],
     supportedChains: [whitechainTestnet],
@@ -41,7 +48,7 @@ export function privyConfig(wcProjectId: string | null) {
     appearance: {
       walletChainType: "ethereum-only" as const,
       walletList: ["detected_ethereum_wallets", "metamask", "rainbow", "wallet_connect"] as ("detected_ethereum_wallets" | "metamask" | "rainbow" | "wallet_connect")[],
-      landingHeader: "Pay with your wallet",
+      landingHeader,
       showWalletLoginFirst: true,
     },
     // the modal's footer links what we share with Privy (security 046 M2); /docs has no #privacy anchor yet

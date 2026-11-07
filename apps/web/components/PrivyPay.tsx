@@ -15,11 +15,12 @@ import { OPENED_FAILED, endPrivySession, privyAttempt } from "@/lib/privy-sessio
 
 type PrivyWallet = Pick<ConnectedWallet, "getEthereumProvider" | "disconnect" | "walletClientType">;
 type Attempt = ReturnType<typeof privyAttempt<PrivyWallet>>;
-type HookState = { wallets: PrivyWallet[]; logout: () => Promise<void> };
+type HookState = { wallets: PrivyWallet[]; logout: () => Promise<void>; getAccessToken?: () => Promise<string | null> };
 /** The connected wallet, and close(): disconnect it, sign out of Privy, clear its tokens, remove the Privy tree. */
 export interface PrivySession {
   wallet: PrivyWallet;
   close: () => Promise<void>;
+  getAccessToken?: () => Promise<string | null>;
 }
 
 const EXITED = "exited_auth_flow"; // PrivyErrorCode.USER_EXITED_AUTH_FLOW: the customer closed the modal
@@ -29,16 +30,16 @@ const DRAIN_MS = 5 * 60_000; // after a cancel, a phone wallet may still approve
 
 /** Feeds Privy's hook state to the attempt's rules and opens the modal once Privy is ready. */
 function Connect({ attempt, onState }: { attempt: Attempt; onState: (state: HookState) => void }) {
-  const { ready, authenticated, logout } = usePrivy();
+  const { ready, authenticated, logout, getAccessToken } = usePrivy();
   const { wallets } = useWallets();
   const { isOpen } = useModalStatus();
   const latest = useRef<PrivyWallet[]>([]);
   const seenOpen = useRef(false);
   useEffect(() => {
     latest.current = wallets;
-    onState({ wallets, logout });
+    onState({ wallets, logout, getAccessToken });
     attempt.wallets(wallets); // the email wallet after this attempt's success; after a cancel, disconnects late ones
-  }, [wallets, logout, attempt, onState]);
+  }, [wallets, logout, getAccessToken, attempt, onState]);
   const { connectOrCreateWallet } = useConnectOrCreateWallet({
     onSuccess: ({ wallet }) => {
       if (wallet.type === "ethereum") attempt.succeeded(wallet);
@@ -80,7 +81,7 @@ const browserStorage = () => {
 let lingering: (() => void) | null = null;
 
 /** Privy's modal for one payment attempt. Resolves with the connected wallet; rejects with one plain sentence. */
-export function openPrivy(appId: string, wcProjectId: string | null): Promise<PrivySession> {
+export function openPrivy(appId: string, wcProjectId: string | null, landingHeader = "Pay with your wallet"): Promise<PrivySession> {
   lingering?.(); // never two Privy trees on the page
   const host = document.createElement("div");
   document.body.append(host);
@@ -107,14 +108,14 @@ export function openPrivy(appId: string, wcProjectId: string | null): Promise<Pr
   };
   return new Promise((resolve, reject) => {
     const attempt = privyAttempt<PrivyWallet>((outcome) => {
-      if ("wallet" in outcome) return resolve({ wallet: outcome.wallet, close });
+      if ("wallet" in outcome) return resolve({ wallet: outcome.wallet, close, getAccessToken: state.getAccessToken });
       void end(); // signed out and tokens cleared now; the tree stays a while to disconnect a late wallet
       lingering = unmount;
       window.setTimeout(unmount, DRAIN_MS);
       reject(new Error(outcome.message));
     });
     root.render(
-      <PrivyProvider appId={appId} config={privyConfig(wcProjectId)}>
+      <PrivyProvider appId={appId} config={privyConfig(wcProjectId, landingHeader)}>
         <Connect attempt={attempt} onState={onState} />
       </PrivyProvider>,
     );

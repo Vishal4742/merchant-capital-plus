@@ -6,17 +6,12 @@
 // never see this; they pay with the guest wallet. Nothing here asks the wallet for anything until a button is pressed.
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
-import { createWalletClient, custom, type EIP1193Provider } from "viem";
+import { createWalletClient, custom } from "viem";
 import { whitechainSepolia } from "viem/chains";
 import { createSiweMessage } from "viem/siwe";
 import { Button } from "@/components/Button";
 import { SIGN_IN_WINDOW_MS, WHITECHAIN_TESTNET, signInProblem, walletProblem } from "@/lib/onboarding";
-
-declare global {
-  interface Window {
-    ethereum?: EIP1193Provider;
-  }
-}
+import { privyAppId, walletConnectProjectId } from "@/lib/privy-config";
 
 const NO_ACCOUNT = "Your wallet didn't share an account. Unlock it, pick an account, then try again.";
 const OFFLINE = "We couldn't reach our server. Check your connection, then try again.";
@@ -91,11 +86,12 @@ export function SignIn({ available }: { available: boolean }) {
   const router = useRouter();
   const found = useHasWallet();
   const [chainId, setChainId] = useChainId(found);
-  const [busy, setBusy] = useState<"network" | "sign" | null>(null);
+  const [busy, setBusy] = useState<"network" | "sign" | "privy" | null>(null);
   const [networkError, setNetworkError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [signedIn, setSignedIn] = useState(false);
   const onWhitechain = chainId === whitechainSepolia.id;
+  const privy = privyAppId();
 
   async function addNetwork() {
     const provider = window.ethereum;
@@ -152,13 +148,71 @@ export function SignIn({ available }: { available: boolean }) {
     }
   }
 
+  async function signInWithPrivy() {
+    setError(null);
+    const appId = privyAppId();
+    if (!appId) return;
+    setBusy("privy");
+    try {
+      const wcId = walletConnectProjectId();
+      const { openPrivy } = await import("@/components/PrivyPay");
+      const session = await openPrivy(appId, wcId, "Sign in to WhiteFlow");
+      try {
+        const provider = await session.wallet.getEthereumProvider();
+        const wallet = createWalletClient({ chain: whitechainSepolia, transport: custom(provider) });
+        const [address] = await wallet.requestAddresses();
+        if (!address) throw new Problem(NO_ACCOUNT);
+        const asked = Date.now();
+        const nonceRes = await fetch("/api/auth/nonce", { cache: "no-store" }).catch(() => {
+          throw new Problem(OFFLINE);
+        });
+        const { nonce, error: nonceError } = (await nonceRes.json().catch(() => ({}))) as { nonce?: string; error?: string };
+        if (!nonceRes.ok || !nonce) throw new Problem(signInProblem(nonceRes.status, nonceError, Date.now() - asked));
+        const message = createSiweMessage({
+          address,
+          chainId: whitechainSepolia.id,
+          domain: window.location.host,
+          nonce,
+          uri: window.location.origin,
+          version: "1",
+          expirationTime: new Date(Date.now() + SIGN_IN_WINDOW_MS),
+          statement: "Sign in to your Merchant Capital+ dashboard. This is free and moves no money.",
+        });
+        const signature = await wallet.signMessage({ account: address, message });
+        const res = await fetch("/api/auth/verify", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ message, signature }),
+        }).catch(() => {
+          throw new Problem(OFFLINE);
+        });
+        if (!res.ok) throw new Problem(signInProblem(res.status, ((await res.json().catch(() => ({}))) as { error?: string }).error, Date.now() - asked));
+        setSignedIn(true);
+        router.refresh();
+      } finally {
+        await session.close().catch(() => undefined);
+      }
+    } catch (e) {
+      setError(e instanceof Problem ? e.message : walletProblem(e, "sign"));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <ol className="grid divide-y divide-hairline">
-      <Step n={1} title="A wallet" status={found === null ? "Checking" : found ? "Found" : "Not found"} tone={found ? "done" : "todo"}>
+      <Step n={1} title="A wallet" status={found === null ? "Checking" : found ? "Found" : privy ? "Privy ready" : "Not found"} tone={found || privy ? "done" : "todo"}>
         {found === null ? (
           <p className={help}>Looking for a wallet in this browser…</p>
         ) : found ? (
-          <p className={help}>There&apos;s a wallet in this browser. Use the account you want your shop paid to.</p>
+          <p className={help}>There&apos;s a wallet in this browser. Use the account you want your shop paid to, or sign in with Privy.</p>
+        ) : privy ? (
+          <>
+            <p className={help}>No wallet extension? Onboard instantly with Privy using email or any mobile wallet (WalletConnect / QR).</p>
+            <button type="button" className={`${secondary} inline-flex items-center gap-1.5`} onClick={signInWithPrivy} aria-disabled={busy !== null || signedIn}>
+              {busy === "privy" ? "Opening Privy…" : "Onboard with Privy"}
+            </button>
+          </>
         ) : (
           <>
             <p className={help}>No wallet in this browser yet. On a computer, install MetaMask, then reload this page.</p>
@@ -186,14 +240,42 @@ export function SignIn({ available }: { available: boolean }) {
       <Step
         n={3}
         title="Sign in"
-        status={signedIn ? "Signed in" : busy === "sign" ? "Waiting" : "Signed out"}
-        tone={signedIn ? "done" : busy === "sign" ? "busy" : "todo"}
+        status={signedIn ? "Signed in" : busy === "sign" || busy === "privy" ? "Waiting" : "Signed out"}
+        tone={signedIn ? "done" : busy === "sign" || busy === "privy" ? "busy" : "todo"}
       >
         <p className={help}>Use the wallet your shop gets paid to. You sign one message. It&apos;s free and moves no money.</p>
         {available ? (
-          <Button onClick={signIn} aria-disabled={!found || busy !== null || signedIn} className="justify-self-start">
-            {busy === "sign" ? "Check your wallet…" : signedIn ? "Opening your dashboard…" : "Sign in with your wallet"}
-          </Button>
+          <div className="flex flex-wrap items-center gap-3">
+            {found && (
+              <Button onClick={signIn} aria-disabled={busy !== null || signedIn} className="justify-self-start">
+                {busy === "sign" ? "Check your wallet…" : signedIn ? "Opening your dashboard…" : "Sign in with your wallet"}
+              </Button>
+            )}
+            {privy && (found ? (
+              <button
+                type="button"
+                className={secondary}
+                onClick={signInWithPrivy}
+                aria-disabled={busy !== null || signedIn}
+              >
+                {busy === "privy" ? "Opening Privy…" : signedIn ? "Opening your dashboard…" : "Sign in with Privy"}
+              </button>
+            ) : (
+              <Button
+                variant="primary"
+                onClick={signInWithPrivy}
+                aria-disabled={busy !== null || signedIn}
+                className="justify-self-start"
+              >
+                {busy === "privy" ? "Opening Privy…" : signedIn ? "Opening your dashboard…" : "Sign in with Privy"}
+              </Button>
+            ))}
+            {!found && !privy && (
+              <Button onClick={signIn} aria-disabled={true} className="justify-self-start">
+                Sign in with your wallet
+              </Button>
+            )}
+          </div>
         ) : (
           <p className="text-sm text-warning">Sign-in isn&apos;t set up on this server yet.</p>
         )}
