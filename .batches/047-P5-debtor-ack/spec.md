@@ -15,7 +15,7 @@
 - FR-PRIV-1: the pay page still makes no browser chain reads (the server reads the invoice and verifies).
 
 ## Design
-- EIP-712 domain `{name: "Merchant Capital+", version: "1", chainId: 1874, verifyingContract: CapitalMarket}`
+- EIP-712 domain `{name: "Whiteflow", version: "1", chainId: 1874, verifyingContract: CapitalMarket}`
   (packages/shared `capitalMarket`). Type `InvoiceAck(uint256 invoiceId, address merchant, uint256 amount, uint64
   dueDate, address debtor)`; amount is the invoice's face in USDT base units, dueDate unix seconds. One module
   (lib/invoice-ack.ts) builds it for the browser and the server.

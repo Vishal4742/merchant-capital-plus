@@ -1,4 +1,4 @@
-# Delivery phases: Merchant Capital+
+# Delivery phases: Whiteflow
 
 How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the requirements it delivers, tasks by owner, and an **exit gate** made of acceptance tests (SRS §6). **Rule: a phase's gate must pass before the next phase's core work starts.** Tick boxes as you go and log each passed gate in HANDOFF_LOG.md. Design and ABI: ARCHITECTURE.md. Event deadlines: HANDOFF.md.
 
@@ -16,8 +16,8 @@ How we deliver the requirements in `docs/SRS.md`. Each phase has a goal, the req
 | 6 | Proof and documentation | FR-PRIV-4, SR-* evidence, NFR-9 | G6: README review finds every SR item | all |
 | 7 | Video and submission | SR-ETH-2, CON-6 | G7: submission confirmed | all |
 
-## WhiteFlow phases W0–W10 (SRS v3.0 §8, adopted 2026-11-06)
-The owner's staged execution plan maps onto these (tracker: `notes/whiteflow-status.md`: Stage 2 = W4 subset, 3 = W2, 4 = W3, 5 = rest of W4, 6 = W5, 7 = W1, 8 = W6/W7, 9 = W9). Phases 0–7 below are the earlier Merchant Capital+ hackathon plan, kept for history.
+## Whiteflow phases W0–W10 (SRS v3.0 §8, adopted 2026-11-06)
+The owner's staged execution plan maps onto these (tracker: `notes/whiteflow-status.md`: Stage 2 = W4 subset, 3 = W2, 4 = W3, 5 = rest of W4, 6 = W5, 7 = W1, 8 = W6/W7, 9 = W9). Phases 0–7 below are the earlier Whiteflow hackathon plan, kept for history.
 
 
 | Phase | Delivers | Gate |
@@ -45,7 +45,7 @@ Feature flags default off for cross-chain, MCP writes, World sponsorship and mai
 - [ ] Claim faucet WBT from home (limited per wallet, IP and GitHub account): relayer hot wallet first, then demo customer and investor wallets; swap part to USDT on YetiTrade
 - [ ] Keys: Ankr (code `Whitechain2026`), Arkiv access key + Rabdi funds, Vercel + Neon, an empty public GitHub repo (keys in `.env` only, CON-7)
 - [x] Start the `claude-contracts` session: "You are claude-contracts. Read AGENTS.md, HANDOFF.md, docs/SRS.md, ARCHITECTURE.md, PHASES.md and the build plan. Planning only until hacking starts."
-- [x] Tell the frontend session: the idea is Merchant Capital+, its name is `claude-frontend`, and it rewrites `docs/FRONTEND-PLAN.md` against the SRS
+- [x] Tell the frontend session: the idea is Whiteflow, its name is `claude-frontend`, and it rewrites `docs/FRONTEND-PLAN.md` against the SRS
 - [ ] Optional: product name and design direction
 
 **R**
@@ -62,7 +62,7 @@ Feature flags default off for cross-chain, MCP writes, World sponsorship and mai
 ## Phase 1: Rail proofs
 **Goal:** prove the risky assumptions before building on them.
 
-- [x] `H` Create the repo (`main` 6b0ccd4 at 20:26, public on GitHub: Vishal4742/merchant-capital-plus); first commit = AGENTS.md, CLAUDE.md, PIPELINE.md, docs/SRS.md, ARCHITECTURE.md, PHASES.md, `tools/{pipeline-gate,batch-start,batch-close}.sh`, `.claude/agents/*`, `.claude/settings.json` (gate hook)
+- [x] `H` Create the repo (`main` 6b0ccd4 at 20:26, public on GitHub: Vishal4742/whiteflow); first commit = AGENTS.md, CLAUDE.md, PIPELINE.md, docs/SRS.md, ARCHITECTURE.md, PHASES.md, `tools/{pipeline-gate,batch-start,batch-close}.sh`, `.claude/agents/*`, `.claude/settings.json` (gate hook)
 - [x] `R` Run `bash ~/.claude/skills/three-techniques/scripts/setup.sh typescript` in the repo (ECC + Ponytail, commands, agents); merge the gate hook back if the merge touched it; restart sessions; **prove the gate fires** (an edit under `apps/` with no batch is denied) — PIPELINE.md §9
 - [x] From here on, every task in this file runs as a PIPELINE.md batch (`bash tools/batch-start.sh <phase> <slug>`)
 - [x] `C` Foundry project (`prague`); a stub contract pulls USDT with `receiveWithAuthorization`, submitted by a relayer key (DEP-1); measure the gas of a routed payment · batch 001-P1-rail-proof, verified 21:55: PullStub `0x51e2E2A530c9dabe6147D55F9bb7fcD47219325d` (explorer-verified), relayed pull tx `0xc4629df1…c847e` 94,034 gas, payer nonce 0 / 0 WBT

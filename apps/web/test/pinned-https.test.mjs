@@ -20,7 +20,7 @@ const ssl = (...args) => execFileSync("openssl", args, { cwd: dir, stdio: "pipe"
 before(() => {
   dir = mkdtempSync(join(tmpdir(), "wf-pinned-"));
   try {
-    ssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key", "-out", "ca.pem", "-days", "1", "-subj", "/CN=WhiteFlow Test CA");
+    ssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key", "-out", "ca.pem", "-days", "1", "-subj", "/CN=Whiteflow Test CA");
     const leaf = (name, cn, signer) => {
       writeFileSync(join(dir, `${name}.ext`), `subjectAltName=DNS:${cn}\nbasicConstraints=CA:FALSE\n`);
       ssl("req", "-newkey", "rsa:2048", "-nodes", "-keyout", `${name}.key`, "-out", `${name}.csr`, "-subj", `/CN=${cn}`);

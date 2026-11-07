@@ -1,7 +1,7 @@
-# Phase 5 / W5: WhiteFlow Merchant MCP bundle (batch 052)
+# Phase 5 / W5: Whiteflow Merchant MCP bundle (batch 052)
 
 **Built** (branch `wf/merchant-mcpb`, worktree `P:/wf-mcpb`, lane claude):
-- `packages/mcp` is now the WhiteFlow merchant connector, packaged as `whiteflow.mcpb`.
+- `packages/mcp` is now the Whiteflow merchant connector, packaged as `whiteflow.mcpb`.
   - 12 tools: business profile, customers, payment links, invoice draft/finalize/get/list, payments, collection summary, reminder drafts. 4 prompts.
   - One client serves two backends: the testnet gateway, or a clearly labelled in-process sandbox that implements `API-CONTRACT.md`.
   - pay_checkout and MCP_PAYER_KEY are removed (SRS v3.0 R1).

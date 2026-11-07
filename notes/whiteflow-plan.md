@@ -1,6 +1,6 @@
-# WhiteFlow — build plan in git (2026-11-06)
+# Whiteflow — build plan in git (2026-11-06)
 
-The one plan for taking WhiteFlow from the current build to a working testnet product, as stacked PRs to `main` (never a push to `main`). Requirements: `docs/SRS.md` v3.0 §8. Tracker of what is verified: `notes/whiteflow-status.md`. Each row is one pipeline batch (PIPELINE.md) and one PR, stacked on the previous one.
+The one plan for taking Whiteflow from the current build to a working testnet product, as stacked PRs to `main` (never a push to `main`). Requirements: `docs/SRS.md` v3.0 §8. Tracker of what is verified: `notes/whiteflow-status.md`. Each row is one pipeline batch (PIPELINE.md) and one PR, stacked on the previous one.
 
 ## Owner decisions this plan follows (2026-11-06, AskUserQuestion)
 | # | Decision |
@@ -32,6 +32,6 @@ Reachable in code: a tested testnet build, feature flags OFF for unproven routes
 
 ## Stage 4 design facts (read from contracts/src/MerchantPay.sol, V1, deployed)
 - `createInvoice(customer, amount, dueDate, refHash)` is sent by the wallet that will be paid (msg.sender = invoice.merchant): issuance must be signed by the policy's receiving wallet; `refHash` (bytes32) can commit the approved terms hash (invoice version + policy hash), binding terms on chain without a V2 deployment.
-- `payInvoice` (EIP-3009, relayed, gasless for the customer) pays invoice.merchant; WhiteFlow enforces one-off full payment (FR-BILL-5) before relaying.
+- `payInvoice` (EIP-3009, relayed, gasless for the customer) pays invoice.merchant; Whiteflow enforces one-off full payment (FR-BILL-5) before relaying.
 - `refund(paymentId, amount)` is sent by the merchant wallet and the contract caps cumulative refunds at gross: the on-chain double-refund guard FR-RFD-3 needs for the direct route.
 - Open: whether V1 is enough for FR-BILL-2 binding, or a V2 PaymentRouter is needed (WF§10) — decide in the Stage 4 spec with the lead.

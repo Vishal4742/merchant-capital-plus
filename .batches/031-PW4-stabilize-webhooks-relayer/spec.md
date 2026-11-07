@@ -1,6 +1,6 @@
 # Spec: 031-PW4-stabilize-webhooks-relayer
 
-Fix two existing reliability defects in already-approved features before any WhiteFlow payment automation (PRD §16 G0). No new product behaviour, no UI, no contract change.
+Fix two existing reliability defects in already-approved features before any Whiteflow payment automation (PRD §16 G0). No new product behaviour, no UI, no contract change.
 
 ## Requirements (cite docs/SRS.md IDs)
 - **FR-GW-7** Webhooks: `payment.succeeded` / `payment.refunded` sent signed with retries. **FR-PAY-10** the shop receives signed webhooks.

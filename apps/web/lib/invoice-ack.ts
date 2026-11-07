@@ -7,7 +7,7 @@ import { whitechainSepolia } from "viem/chains";
 // packages/shared addresses.capitalMarket, pinned by test/invoice-ack.test.mjs (lib/server/capital.ts is server-only)
 const CAPITAL_MARKET: Address = "0xecd63a369d23dfddc6bfac921e41a86760c20abe";
 
-export const ackDomain = { name: "WhiteFlow", version: "1", chainId: whitechainSepolia.id, verifyingContract: CAPITAL_MARKET } as const;
+export const ackDomain = { name: "Whiteflow", version: "1", chainId: whitechainSepolia.id, verifyingContract: CAPITAL_MARKET } as const;
 
 // merchantPay: invoice ids restart on a MerchantPay redeploy, so the id alone doesn't name one invoice (security 047 L1)
 export const ackTypes = {

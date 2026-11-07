@@ -84,6 +84,6 @@ None of these is a real secret.
 - **Fix:** add the id to `processed_events` only on the applied or stale paths.
 
 ## NEEDS THE USER
-- batch.md records a Privy app secret found in another lane's uncommitted `.batches/050-P5-privy-onboarding/batch.md` (P:/WhiteFlow). It was redacted, but **the human still has to rotate it** (AGENTS.md: the owner lane rotates it and claude-research is told).
+- batch.md records a Privy app secret found in another lane's uncommitted `.batches/050-P5-privy-onboarding/batch.md` (P:/Whiteflow). It was redacted, but **the human still has to rotate it** (AGENTS.md: the owner lane rotates it and claude-research is told).
 - New dev dependencies (PIPELINE §11): esbuild 0.28.2 and @anthropic-ai/mcpb 2.1.2. Both are dev-only, and the .mcpb ships a single esbuild bundle with no node_modules.
 - The SRS change (FR-MCP-12..17, FR-GW-16) is pending the human's approval. sk_test_ keys remain unscoped, full-merchant credentials that now also reach links and reports. The spec lists scoped and expiring keys as a production prerequisite.

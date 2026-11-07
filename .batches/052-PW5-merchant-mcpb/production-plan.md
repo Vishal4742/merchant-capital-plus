@@ -1,4 +1,4 @@
-# WhiteFlow Merchant MCP: production baseline, threat model and staged plan (batch 052 round 2)
+# Whiteflow Merchant MCP: production baseline, threat model and staged plan (batch 052 round 2)
 
 Written 2026-11-07 for the owner, whiteflow-ef (Stage 3 lead) and claude-contracts. Inputs: the external production
 review of `afd5a07` (findings F1–F8) and the human's round-2 decisions (batch.md). This is an engineering plan, not a

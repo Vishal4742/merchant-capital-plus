@@ -3,7 +3,7 @@
 // current_database() before any DDL; only app_gw_*/app_web_* tables inside those disposable databases are recreated.
 // Reads only DATABASE_URL from the given .env (other secrets in that file are never loaded), never prints it, and hands
 // the derived URL to child processes through their environment only. Children are released together by one GO.
-// Run from the repo root: node tools/stage2/web-neon.mjs P:/WhiteFlow/.env
+// Run from the repo root: node tools/stage2/web-neon.mjs P:/Whiteflow/.env
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
@@ -15,7 +15,7 @@ const require = createRequire(new URL("../../apps/web/package.json", import.meta
 const { neon } = require("@neondatabase/serverless");
 const { sqlStatements } = await import("../../apps/web/db/statements.mjs");
 
-const raw = parseEnv(readFileSync(process.argv[2] ?? "P:/WhiteFlow/.env", "utf8")).DATABASE_URL;
+const raw = parseEnv(readFileSync(process.argv[2] ?? "P:/Whiteflow/.env", "utf8")).DATABASE_URL;
 if (!raw) {
   console.log("BLOCKED: DATABASE_URL missing");
   process.exit(2);

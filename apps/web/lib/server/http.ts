@@ -1,5 +1,5 @@
 // Shared helpers for the gateway API routes (batch 007): JSON errors, input validation, rate limits. Who the caller is
-// comes from lib/server/legacy.ts legacyAccess() (batch 051: the WhiteFlow workspace session; the wallet cookie is retired).
+// comes from lib/server/legacy.ts legacyAccess() (batch 051: the Whiteflow workspace session; the wallet cookie is retired).
 // Route handlers stay framework-free (they read the Request), so tests call them directly.
 import { createHash, randomBytes, randomInt } from "node:crypto";
 // next/navigation's server export of it: "next/navigation.js" is the browser module (it breaks route bundles), and the

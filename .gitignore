@@ -42,8 +42,8 @@ docs/PITCH.md
 .batches/*/round-*/shots-ux/
 .batches/*/round-*/probes/
 
-# WhiteFlow local workspace (owner, 2026-11-06): kept on disk next to the checkout, never in git.
-# Planning docs (Business Payments PRD, WhiteFlow vision and build plan) and any other loose
+# Whiteflow local workspace (owner, 2026-11-06): kept on disk next to the checkout, never in git.
+# Planning docs (Business Payments PRD, Whiteflow vision and build plan) and any other loose
 # root-level .md file are local; the project's own root docs listed below stay tracked.
 /*.md
 !/AGENTS.md
@@ -56,5 +56,5 @@ docs/PITCH.md
 !/WHITECHAIN_FEEDBACK.md
 # Pixa wallet source (MIT): a local reference copy. The parts adapted into packages/mcp are credited in README and packages/mcp/THIRD_PARTY_LICENSES
 /Pixa-main/
-# Pre-git snapshot of this repo that the WhiteFlow sessions still work in
+# Pre-git snapshot of this repo that the Whiteflow sessions still work in
 /merchant-capital-plus-main/

@@ -2,7 +2,7 @@ VERDICT: PASS
 
 ## Commands
 - `npm test` (packages/sdk): 17 tests, 17 pass, 0 fail (13 builder + 4 tester probes in test/edges.test.ts). `npx tsc --noEmit`: exit 0.
-- CI: run https://github.com/Vishal4742/merchant-capital-plus/actions/runs/42112329778 on 199fa00: `sdk` success (web, secrets, contracts, relayer also success).
+- CI: run https://github.com/Vishal4742/whiteflow/actions/runs/42112329778 on 199fa00: `sdk` success (web, secrets, contracts, relayer also success).
 - `grep -n import index.ts` -> only line 4 `node:crypto`. package.json has no `"dependencies"` (devDependencies only).
 
 ## Acceptance criteria

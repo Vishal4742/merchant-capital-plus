@@ -34,7 +34,7 @@ export function InvestorApp({ view, header }: InvestorAppProps) {
           {/* a full load: home runs under its own headers (security review 005 F-N4) */}
           {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
           <a href="/" className="inline-flex min-h-11 items-center text-[17px] font-medium tracking-[-0.02em] whitespace-nowrap md:text-[19px]">
-            WhiteFlow
+            Whiteflow
           </a>
           {/* no CSS order: what you see is the tab order at every width; the wallet wraps below on a phone (UX review #33 M4) */}
           <nav aria-label="Capital" className="flex gap-1">

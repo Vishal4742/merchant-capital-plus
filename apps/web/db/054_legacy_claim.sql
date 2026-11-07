@@ -1,5 +1,5 @@
 -- Batch 051 (Stage 3, SRS v3.1 FR-BIZ-1, FR-BIZ-3 pattern, FR-AUTH-3, CON-11): single-use challenges for linking a
--- legacy merchant wallet to a WhiteFlow workspace. An Owner asks; the server builds the EIP-4361 message bound to that
+-- legacy merchant wallet to a Whiteflow workspace. An Owner asks; the server builds the EIP-4361 message bound to that
 -- principal, workspace and wallet; the wallet signs; lib/server/legacy.ts consumes it in the statement that sets
 -- wf_businesses.legacy_merchant (UNIQUE, 053) and moves the wallet's app_gw_keys into the workspace.
 -- Its own table on purpose: wf_challenges.purpose stays as 053 defines it. Additive and re-run safe; splitter-compatible.

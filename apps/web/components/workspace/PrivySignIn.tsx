@@ -2,8 +2,8 @@
 // Business sign-in (batch 050, SRS FR-BIZ-6 v3.1): the only screen that loads Privy (its CSP allows Privy; the dashboard,
 // checkout and receipts don't). Privy signs the person in with email or an existing external wallet on Whitechain
 // Testnet; no embedded wallet is ever created for a business. After an explicit press, Privy's access token and identity
-// token are exchanged once for a WhiteFlow session (POST /api/v2/auth/privy); the server verifies both. A Privy session
-// left in this browser is never used silently, and signing out of WhiteFlow (?out=1) ends Privy's session here too.
+// token are exchanged once for a Whiteflow session (POST /api/v2/auth/privy); the server verifies both. A Privy session
+// left in this browser is never used silently, and signing out of Whiteflow (?out=1) ends Privy's session here too.
 import { PrivyProvider, useIdentityToken, usePrivy } from "@privy-io/react-auth";
 import { useEffect, useRef, useState } from "react";
 import { whitechainTestnet } from "@/lib/privy-config";
@@ -19,7 +19,7 @@ export function businessPrivyConfig(wcProjectId: string | null) {
     appearance: {
       walletChainType: "ethereum-only" as const,
       walletList: ["detected_ethereum_wallets", "metamask", "rainbow", "wallet_connect"] as ("detected_ethereum_wallets" | "metamask" | "rainbow" | "wallet_connect")[],
-      landingHeader: "Sign in to WhiteFlow",
+      landingHeader: "Sign in to Whiteflow",
       showWalletLoginFirst: false,
     },
     legal: { privacyPolicyUrl: "/docs" },
@@ -33,14 +33,14 @@ const secondary =
   "h-11 cursor-pointer rounded-pill border border-current px-5 text-sm font-medium text-accent hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 
 const NO_IDENTITY_TOKEN =
-  "Privy signed you in but didn't return an identity token, so WhiteFlow can't confirm your email or wallets. The owner needs to turn on “Return user data in an identity token” in the Privy dashboard.";
+  "Privy signed you in but didn't return an identity token, so Whiteflow can't confirm your email or wallets. The owner needs to turn on “Return user data in an identity token” in the Privy dashboard.";
 
 function Flow() {
   const { ready, authenticated, login, logout, getAccessToken, user } = usePrivy();
   const { identityToken } = useIdentityToken();
   const [wanted, setWanted] = useState(false); // the person pressed Continue on this page
   const [error, setError] = useState<string | null>(null);
-  // ?out=1: WhiteFlow just signed out; Privy's session in this browser ends too before anything else (read once)
+  // ?out=1: Whiteflow just signed out; Privy's session in this browser ends too before anything else (read once)
   const [cleared, setCleared] = useState(() => typeof window === "undefined" || new URLSearchParams(window.location.search).get("out") !== "1");
   const sent = useRef(false);
   const busy = wanted && authenticated && error === null;
@@ -109,7 +109,7 @@ function Flow() {
       )}
       <div className="flex flex-wrap gap-3">
         <button type="button" className={primary} disabled={busy} onClick={start}>
-          {busy ? "Signing you in…" : authenticated ? "Continue to WhiteFlow" : "Continue with email or wallet"}
+          {busy ? "Signing you in…" : authenticated ? "Continue to Whiteflow" : "Continue with email or wallet"}
         </button>
         {authenticated && !busy && (
           <button type="button" className={secondary} onClick={() => void switchAccount()}>

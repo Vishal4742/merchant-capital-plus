@@ -114,7 +114,7 @@ export class Journal {
         if (now - unresolved.at > RESUME_LIMIT_MS) {
           const flagged = { ...unresolved, last: now, outcome: "needs_reconciliation" as const, note: "outcome unknown and past the server's 24-hour retention: it can no longer be settled by a retry" };
           // stored with the refusal: a caller that ignores it still can't slip a fresh key past it
-          return refuse(new JournalRefusal("An earlier identical request's outcome is still unknown, and WhiteFlow no longer keeps its key, so it can't be safely retried.", flagged), entries.map((e) => (e === unresolved ? flagged : e)));
+          return refuse(new JournalRefusal("An earlier identical request's outcome is still unknown, and Whiteflow no longer keeps its key, so it can't be safely retried.", flagged), entries.map((e) => (e === unresolved ? flagged : e)));
         }
         return keep({ key: unresolved.key, source: "resumed", since: unresolved.at }, entries.map((e) => (e === unresolved ? { ...e, last: now } : e)));
       }

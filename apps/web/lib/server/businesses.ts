@@ -215,7 +215,7 @@ function ownerCtx(ctx: AuthContext): asserts ctx is AuthContext & { businessId: 
   if (!ctx.principalId) throw new Forbidden();
 }
 
-/** Adds a person who has signed in to WhiteFlow at least once, found by a wallet Privy verified for them or their
+/** Adds a person who has signed in to Whiteflow at least once, found by a wallet Privy verified for them or their
  *  verified email (Owner only). An Owner added this way increments owner_count in the same statement. */
 export async function addMember(ctx: AuthContext, input: { wallet?: unknown; email?: unknown; role: unknown; idempotencyKey: unknown }, now = Date.now()): Promise<{ principalId: string; role: Role }> {
   ownerCtx(ctx);
@@ -235,7 +235,7 @@ export async function addMember(ctx: AuthContext, input: { wallet?: unknown; ema
   const [target] = wallet
     ? await query<{ id: string }>("SELECT principal_id AS id FROM wf_principal_wallets WHERE address = $1 ORDER BY updated_at DESC LIMIT 1", [wallet])
     : await query<{ id: string }>("SELECT id FROM wf_principals WHERE lower(email) = $1 ORDER BY last_sign_in_at DESC LIMIT 1", [email]);
-  if (!target) throw new HttpError(404, "Nobody has signed in to WhiteFlow with that yet. Ask them to sign in once, then add them.");
+  if (!target) throw new HttpError(404, "Nobody has signed in to Whiteflow with that yet. Ask them to sign in once, then add them.");
   const response = { principalId: target.id, role };
   return withIdempotency(async () => {
     let r: { is_owner: number; done: number };

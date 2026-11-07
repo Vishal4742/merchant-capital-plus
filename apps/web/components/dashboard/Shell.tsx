@@ -1,10 +1,10 @@
-// WhiteFlow Workspace Shell — Polished financial-workspace layout.
-// Sidebar with WhiteFlow wordmark, navigation sections, account session & network indicator, and main content area.
+// Whiteflow Workspace Shell — Polished financial-workspace layout.
+// Sidebar with Whiteflow wordmark, navigation sections, account session & network indicator, and main content area.
 import type { ReactNode } from "react";
 import { Nav, type NavKey } from "@/components/dashboard/Nav";
 import { PrivateReads } from "@/components/dashboard/PrivateReads";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { WhiteFlowWordmark } from "@/components/WhiteFlowLogo";
+import { WhiteflowWordmark } from "@/components/WhiteflowLogo";
 import { plainToggle } from "@/components/gateway/Frame";
 
 export function Shell({
@@ -26,8 +26,8 @@ export function Shell({
           {/* Brand Wordmark linking to Home, and the day/night switch (batch 060) */}
           <div className="order-1 flex items-center justify-between gap-2 md:mb-2">
             {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
-            <a href="/" className="inline-flex min-h-10 items-center whitespace-nowrap rounded-lg px-2 py-1 transition-colors hover:bg-surface-sunk" aria-label="WhiteFlow home">
-              <WhiteFlowWordmark />
+            <a href="/" className="inline-flex min-h-10 items-center whitespace-nowrap rounded-lg px-2 py-1 transition-colors hover:bg-surface-sunk" aria-label="Whiteflow home">
+              <WhiteflowWordmark />
             </a>
             {/* from md up it sits by the wordmark; on a phone it ends the menu row, so the address and Sign out keep the top row */}
             <ThemeToggle className={`${plainToggle} max-md:hidden`} />

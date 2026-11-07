@@ -1,7 +1,7 @@
 // Server-only API keys (SRS FR-GW-6): pk_test_ (publishable) and sk_test_ (secret), test mode only (FR-GW-14).
 // Only a SHA-256 of each key is stored and the key is shown once. authenticateKey() is the check claude-frontend's
 // POST /api/v1/sessions uses for Bearer keys (FR-PAY-4).
-// Batch 051 (FR-AUTH-3): a key belongs to the WhiteFlow workspace that linked its merchant wallet. A new key takes that
+// Batch 051 (FR-AUTH-3): a key belongs to the Whiteflow workspace that linked its merchant wallet. A new key takes that
 // workspace in its INSERT; keys made before the link get it in the claim statement (lib/server/legacy.ts).
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { getAddress, type Address } from "viem";

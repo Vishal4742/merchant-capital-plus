@@ -1,4 +1,4 @@
-// WhiteFlow Invoices Workspace (/merchant/invoices):
+// Whiteflow Invoices Workspace (/merchant/invoices):
 // Create, manage and track business invoices and payment links settled to Whitechain in USDT.
 import { connection } from "next/server";
 import { Suspense } from "react";

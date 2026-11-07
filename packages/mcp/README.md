@@ -1,10 +1,10 @@
-# WhiteFlow Merchant MCP
+# Whiteflow Merchant MCP
 
 Manage payment collection by asking your AI assistant: create payment links and invoices, check whether they're paid, see what's outstanding, and draft reminders. It's a local MCP server (stdio), packaged as **`whiteflow.mcpb`** for MCPB clients such as Claude Desktop, with a manual config for other clients.
 
 > **Not production.** It runs in one of two modes, and every result says which:
 > - **Sandbox** (the default): a simulator on your computer. No account, no network, no real money. URLs on `sandbox.whiteflow.invalid` don't open.
-> - **Testnet**: the WhiteFlow gateway on Whitechain Testnet with your `sk_test_` key. Test USDT only. Payment links, payments and collection summaries are live once the gateway routes in [PR #48](https://github.com/Vishal4742/merchant-capital-plus/pull/48) are deployed. Customers, invoices and reminders are **not on the testnet backend yet**, and those tools say so.
+> - **Testnet**: the Whiteflow gateway on Whitechain Testnet with your `sk_test_` key. Test USDT only. Payment links, payments and collection summaries are live once the gateway routes in [PR #48](https://github.com/Vishal4742/whiteflow/pull/48) are deployed. Customers, invoices and reminders are **not on the testnet backend yet**, and those tools say so.
 
 ## Install
 
@@ -19,7 +19,7 @@ This builds `dist/whiteflow.mcpb`, plus `whiteflow.mcpb.sha256` (the archive) an
 | Setting | Default | Notes |
 |---|---|---|
 | Mode | `sandbox` | `testnet` to use the real gateway |
-| WhiteFlow secret key | empty | testnet only: your `sk_test_` key. Marked sensitive |
+| Whiteflow secret key | empty | testnet only: your `sk_test_` key. Marked sensitive |
 | Gateway URL | `https://whiteflow.org` | testnet only |
 | Business time zone | `UTC` | e.g. `Asia/Kolkata`. Used for due dates and "this week" |
 
@@ -83,7 +83,7 @@ Scenarios for the simulator: `--scenario duplicate | out-of-order | bad-signatur
 
 | You say | What happens |
 |---|---|
-| "Create a ₹15,000 payment link for Acme's website redesign." | A single-use link priced in INR. WhiteFlow converts it to USDT at a rate locked at checkout; the connector never converts. You get the URL to send yourself. |
+| "Create a ₹15,000 payment link for Acme's website redesign." | A single-use link priced in INR. Whiteflow converts it to USDT at a rate locked at checkout; the connector never converts. You get the URL to send yourself. |
 | "Draft an invoice for Priya: three consulting sessions at ₹2,000 each, due next Friday." | Invoices are issued in USDT, the settlement asset. The assistant asks for the USDT amounts, or offers an INR-priced payment link. It never converts the price itself. |
 | "Has invoice WF-1042 been paid?" | Status, amount paid and amount due, from verified payment records. |
 | "Show overdue invoices and the total outstanding." | Overdue invoices with days overdue, plus outstanding and overdue totals per currency. |
@@ -109,7 +109,7 @@ There are also prompt templates: **Collect a payment**, **Create an invoice**, *
 | `list_payments` | Verified payments, with invoice or link and evidence | ✓ | ✓ | |
 | `get_collection_summary` | Collected (gross, fees, refunds, net) and outstanding or overdue, per currency | ✓ (collected only) | ✓ | |
 | `prepare_invoice_reminder` | Reminder draft and recipient, `sent: false` | — | ✓ | |
-| `get_operation_status` | Writes whose outcome is unknown or needs checking, plus what WhiteFlow's records say about each | ✓ (local; lookup once PR #48 is live) | ✓ | |
+| `get_operation_status` | Writes whose outcome is unknown or needs checking, plus what Whiteflow's records say about each | ✓ (local; lookup once PR #48 is live) | ✓ | |
 
 How writes behave (production review F2/F3):
 - **One operation identity.** Each write sends an `Idempotency-Key`, and the connector records it before sending. The server replays the same record for the same key and request, marked `replayed`, and refuses the same key with a different request.
@@ -160,9 +160,9 @@ Before production (tracked in `.batches/052-PW5-merchant-mcpb/production-plan.md
 - distributed rate limits and cursor pagination;
 - a signed, provenance-attested release from CI;
 - mainnet contracts and their review;
-- the business, legal and compliance gates in the WhiteFlow plan.
+- the business, legal and compliance gates in the Whiteflow plan.
 
-Testnet mode needs the gateway routes from [PR #48](https://github.com/Vishal4742/merchant-capital-plus/pull/48) (`GET /api/v1/account`, secret-key links, `GET /api/v1/links/{id}`, `GET /api/v1/operations/{key}`), owned by claude-contracts. Until those are deployed, testnet mode answers "This WhiteFlow backend doesn't offer that yet."
+Testnet mode needs the gateway routes from [PR #48](https://github.com/Vishal4742/whiteflow/pull/48) (`GET /api/v1/account`, secret-key links, `GET /api/v1/links/{id}`, `GET /api/v1/operations/{key}`), owned by claude-contracts. Until those are deployed, testnet mode answers "This Whiteflow backend doesn't offer that yet."
 
 ## Phase two (designed, not built)
 

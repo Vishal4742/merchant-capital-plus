@@ -85,7 +85,7 @@ function TopBar() {
         {/* plain <a>: a full load, so leaving the strict CSP of /docs never carries it to / or /proofs (security R2-F3) */}
         {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- the full load is the point (see above) */}
         <a href="/" className="title inline-flex min-h-11 items-center whitespace-nowrap">
-          WhiteFlow
+          Whiteflow
         </a>
         <span className="eyebrow text-ink-muted">Docs</span>
       </span>
@@ -246,7 +246,7 @@ function ServerSdk() {
       title={<>Create, read and list, <span className="emphasis">from your server.</span></>}
       lede={
         <>
-          <Code>@merchant-capital/sdk</Code> is TypeScript with no dependencies. It holds your secret key, so it refuses to run in a browser, refuses a{" "}
+          <Code>@whiteflow/sdk</Code> is TypeScript with no dependencies. It holds your secret key, so it refuses to run in a browser, refuses a{" "}
           <Code>pk_</Code> key and talks only to an https gateway.
         </>
       }

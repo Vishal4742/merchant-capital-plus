@@ -1,4 +1,4 @@
-// WhiteFlow Workspace Settings (/merchant/settings):
+// Whiteflow Workspace Settings (/merchant/settings):
 // Workspace profile, receiving-wallet policies, network configuration, and honest permissions disclosures.
 import { connection } from "next/server";
 import { Suspense } from "react";
@@ -45,7 +45,7 @@ export default function SettingsPage() {
 async function SettingsLoader() {
   await connection();
   const merchant = await currentMerchant();
-  // the WhiteFlow workspace (Privy sign-in, team, receiving wallet) shows whether or not a merchant wallet is linked;
+  // the Whiteflow workspace (Privy sign-in, team, receiving wallet) shows whether or not a merchant wallet is linked;
   // without a linked wallet, the link step (batch 051) sits right under it
   if (!merchant) {
     return (
@@ -92,7 +92,7 @@ async function SettingsLoader() {
           <dl className="grid gap-4 text-sm sm:grid-cols-2">
             <div className="grid gap-1">
               <dt className="eyebrow text-ink-muted">Business Name</dt>
-              <dd className="font-medium text-ink">{config?.merchantName ?? "WhiteFlow Business"}</dd>
+              <dd className="font-medium text-ink">{config?.merchantName ?? "Whiteflow Business"}</dd>
             </div>
             <div className="grid gap-1">
               <dt className="eyebrow text-ink-muted">Display Timezone</dt>
@@ -108,7 +108,7 @@ async function SettingsLoader() {
             <div className="grid gap-1 sm:col-span-2">
               <dt className="eyebrow text-ink-muted">Sign-in</dt>
               <dd className="text-xs text-ink-muted leading-relaxed">
-                WhiteFlow sign-in (Privy: email or wallet) with roles per workspace. This workspace manages the merchant wallet above; changing where it is paid
+                Whiteflow sign-in (Privy: email or wallet) with roles per workspace. This workspace manages the merchant wallet above; changing where it is paid
                 needs an approval wallet. Sign out from the Workspace section or the account menu.
               </dd>
             </div>

@@ -29,18 +29,18 @@ export async function buildManifest() {
   return {
     manifest_version: "0.3",
     name: "whiteflow-merchant",
-    display_name: "WhiteFlow Merchant",
+    display_name: "Whiteflow Merchant",
     version: VERSION,
-    description: "Create payment links and invoices, track collections and see what's outstanding, by asking. Sandbox by default; testnet with your WhiteFlow sk_test_ key.",
+    description: "Create payment links and invoices, track collections and see what's outstanding, by asking. Sandbox by default; testnet with your Whiteflow sk_test_ key.",
     long_description:
-      "WhiteFlow Merchant lets a business manage payment collection from a conversation: find or create customers, create payment links, draft and finalize invoices, check whether they've been paid, list verified payments, summarize collections and draft reminders.\n\n" +
-      "**Two modes.** *Sandbox* (the default) is a local simulator: no account, no network, no real money; payments are simulated by you with the bundled `sandbox-cli`. *Testnet* uses the WhiteFlow gateway on Whitechain Testnet with your own `sk_test_` secret key (test USDT, not real money). On testnet, payment links, payments and collection summaries are live; customers and invoices are not on the testnet backend yet, and those tools say so.\n\n" +
-      "**What it never does.** It doesn't send email, move money, sign transactions, refund, or change keys, wallets or webhooks. Creating a link or finalizing an invoice sends nothing. Payment status comes only from WhiteFlow's verified records.",
-    author: { name: "WhiteFlow contributors", url: "https://github.com/Vishal4742/merchant-capital-plus" },
-    repository: { type: "git", url: "https://github.com/Vishal4742/merchant-capital-plus" },
-    homepage: "https://github.com/Vishal4742/merchant-capital-plus/tree/main/packages/mcp",
-    documentation: "https://github.com/Vishal4742/merchant-capital-plus/blob/main/packages/mcp/README.md",
-    support: "https://github.com/Vishal4742/merchant-capital-plus/issues",
+      "Whiteflow Merchant lets a business manage payment collection from a conversation: find or create customers, create payment links, draft and finalize invoices, check whether they've been paid, list verified payments, summarize collections and draft reminders.\n\n" +
+      "**Two modes.** *Sandbox* (the default) is a local simulator: no account, no network, no real money; payments are simulated by you with the bundled `sandbox-cli`. *Testnet* uses the Whiteflow gateway on Whitechain Testnet with your own `sk_test_` secret key (test USDT, not real money). On testnet, payment links, payments and collection summaries are live; customers and invoices are not on the testnet backend yet, and those tools say so.\n\n" +
+      "**What it never does.** It doesn't send email, move money, sign transactions, refund, or change keys, wallets or webhooks. Creating a link or finalizing an invoice sends nothing. Payment status comes only from Whiteflow's verified records.",
+    author: { name: "Whiteflow contributors", url: "https://github.com/Vishal4742/whiteflow" },
+    repository: { type: "git", url: "https://github.com/Vishal4742/whiteflow" },
+    homepage: "https://github.com/Vishal4742/whiteflow/tree/main/packages/mcp",
+    documentation: "https://github.com/Vishal4742/whiteflow/blob/main/packages/mcp/README.md",
+    support: "https://github.com/Vishal4742/whiteflow/issues",
     icon: "icon.png",
     license: "MIT",
     keywords: ["payments", "invoices", "payment-links", "collections", "stablecoin", "usdt", "whitechain", "merchant"],
@@ -66,21 +66,21 @@ export async function buildManifest() {
       mode: {
         type: "string",
         title: "Mode",
-        description: "\"sandbox\" (default): a local simulator with no real money and no network. \"testnet\": the WhiteFlow gateway on Whitechain Testnet; needs your secret key below.",
+        description: "\"sandbox\" (default): a local simulator with no real money and no network. \"testnet\": the Whiteflow gateway on Whitechain Testnet; needs your secret key below.",
         default: "sandbox",
         required: false,
       },
       api_key: {
         type: "string",
-        title: "WhiteFlow secret key (testnet only)",
-        description: "Your sk_test_ key from the WhiteFlow dashboard (Developers screen). Leave empty for sandbox. Never a wallet private key or seed phrase: the connector never asks for one.",
+        title: "Whiteflow secret key (testnet only)",
+        description: "Your sk_test_ key from the Whiteflow dashboard (Developers screen). Leave empty for sandbox. Never a wallet private key or seed phrase: the connector never asks for one.",
         sensitive: true,
         required: false,
       },
       base_url: {
         type: "string",
         title: "Gateway URL (testnet only)",
-        description: "The WhiteFlow gateway's https origin.",
+        description: "The Whiteflow gateway's https origin.",
         default: DEFAULT_BASE_URL,
         required: false,
       },

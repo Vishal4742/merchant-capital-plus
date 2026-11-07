@@ -50,7 +50,7 @@ let sk, otherSk;
 beforeEach(async () => {
   await resetDb();
   faults.before = faults.after = null;
-  // batch 051: a secret key acts once its wallet is linked to a WhiteFlow workspace (this file wraps setTestDb itself,
+  // batch 051: a secret key acts once its wallet is linked to a Whiteflow workspace (this file wraps setTestDb itself,
   // so it seeds directly, as gw-outbox does)
   await seedWorkspace(MERCHANT);
   await seedWorkspace(OTHER_MERCHANT);

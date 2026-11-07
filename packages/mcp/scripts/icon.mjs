@@ -1,4 +1,4 @@
-// Draws icon.png (512×512 RGBA) for the bundle: the WhiteFlow "W" in lavender on a rounded brand-blue tile, the same
+// Draws icon.png (512×512 RGBA) for the bundle: the Whiteflow "W" in lavender on a rounded brand-blue tile, the same
 // artwork as apps/web/app/icon.svg (the mark is traced from the brand construction drawing). No external assets;
 // deterministic, so re-running it writes the same bytes.
 // Usage: node scripts/icon.mjs
@@ -7,7 +7,7 @@ import { deflateSync } from "node:zlib";
 
 const SIZE = 512, RADIUS = 112, SS = 4; // 4×4 supersampling for smooth edges
 const TILE = [0x41, 0x2f, 0xf0], MARK = [0xd0, 0xcd, 0xfb];
-// The mark's three pieces (rounded tips flattened), in the 208.61 × 100 units of components/WhiteFlowMark.tsx.
+// The mark's three pieces (rounded tips flattened), in the 208.61 × 100 units of components/WhiteflowMark.tsx.
 const PIECES = [
   [[0.00, 0.00], [59.82, 0.00], [75.41, 53.56], [49.02, 94.29], [48.51, 95.02], [47.94, 95.72], [47.33, 96.37], [46.68, 96.97], [45.98, 97.53], [45.24, 98.04], [44.48, 98.49], [43.67, 98.89], [42.85, 99.23], [42.00, 99.51], [41.13, 99.73], [40.25, 99.88], [39.37, 99.97], [38.47, 100.00], [37.58, 99.97], [36.69, 99.87], [35.81, 99.71], [34.95, 99.49], [34.10, 99.20], [33.28, 98.86], [32.48, 98.45], [31.71, 98.00], [30.98, 97.48], [30.29, 96.92], [29.63, 96.31], [29.03, 95.66], [28.47, 94.96], [27.96, 94.22], [27.51, 93.45], [27.11, 92.65], [26.77, 91.83], [26.49, 90.98]],
   [[99.56, 5.76], [100.08, 5.02], [100.64, 4.32], [101.26, 3.66], [101.92, 3.05], [102.63, 2.49], [103.37, 1.98], [104.15, 1.52], [104.95, 1.12], [105.79, 0.78], [106.64, 0.49], [107.52, 0.27], [108.40, 0.12], [109.30, 0.02], [110.20, -0.01], [111.10, 0.03], [112.00, 0.13], [112.88, 0.29], [113.76, 0.52], [114.61, 0.80], [115.44, 1.15], [116.25, 1.56], [117.02, 2.02], [117.76, 2.54], [118.46, 3.10], [119.12, 3.72], [119.73, 4.38], [120.29, 5.08], [120.81, 5.83], [121.26, 6.60], [121.67, 7.41], [122.01, 8.24], [122.29, 9.10], [148.76, 100.00], [88.94, 100.00], [73.30, 46.29]],

@@ -1,6 +1,6 @@
 "use client";
 
-// WhiteFlow Merchant Invoices: create one from the shop's own wallet, share its pay link, cancel an untouched
+// Whiteflow Merchant Invoices: create one from the shop's own wallet, share its pay link, cancel an untouched
 // one (MerchantPay refuses to cancel a part-paid or financed invoice). The customer's name and the label are private:
 // they stay in this browser's localStorage, never go on chain.
 import { useRouter } from "next/navigation";

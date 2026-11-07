@@ -15,7 +15,7 @@ Command: `node hero-contrast.mjs <375|640|1440> <light|dark>`. The probe hides t
 
 | Text (size, opacity) | Need | 375 | 640 | 1440 |
 |---|---|---|---|---|
-| Wordmark "Merchant Capital+" (22 px, 1) | 4.5 | 12.96 | 15.55 | 15.63 |
+| Wordmark "Whiteflow" (22 px, 1) | 4.5 | 12.96 | 15.55 | 15.63 |
 | **"Phase 1 · rail proofs" (13 px, 1)** | 4.5 | hidden below `sm` | **7.58** over `[23,35,226]` | **7.58** over `[23,35,226]` |
 | h1 (40 / 40 / 56 px, 1) | 3 | 7.58 | 11.08 | 13.43 |
 | "device" (42 / 42 / 58.8 px, 1) | 3 | 15.63 | 11.63 | 13.64 |

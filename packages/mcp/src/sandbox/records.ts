@@ -185,7 +185,7 @@ function draftFields(state: SandboxState, merchant: SMerchant, body: Record<stri
   const customerId = typeof body.customer_id === "string" ? body.customer_id : "";
   if (!state.customers.some((c) => c.id === customerId && c.merchant_id === merchant.id)) throw new SandboxHttpError(404, "No such customer: search_customers or create_customer first, then use its id.");
   const currency = typeof body.currency === "string" ? body.currency.toUpperCase() : "";
-  if (currency !== "USDT") throw bad("Invoices are issued in USDT, the settlement asset. WhiteFlow never converts an invoice's currency: give the amounts in USDT, or use a payment link priced in another currency.");
+  if (currency !== "USDT") throw bad("Invoices are issued in USDT, the settlement asset. Whiteflow never converts an invoice's currency: give the amounts in USDT, or use a payment link priced in another currency.");
   if (!Array.isArray(body.line_items) || body.line_items.length === 0 || body.line_items.length > MAX_LINES) throw bad(`line_items must be a list of 1 to ${MAX_LINES} items.`);
   const lines = body.line_items.map((raw, i) => {
     const item = (raw ?? {}) as Record<string, unknown>;

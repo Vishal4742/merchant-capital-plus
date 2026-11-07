@@ -28,7 +28,7 @@ export function run(argv: string[], env: Record<string, string | undefined>, out
   switch (command) {
     case "init": {
       const { created } = ensureSandbox(dir, zone);
-      out(`${created ? "Created" : "Found"} the WhiteFlow sandbox in ${dir} (simulated data only; no real money, no network).`);
+      out(`${created ? "Created" : "Found"} the Whiteflow sandbox in ${dir} (simulated data only; no real money, no network).`);
       return 0;
     }
     case "pay": {
@@ -65,7 +65,7 @@ export function run(argv: string[], env: Record<string, string | undefined>, out
     }
     case "status": {
       const s = read(dir);
-      out(`WhiteFlow sandbox in ${dir}: ${s.merchants.length} merchant(s), ${s.customers.length} customer(s), ${s.links.length} link(s), ${s.invoices.length} invoice(s), ${s.payments.length} payment(s).`);
+      out(`Whiteflow sandbox in ${dir}: ${s.merchants.length} merchant(s), ${s.customers.length} customer(s), ${s.links.length} link(s), ${s.invoices.length} invoice(s), ${s.payments.length} payment(s).`);
       for (const e of s.event_log.slice(-10)) out(`  ${new Date(e.at).toISOString()} ${e.type.padEnd(18)} ${e.outcome.padEnd(9)} ${e.reason}`);
       return 0;
     }

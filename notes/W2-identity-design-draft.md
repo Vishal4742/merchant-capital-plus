@@ -18,8 +18,8 @@ Delivers proposed FR-BIZ-1–4, FR-BIZ-6 (disclosure only), FR-AUTH-1–5. Exit 
 
 ## Backfill (existing data keeps working)
 1. For every distinct merchant wallet in `app_gw_keys`, `app_gw_links`, `app_gw_pages`, `app_gw_vouchers`, `app_gw_webhooks`, `app_web_sessions`: create a principal + a business (display name from `MERCHANT_NAME` for the configured shop, else "Business <short address>") + an owner membership.
-2. Settlement policy v1 for a backfilled business is **not** auto-created from the sign-in wallet: proving control for receiving is a separate step (FR-BIZ-3), so backfilled businesses start "not activated" for WhiteFlow invoices while their V1 gateway links keep working on the old path.
-3. Wallets with outstanding V1 CapitalMarket claims/liens (`hasClaimsOn`, `liensOf`, `advanceOf` on `0xecd6…0abe`) are marked `v1_obligations=true` and cannot activate WhiteFlow collection (CON-11).
+2. Settlement policy v1 for a backfilled business is **not** auto-created from the sign-in wallet: proving control for receiving is a separate step (FR-BIZ-3), so backfilled businesses start "not activated" for Whiteflow invoices while their V1 gateway links keep working on the old path.
+3. Wallets with outstanding V1 CapitalMarket claims/liens (`hasClaimsOn`, `liensOf`, `advanceOf` on `0xecd6…0abe`) are marked `v1_obligations=true` and cannot activate Whiteflow collection (CON-11).
 4. Idempotent backfill script with a dry-run mode that prints counts only.
 
 Rollback: new tables are unused by pre-W2 code; roll back by redeploying the previous build (tables may stay). No destructive change to existing tables in W2.

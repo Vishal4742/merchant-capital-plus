@@ -63,7 +63,7 @@ export function replier(redact: Redactor, log: Logger, environment: Record<strin
       if (!known) log.error("tool failed", error);
       const body = error instanceof ToolRefusal
         ? { ...environment, error: error.message, ...error.details }
-        : { ...environment, error: known ? (error as Error).message : "Something went wrong in the WhiteFlow connector. Nothing was retried automatically; check the record before trying again." };
+        : { ...environment, error: known ? (error as Error).message : "Something went wrong in the Whiteflow connector. Nothing was retried automatically; check the record before trying again." };
       return { content: [{ type: "text", text: redact(JSON.stringify(body, null, 2)) }], isError: true };
     }
   };

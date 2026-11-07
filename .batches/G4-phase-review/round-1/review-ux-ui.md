@@ -29,7 +29,7 @@ Owner: claude-frontend (screen), claude-contracts if the API needs a field.
 ### F3 (LOW) Closed and error notices have no way forward on the page
 Where: HostedNotice for expired, cancelled and "can't open right now".
 What: the error notice says "Try again in a minute" but offers no retry control; the not-found sheet links to the product home, which means nothing to a customer of a shop.
-Fix: add a "Try again" button (a plain link to the same URL) on the error notice; on the not-found sheet use "Ask the shop for its page link" without the product link, or keep the link but label it "About Merchant Capital+".
+Fix: add a "Try again" button (a plain link to the same URL) on the error notice; on the not-found sheet use "Ask the shop for its page link" without the product link, or keep the link but label it "About Whiteflow".
 Owner: claude-frontend.
 
 ### F4 (LOW) Pages empty-state copy

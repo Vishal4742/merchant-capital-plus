@@ -29,7 +29,7 @@ environment: sandbox — SANDBOX: simulated on this computer. No real money move
   Monday 2026-11-02 (Asia/Kolkata) to Saturday 2026-11-07 (Asia/Kolkata): collected 60.00 USDT gross from 1 payment(s), 60.00 USDT net.
 extra. create_payment_link ₹15,000
   Created a payment link for ₹15,000.00 — Acme website redesign. Status: active.
-  Priced in INR. When the customer opens the link, WhiteFlow converts it to USDT at a rate locked for that checkout (shown to the customer); they pay USDT and you receive USDT. The connector did not convert anything.
+  Priced in INR. When the customer opens the link, Whiteflow converts it to USDT at a rate locked for that checkout (shown to the customer); they pay USDT and you receive USDT. The connector did not convert anything.
 extra. INR invoice is refused, not converted
   Invoices are issued in USDT, the settlement asset, and the connector never converts currencies. INR amounts can't be used as they are.
 ```

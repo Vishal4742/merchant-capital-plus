@@ -4,7 +4,7 @@ import { PlainPage, Problem, card } from "@/components/gateway/Frame";
 import { PrivySignIn } from "@/components/workspace/PrivySignIn";
 import { privyAppId, walletConnectProjectId } from "@/lib/privy-config";
 
-export const metadata = { title: "Sign in · WhiteFlow" };
+export const metadata = { title: "Sign in · Whiteflow" };
 
 export default function SignInPage() {
   const appId = privyAppId();
@@ -25,7 +25,7 @@ export default function SignInPage() {
         )}
         <p className="text-xs text-ink-muted">
           Sign-in is provided by Privy, which receives the email or wallet address you sign in with and sends its own anonymous
-          usage analytics. Only this page loads Privy; the WhiteFlow dashboard, checkout and receipts don&apos;t. To approve
+          usage analytics. Only this page loads Privy; the Whiteflow dashboard, checkout and receipts don&apos;t. To approve
           where your workspace is paid, sign in with a wallet or link one in the Privy dialog.
         </p>
       </section>

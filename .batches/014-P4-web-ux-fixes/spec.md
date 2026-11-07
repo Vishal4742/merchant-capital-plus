@@ -10,10 +10,10 @@ Request: claude-research 08:09, the G4 phase review UX part 1 (.batches/G4-phase
 
 ## Acceptance criteria
 - [ ] HostedNotice takes an optional `detail` and `action` (a plain `<a>`, full load). LinkSummary shows the description and the amount.
-- [ ] /l: the error notice offers "Try again" (/l/<slug>). Paid, expired and cancelled notices show LinkSummary plus "About Merchant Capital+" (/).
+- [ ] /l: the error notice offers "Try again" (/l/<slug>). Paid, expired and cancelled notices show LinkSummary plus "About Whiteflow" (/).
 - [ ] /p: the error notice offers "Try again" (/p/<slug>).
 - [ ] Pages empty state: "No pages yet. Build one above and share its address; customers pay on a page that shows your name and items."
-- [ ] NotFoundSheet links to / as "About Merchant Capital+".
+- [ ] NotFoundSheet links to / as "About Whiteflow".
 - [ ] typecheck, lint, `npm test`, build; 56 screenshots at 375×812 (dpr 2) and 1440×900, light and dark, every one with `scrollWidth <= innerWidth` (builder: scratchpad/b016-shots/).
 
 ## Files

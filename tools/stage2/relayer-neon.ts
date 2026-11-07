@@ -3,7 +3,7 @@
 // current_database() before any DDL. Reads only DATABASE_URL from the given .env (the file holds other secrets that are
 // never loaded), never prints it, and passes the derived URL to child processes through their environment only.
 // Overlap is deterministic: every child prints READY and blocks on stdin until the parent writes GO to all at once.
-// Run from the repo root: node tools/stage2/relayer-neon.ts P:/WhiteFlow/.env
+// Run from the repo root: node tools/stage2/relayer-neon.ts P:/Whiteflow/.env
 import { spawn } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -15,7 +15,7 @@ const require = createRequire(new URL('../../apps/relayer/package.json', import.
 const { neon } = require('@neondatabase/serverless');
 const { isSchemaFile, sqlStatements } = await import('../../apps/relayer/db/statements.ts');
 
-const raw = parseEnv(readFileSync(process.argv[2] ?? 'P:/WhiteFlow/.env', 'utf8')).DATABASE_URL;
+const raw = parseEnv(readFileSync(process.argv[2] ?? 'P:/Whiteflow/.env', 'utf8')).DATABASE_URL;
 if (!raw) {
   console.log('BLOCKED: DATABASE_URL missing');
   process.exit(2);

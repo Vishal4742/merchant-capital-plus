@@ -1,6 +1,6 @@
-# WhiteFlow merchant API: the connector's contract (batch 052)
+# Whiteflow merchant API: the connector's contract (batch 052)
 
-These are the routes the WhiteFlow Merchant MCP calls.
+These are the routes the Whiteflow Merchant MCP calls.
 - **LIVE** routes are served by `apps/web` on `main`, on testnet.
 - **PROPOSED** routes aren't on the web backend yet. The sandbox adapter (`src/sandbox/`) implements every route here, LIVE ones in their live shapes, so it is an executable reference for the W3 lane.
 - Types are in `src/contract.ts`.

@@ -7,7 +7,7 @@
 ## Acceptance criteria (each must be checkable)
 - [ ] **H5, install:**
   - the README and the `index.ts` header say how to get the SDK: not on npm; copy `index.ts` into your server code; Node 22.18+ runs it directly, or any TypeScript build;
-  - the README imports from the copied file, not from `@merchant-capital/sdk`;
+  - the README imports from the copied file, not from `@whiteflow/sdk`;
   - the README says why installing it under node_modules fails.
 - [ ] **M4, types:**
   - `Priced` is exported, and `Session.priced?` and `CreatedSession.priced?` use it;

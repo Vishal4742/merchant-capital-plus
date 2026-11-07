@@ -41,7 +41,7 @@ Branch `wf/stage3-v1-cutover` (stacked on PR #44 @d8a99ef), pushed through the p
   - no workspace → create one;
   - Owner and unlinked → link with one signature;
   - Operator/Viewer and unlinked → "ask an Owner".
-- `Account` signs out of WhiteFlow.
+- `Account` signs out of Whiteflow.
 - The developers and connections pages show keys and webhooks only with `keys:manage`.
 
 ## Evidence (commands run, real output)
@@ -49,7 +49,7 @@ Branch `wf/stage3-v1-cutover` (stacked on PR #44 @d8a99ef), pushed through the p
 - `node --experimental-test-module-mocks --test test/` on Node 26.13.0: `ℹ tests 809 · ℹ pass 807 · ℹ fail 0 · ℹ skipped 2`, exit 0.
   - New tests: legacy-claim 8/8, legacy-cutover 8/8.
   - The cutover suite drives every one of the 23 handler×method entries through Owner, Operator, Viewer, signed out, the old cookie, an unlinked workspace, a missing or foreign Origin, removal, demotion, revocation, keys, tenant isolation and audit.
-- `node tools/stage3/legacy-neon.mjs P:/WhiteFlow/.env` (Neon production HTTP driver, target `wf_s2_web` checked with `current_database()`, nothing dropped): **5/5**
+- `node tools/stage3/legacy-neon.mjs P:/Whiteflow/.env` (Neon production HTTP driver, target `wf_s2_web` checked with `current_database()`, nothing dropped): **5/5**
   - schema: migrations through 054, applied twice.
   - 3a: one signed claim × 3 processes. Lock waits 3; statuses 200,200,200 with the same answer; 1 audit row; key moved.
   - 3b: two workspaces × one wallet. Lock waits 2; statuses 200,409 ("already linked to another workspace"); 1 workspace linked; the loser's challenge unused.

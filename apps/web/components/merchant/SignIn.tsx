@@ -131,7 +131,7 @@ export function SignIn({ available }: { available: boolean }) {
         uri: window.location.origin,
         version: "1",
         expirationTime: new Date(Date.now() + SIGN_IN_WINDOW_MS), // the server refuses messages without a short expiry
-        statement: "Sign in to your WhiteFlow dashboard. This is free and moves no money.",
+        statement: "Sign in to your Whiteflow dashboard. This is free and moves no money.",
       });
       const signature = await wallet.signMessage({ account: address, message });
       const res = await fetch("/api/auth/verify", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message, signature }) }).catch(() => {

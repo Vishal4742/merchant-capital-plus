@@ -17,7 +17,7 @@
    "iw": 375
   },
   "errs": [
-   "Merchant Capital+ button: bad data-session/data-link (letters, digits, - and _ only)."
+   "Whiteflow button: bad data-session/data-link (letters, digits, - and _ only)."
   ]
  },
  "enter-session": "http://localhost:4400/checkout/123e4567-e89b-12d3-a456-426614174000",
@@ -43,7 +43,7 @@
    "iw": 375
   },
   "errs": [
-   "Merchant Capital+ button: bad data-session/data-link (letters, digits, - and _ only)."
+   "Whiteflow button: bad data-session/data-link (letters, digits, - and _ only)."
   ]
  },
  "1440-light": {
@@ -64,7 +64,7 @@
    "iw": 1440
   },
   "errs": [
-   "Merchant Capital+ button: bad data-session/data-link (letters, digits, - and _ only)."
+   "Whiteflow button: bad data-session/data-link (letters, digits, - and _ only)."
   ]
  },
  "1440-dark": {
@@ -85,7 +85,7 @@
    "iw": 1440
   },
   "errs": [
-   "Merchant Capital+ button: bad data-session/data-link (letters, digits, - and _ only)."
+   "Whiteflow button: bad data-session/data-link (letters, digits, - and _ only)."
   ]
  }
 }
