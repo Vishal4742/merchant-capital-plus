@@ -8,6 +8,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import type { Address } from "viem";
 import { Button } from "@/components/Button";
 import { CopyButton } from "@/components/CopyButton";
+import { DebtorAck } from "@/components/DebtorAck";
 import { card } from "@/components/gateway/Frame";
 import { aprPercent, arkivNote, buyBlocker, investorsLabel, readHolders, readInvestor, usdt2, type BookOffer } from "@/lib/capital-wallet";
 import { formatUsdt, parseUsdt } from "@/lib/usdt";
@@ -83,6 +84,13 @@ export function OfferBook({ state, connect }: ScreenProps) {
       <h2 id="offers" className="eyebrow border-t border-hairline pt-3 text-ink-muted">
         {book.offers.length} {book.offers.length === 1 ? "offer" : "offers"} · checked against the chain
       </h2>
+      {/* what the acknowledgement label proves (security 047 H1, round 2: the book shows only the named wallet's) */}
+      {book.offers.some((o) => o.kind === "invoice") && (
+        <p className="text-xs text-ink-muted">
+          &quot;Acknowledged by the wallet the merchant named&quot; means the wallet the shop named on the invoice signed it:
+          the shop chooses this wallet; it is not an identity check. Acknowledgements from other wallets aren&apos;t shown here.
+        </p>
+      )}
       {mine?.reads === "ready" && !mine.eligible && (
         <p role="status" className={`${card} text-sm text-warning`}>
           Your wallet is waiting for approval, so you can look but not buy yet. KYC is simulated on this demo: ask the team to approve {short(mine.account)}.
@@ -136,6 +144,8 @@ function OfferRow({ offer: o, state, connect, me, open, toggle, retry }: RowProp
         <span className="data text-ink-muted">#{o.id}</span>
         <span className="font-medium">{o.merchant_name}</span>
         <span className="text-xs text-ink-muted">{investorsLabel(o.kind)}</span>
+        {/* does the payer accept the debt (batch 047, FR-INV-8)? from our server, never from Arkiv (FR-ARK-4) */}
+        {o.kind === "invoice" && <DebtorAck ack={o.debtor_ack} />}
       </div>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-4">
         <Field label="You get back">

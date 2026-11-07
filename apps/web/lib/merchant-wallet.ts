@@ -149,11 +149,12 @@ async function send(w: MerchantWallet, call: Call) {
   return receipt;
 }
 
-/** createInvoice(no named customer, amount, dueDate, refHash) → the new invoice id, from InvoiceCreated.
- *  refHash is 32 random bytes, never a hash of the merchant's label (claude-contracts S6 d). */
-export async function createInvoice(w: MerchantWallet, amount: bigint, dueDate: bigint): Promise<bigint> {
+/** createInvoice(customer, amount, dueDate, refHash) → the new invoice id, from InvoiceCreated. The customer wallet is
+ *  optional (zero: anyone may pay and acknowledge); a named one is the only wallet whose acknowledgement counts as the
+ *  debtor's (batch 047, security H1). refHash is 32 random bytes, never a hash of the merchant's label (claude-contracts S6 d). */
+export async function createInvoice(w: MerchantWallet, amount: bigint, dueDate: bigint, customer: Address = zeroAddress): Promise<bigint> {
   const refHash = keccak256(crypto.getRandomValues(new Uint8Array(32)));
-  const receipt = await send(w, { address: w.merchantPay, abi: merchantPayAbi, functionName: "createInvoice", args: [zeroAddress, amount, dueDate, refHash] });
+  const receipt = await send(w, { address: w.merchantPay, abi: merchantPayAbi, functionName: "createInvoice", args: [customer, amount, dueDate, refHash] });
   const ours = receipt.logs.filter((log) => log.address.toLowerCase() === w.merchantPay.toLowerCase());
   const [created] = parseEventLogs({ abi: merchantPayAbi, eventName: "InvoiceCreated", logs: ours });
   if (!created) throw new Error("The invoice was created, but we couldn't read its number. Reload to see it in the list.");

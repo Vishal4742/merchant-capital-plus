@@ -49,7 +49,9 @@ export function endWalletSession(): void {
   void session?.close();
 }
 
-async function connectVia(via: WalletVia): Promise<Payer> {
+/** The customer's own wallet, connected and on chain 1874, with no funds check (the invoice acknowledgement, batch 047,
+ *  moves no money). Throws plain copy. */
+export async function connectVia(via: WalletVia): Promise<Payer> {
   const { connectPayer, privyPayer } = await import("@/lib/payer-wallet");
   if (via === "wallet") return connectPayer(window.ethereum);
   const appId = privyAppId();
@@ -136,7 +138,7 @@ const subscribeWallet = (onChange: () => void) => {
   window.addEventListener("ethereum#initialized", onChange);
   return () => window.removeEventListener("ethereum#initialized", onChange);
 };
-const useHasWallet = () =>
+export const useHasWallet = () =>
   useSyncExternalStore(
     subscribeWallet,
     () => Boolean(window.ethereum),
