@@ -55,8 +55,10 @@ jobs:
           for f in manifest.json server/index.mjs sbom.cdx.json; do
             [ -f "$out/$f" ] || { echo "::error::$f is missing from the unpacked archive"; exit 1; }
           done
-          # tools/githooks/pre-push's secret regexes, plus test API keys and sandbox keys (NFR-17)
-          keys='PRIVATE_KEY=0x[0-9a-fA-F]{64}|-----BEGIN [A-Z ]*PRIVATE KEY|(^|[^a-z])sk-[A-Za-z0-9_-]{20,}|sm_[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|sk_test_[A-Za-z0-9_-]{24,}|wf_sbx_[A-Za-z0-9_-]{32}'
+          # tools/githooks/pre-push's secret regexes, plus test, live and sandbox API keys (sk_test_ at config.ts's
+          # 16-character minimum) and a bare 32-byte hex value, a private key without PRIVATE_KEY= (NFR-17). The bare
+          # 0x pattern was checked against a freshly packed and unpacked bundle: no bundled library hash or constant hits.
+          keys='PRIVATE_KEY=0x[0-9a-fA-F]{64}|-----BEGIN [A-Z ]*PRIVATE KEY|(^|[^a-z])sk-[A-Za-z0-9_-]{20,}|sm_[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|sk_test_[A-Za-z0-9_-]{16,}|sk_live_[A-Za-z0-9_-]{16,}|wf_sbx_[A-Za-z0-9_-]{32}|0x[0-9a-fA-F]{64}'
           status=0
           hits=$(grep -rlE -- "$keys" "$out") || status=$?
           if [ "$status" -eq 0 ]; then
