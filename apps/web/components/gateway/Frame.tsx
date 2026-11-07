@@ -3,6 +3,7 @@
 // notices. No server-only imports, so the client screens use the same classes.
 import type { ReactNode } from "react";
 import { SignIn, SignOut } from "@/components/merchant/SignIn";
+import { WhiteFlowMark } from "@/components/WhiteFlowMark";
 
 export const card = "grid min-w-0 content-start gap-4 rounded-[20px] border border-hairline bg-surface p-5 md:p-6";
 export const field = "h-11 w-full min-w-0 rounded-sm border border-hairline bg-surface px-3 text-ink";
@@ -57,7 +58,8 @@ export function PlainPage({ children }: { children: ReactNode }) {
       <header className="flex items-center justify-between gap-4">
         {/* a full load: home must not run inside this page's CSP (security review 005 F-N4) */}
         {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
-        <a href="/" className="title inline-flex min-h-11 items-center whitespace-nowrap">
+        <a href="/" className="title inline-flex min-h-11 items-center gap-2 whitespace-nowrap">
+          <WhiteFlowMark className="h-[0.75em] w-auto text-accent" />
           WhiteFlow
         </a>
         <span className="label text-ink-muted">
