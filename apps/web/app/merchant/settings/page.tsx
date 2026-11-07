@@ -7,6 +7,7 @@ import { Shell } from "@/components/dashboard/Shell";
 import { Account, EditorialHeader, SignedOut } from "@/components/gateway/Frame";
 import { SignOut } from "@/components/merchant/SignIn";
 import { StatusBadge } from "@/components/ui/Badge";
+import { WorkspaceSettings } from "@/components/workspace/WorkspaceSettings";
 import { authSecret } from "@/lib/auth";
 import { merchantConfig, payConfig } from "@/lib/config";
 import { currentMerchant } from "@/lib/merchant-session";
@@ -45,7 +46,21 @@ export default function SettingsPage() {
 async function SettingsLoader() {
   await connection();
   const merchant = await currentMerchant();
-  if (!merchant) return <SignedOut available={Boolean(authSecret())} />;
+  // batch 050: the WhiteFlow workspace (Privy sign-in, team, receiving wallet) shows with or without the legacy wallet session
+  if (!merchant) {
+    return (
+      <Shell active="settings" privateReads={false}>
+        {header}
+        <div className="grid max-w-4xl gap-8 px-4 py-6 md:px-8 md:py-8">
+          <WorkspaceSettings />
+          <details className="text-sm text-ink-muted">
+            <summary className="cursor-pointer">Legacy dashboard sign-in (wallet)</summary>
+            <SignedOut available={Boolean(authSecret())} />
+          </details>
+        </div>
+      </Shell>
+    );
+  }
 
   const config = merchantConfig();
   const pay = payConfig();
@@ -58,6 +73,7 @@ async function SettingsLoader() {
     <Shell active="settings" privateReads={false} account={<Account merchant={merchant} />}>
       {header}
       <div className="grid gap-8 px-4 py-6 md:px-8 md:py-8 max-w-4xl">
+        <WorkspaceSettings />
         {/* Workspace Identity & Session */}
         <section aria-labelledby="profile-heading" className="grid gap-5 rounded-[16px] border border-hairline bg-surface p-5 md:p-6 shadow-card">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-hairline pb-4">
