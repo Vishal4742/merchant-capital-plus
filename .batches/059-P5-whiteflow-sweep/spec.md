@@ -11,6 +11,8 @@ GitHub repo rename "After the cutover" (after claude-sdk's UNFREEZE and the #43/
 - One final sweep on the final main (after the stack merges), so no other lane's open file changes under it: every
   tracked text file, every doc and every batch record. The rules live in `rename.sh` (this folder) and are idempotent:
   - "Merchant Capital+", "MERCHANT CAPITAL+", "Merchant Capital Plus" and "WhiteFlow" become "Whiteflow".
+  - Tracked files whose name contains "WhiteFlow" (e.g. `components/WhiteFlowLogo.tsx`) are moved to "Whiteflow" with
+    `git mv`, because the content pass rewrites their imports (Linux CI and Vercel are case-sensitive).
   - `@merchant-capital/sdk` becomes `@whiteflow/sdk` (it is never installed by name: vendored copies only, sdk README:29).
   - `Vishal4742/merchant-capital-plus` becomes `Vishal4742/whiteflow` (after the GitHub rename); `cd merchant-capital-plus`
     becomes `cd whiteflow`; the README's `claude mcp add merchant-capital` becomes `claude mcp add whiteflow`.

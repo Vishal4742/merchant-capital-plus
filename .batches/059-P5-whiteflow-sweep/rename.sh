@@ -15,6 +15,11 @@ OLD='Merchant Capital|MERCHANT CAPITAL|WhiteFlow|@merchant-capital/sdk|Vishal474
   ' "$f"
   echo "$f"
 done
+# file names: the content pass above already rewrote every import and link ("./WhiteFlowLogo" -> "./WhiteflowLogo"), so
+# the files must move too, or Linux (CI, Vercel) can't resolve them; macOS ignores case, hence the hop through a temp name
+{ git ls-files | grep 'WhiteFlow' | grep -v '^\.batches/059-P5-whiteflow-sweep/' || true; } | while IFS= read -r f; do
+  new=${f//WhiteFlow/Whiteflow}; git mv "$f" "$f.059tmp" && git mv "$f.059tmp" "$new"; echo "$f -> $new"
+done
 # .gitignore: comment lines only (the rule for the local merchant-capital-plus-main/ snapshot must keep matching)
 perl -pi -e 's/WhiteFlow/Whiteflow/g if /^#/; s/Merchant Capital\+/Whiteflow/g if /^#/' .gitignore
 # the sdk lockfile names the package twice (root and packages[""]); nothing else in any lockfile changes
