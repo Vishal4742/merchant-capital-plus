@@ -2,10 +2,12 @@
 
 // The investor's wallet for the Capital pages (CAPITAL-TAB §4 I0). On load it reconnects silently to a wallet this site
 // may already use (no prompt, no chain switch); Connect asks the wallet and switches it to Whitechain Testnet. It follows
-// accountsChanged and chainChanged, so a stale account or chain never stays on screen.
+// accountsChanged and chainChanged, so a stale account or chain never stays on screen. Disconnect (batch 063) stops the
+// silent reconnect until Connect is pressed again, and asks the wallet to forget this site too.
 import { useCallback, useEffect, useState } from "react";
 import type { Address } from "viem";
 import { WrongNetwork, connectInvestor, investorError, type InvestorWallet } from "@/lib/capital-wallet";
+import { investorOff, setInvestorOff } from "@/lib/investor-off";
 
 export type WalletState =
   | { phase: "checking" }
@@ -14,10 +16,16 @@ export type WalletState =
   | { phase: "wrong-network"; account: Address; error?: string }
   | { phase: "ready"; wallet: InvestorWallet };
 
-export function useInvestor(): { state: WalletState; connect: () => void } {
+const store = () => (typeof window === "undefined" ? undefined : window.localStorage);
+
+export function useInvestor(): { state: WalletState; connect: () => void; disconnect: () => void } {
   const [state, setState] = useState<WalletState>({ phase: "checking" });
   const run = useCallback(async (prompt: boolean) => {
-    if (prompt) setState({ phase: "connecting" });
+    if (!prompt && investorOff(store())) return setState({ phase: "disconnected" }); // they disconnected: no silent reconnect
+    if (prompt) {
+      setInvestorOff(store(), false);
+      setState({ phase: "connecting" });
+    }
     try {
       const wallet = await connectInvestor(window.ethereum, { prompt });
       setState(wallet ? { phase: "ready", wallet } : { phase: "disconnected" });
@@ -39,5 +47,12 @@ export function useInvestor(): { state: WalletState; connect: () => void } {
     };
   }, [run]);
 
-  return { state, connect: useCallback(() => void run(true), [run]) };
+  const disconnect = useCallback(() => {
+    setInvestorOff(store(), true);
+    setState({ phase: "disconnected" });
+    // EIP-2255: MetaMask and others drop this site's account permission; a wallet without it just keeps its own list
+    void window.ethereum?.request({ method: "wallet_revokePermissions", params: [{ eth_accounts: {} }] }).catch(() => {});
+  }, []);
+
+  return { state, connect: useCallback(() => void run(true), [run]), disconnect };
 }

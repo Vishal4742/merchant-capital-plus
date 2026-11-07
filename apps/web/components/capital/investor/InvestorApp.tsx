@@ -26,7 +26,7 @@ export interface InvestorAppProps {
 }
 
 export function InvestorApp({ view, header }: InvestorAppProps) {
-  const { state, connect } = useInvestor();
+  const { state, connect, disconnect } = useInvestor();
   return (
     <div className="min-h-dvh pb-16">
       <div className="border-b border-hairline bg-surface">
@@ -51,7 +51,7 @@ export function InvestorApp({ view, header }: InvestorAppProps) {
           </nav>
           <div className="ml-auto flex items-center gap-2">
             <ThemeToggle className={plainToggle} />
-            <WalletChip state={state} connect={connect} />
+            <WalletChip state={state} connect={connect} disconnect={disconnect} />
           </div>
         </div>
       </div>
@@ -74,7 +74,14 @@ export function InvestorApp({ view, header }: InvestorAppProps) {
   );
 }
 
-function WalletChip({ state, connect }: { state: WalletState; connect: () => void }) {
+/** Disconnect (batch 063): back to Connect, and no silent reconnect on the next visit until Connect is pressed. */
+const Disconnect = ({ onClick }: { onClick: () => void }) => (
+  <Button variant="quiet" className="text-sm" onClick={onClick} aria-label="Disconnect wallet">
+    Disconnect
+  </Button>
+);
+
+function WalletChip({ state, connect, disconnect }: { state: WalletState; connect: () => void; disconnect: () => void }) {
   switch (state.phase) {
     case "checking":
       return null;
@@ -93,6 +100,7 @@ function WalletChip({ state, connect }: { state: WalletState; connect: () => voi
           <Button className="h-11 px-5 text-sm" onClick={connect}>
             Switch network
           </Button>
+          <Disconnect onClick={disconnect} />
         </>
       );
     case "ready":
@@ -100,6 +108,7 @@ function WalletChip({ state, connect }: { state: WalletState; connect: () => voi
         <>
           <PrivateReads className="shrink-0" />
           <span className="data text-ink-muted max-sm:hidden">{short(state.wallet.account)}</span>
+          <Disconnect onClick={disconnect} />
         </>
       );
   }
