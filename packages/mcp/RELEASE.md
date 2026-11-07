@@ -81,3 +81,21 @@ To check without the GitHub attestations API, add `--bundle whiteflow.mcpb.prove
 - **The key scan matches patterns.** It catches the key formats listed above, not every possible secret.
 - Actions are pinned to major tags (`@v7`, `@v4`, `@v8`), as in ci.yml, not to commit SHAs.
 - Attestations work on public repositories like this one on every GitHub plan. A private copy would need GitHub Enterprise Cloud.
+
+## Publishing to npm and the official MCP Registry
+
+The npm package `whiteflow-mcp` is the same bundled stdio server, so any client runs it with `npx -y whiteflow-mcp`.
+`server.json` lists it in the official MCP Registry as `io.github.Vishal4742/whiteflow`; the registry checks that the
+npm package's `mcpName` matches, which `scripts/npm-package.mjs` writes. Bump the version in `package.json` and both
+places in `server.json` together (the script refuses a mismatch).
+
+```bash
+cd packages/mcp
+npm ci && npm run pack && npm run npm-package   # builds dist/npm
+npm login                                       # once, your npm account
+npm publish ./dist/npm                          # whiteflow-mcp@<version>
+brew install mcp-publisher                      # once
+mcp-publisher validate                          # checks server.json
+mcp-publisher login github                      # signs in as Vishal4742 (owns the io.github.Vishal4742 namespace)
+mcp-publisher publish
+```
