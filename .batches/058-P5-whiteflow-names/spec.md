@@ -13,8 +13,16 @@ in #43, which merges after both G5 runs.
   strings), page titles (capital, holdings), the dashboard wordmark (Shell), the gateway frame (Frame), the landing
   wordmark (Hero, Sections), /docs, /proofs, the not-found sheet, the investor app header, the link page's
   "About" action, the SIWE statement.
-- NOT changed: `lib/invoice-ack.ts` `ackDomain.name` (EIP-712 domain: renaming it breaks every signed acknowledgement),
-  `tokens.css` (a comment), docs, the README, contracts.
+- Round 2 (human 06:26: "changes throughout the project"): also `lib/invoice-ack.ts` `ackDomain.name` is "WhiteFlow".
+  Safe: the server verifies an ack's signature once, on POST, and stores the result (invoice-acks.ts never re-verifies),
+  and the browser and server share the one constant, so only new acks use the new domain. Also the MCP manifest author,
+  the Safe owner message (contracts/script/MoveAdminToSafe.s.sol; no owner has signed yet), the generated contracts
+  headers (export-abi.sh, packages/shared, apps/relayer copy), ci.yml and tools/status.py comments, the demo shop's
+  README and page.
+- NOT changed: packages/sdk/* and its copies (apps/shop/lib/sdk.ts, apps/web/public/v1/button.js): claimed by
+  claude-sdk (batch 057), asked to rename there. Technical ids (mcplus.* storage keys holding funded G5 wallets,
+  mc_session, @merchant-capital/* package names, repo and URL names). contracts/src (frozen, verified on Blockscout).
+  `tokens.css` (a comment). Docs and the README: claude-research's (asked).
 
 ## Acceptance criteria
 - [ ] `git grep "Merchant Capital" apps/web/app apps/web/components apps/web/lib` lists only invoice-ack.ts and tokens.css.
