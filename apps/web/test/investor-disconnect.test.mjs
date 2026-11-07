@@ -33,11 +33,12 @@ test("the hook skips the silent reconnect when off, asks the wallet to revoke, a
   const hook = src("components/capital/investor/useInvestor.ts");
   assert.match(hook, /if \(!prompt && investorOff\(/);
   assert.match(hook, /wallet_revokePermissions/);
-  assert.match(hook, /setInvestorOff\([^)]*, false\)/);
-  assert.match(hook, /setInvestorOff\([^)]*, true\)/);
+  assert.match(hook, /setInvestorOff\(store\(\), false\)/);
+  assert.match(hook, /setInvestorOff\(store\(\), true\)/);
 });
 
 test("the bar shows Disconnect once a wallet is connected (ready or wrong network)", () => {
   const chip = src("components/capital/investor/InvestorApp.tsx");
-  assert.equal(chip.match(/aria-label="Disconnect wallet"/g)?.length, 2);
+  assert.match(chip, /aria-label="Disconnect wallet"/);
+  assert.equal(chip.match(/<Disconnect onClick=\{disconnect\} \/>/g)?.length, 2); // ready and wrong network
 });
