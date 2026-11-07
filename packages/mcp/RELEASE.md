@@ -2,15 +2,24 @@
 
 The archive merchants install is built by GitHub Actions, not on a laptop. [`mcpb-release.yml`](../../.github/workflows/mcpb-release.yml) builds it from a commit, checks it, attests it and uploads it as a workflow artifact.
 
-## What the release job does
+## What the release jobs do
+
+The workflow has two jobs. `npm ci` and `npm test` run code from every dependency, so the job that runs them can't request the OIDC token that Sigstore exchanges for a signing certificate. Only the second job can, and it runs no npm, no node and nothing from the repository.
+
+**`build`** (permission `contents: read` only):
 
 1. In packages/mcp, on Node 26 with no dependency cache: `npm ci`, `npm run typecheck`, `npm test` (which packs and launches the archive) and `npm run pack`.
 2. Checks the archive against `whiteflow.mcpb.sha256`.
-3. Unpacks the archive and fails if any file holds a key-shaped string. That covers private keys, `sk-`, `sk_test_` and `wf_sbx_` keys, and GitHub and supermemory tokens. It prints only file names.
-4. Signs two attestations for the archive with Sigstore, through GitHub artifact attestations:
+3. Unpacks the archive and fails if any file holds a key-shaped string. That covers private keys (with or without `PRIVATE_KEY=`, as any `0x` followed by 64 hex digits), `sk-`, `sk_test_`, `sk_live_` and `wf_sbx_` keys, and GitHub and supermemory tokens. It prints only file names.
+4. Hands the checked archive, its two checksums and the SBOM to the next job as the artifact `whiteflow-mcpb-unattested-<commit sha>`, kept for 1 day.
+
+**`attest`** (`contents: read`, `id-token: write`, `attestations: write`; runs after `build` succeeds):
+
+1. Downloads that artifact (`actions/download-artifact` fails on a digest mismatch).
+2. Signs two attestations for the archive with Sigstore, through GitHub artifact attestations:
    - SLSA build provenance: which repository, workflow, commit and ref built it, and on which runner;
    - the CycloneDX SBOM that ships inside it.
-5. Uploads the artifact `whiteflow-mcpb-<commit sha>`, kept for 90 days:
+3. Uploads the artifact `whiteflow-mcpb-<commit sha>`, kept for 90 days:
 
 | File | What it is |
 |---|---|
@@ -28,13 +37,13 @@ The archive merchants install is built by GitHub Actions, not on a laptop. [`mcp
    git tag mcpb-v0.3.0 <merge commit on main>
    git push origin mcpb-v0.3.0
    ```
-   The job fails if the tag isn't `mcpb-v` followed by manifest.json's `version`.
+   The `build` job fails if the tag isn't `mcpb-v` followed by manifest.json's `version`.
 3. When the run is green, download the artifact and publish it, for example as a GitHub Release:
    ```sh
    gh run download <run id> -n whiteflow-mcpb-<commit sha> -D release
    gh release create mcpb-v0.3.0 release/* --verify-tag --title "WhiteFlow Merchant MCP 0.3.0"
    ```
-   The job doesn't publish anything itself, because that would need `contents: write`. Moving the file doesn't break the attestation, which covers the archive's sha256, not where it's hosted.
+   The workflow doesn't publish anything itself, because that would need `contents: write`. Moving the file doesn't break the attestation, which covers the archive's sha256, not where it's hosted.
 
 Once the workflow is on `main`, you can also start it from the Actions tab (Run workflow) to make a test build of any branch. That build is attested too, with the branch as its ref. That is why the strict check below pins `--source-ref` to the release tag.
 
@@ -64,11 +73,11 @@ To check without the GitHub attestations API, add `--bundle whiteflow.mcpb.prove
 - **This is provenance, not an MCPB signature.** The attestation proves which workflow, repository and commit produced these bytes, and you check it with `gh attestation verify`. MCPB clients don't read it: Claude Desktop and `mcpb info` still show the archive as **unsigned** ("WARNING: Not signed").
 - **`mcpb sign` needs a real code-signing certificate and its private key, which the owner must provide.** `mcpb sign --self-signed` would prove nothing to a user. When the owner has a certificate:
   1. Store the key as a secret in a GitHub environment with required reviewers.
-  2. Add an `mcpb sign` step after the key scan and before the attestations, so the attested digest is the signed archive's.
+  2. Sign after the key scan and before the attestations, so the attested digest is the signed archive's. Keep the key out of `build`, where every dependency's code has run: use its own job between `build` and `attest` that installs only `@anthropic-ai/mcpb`.
   3. Check the result with `mcpb verify`.
   Until then the workflow has no signing step.
 - **A tag is only as trustworthy as the people who can push it.** Anyone with write access can push an `mcpb-v*` tag on any commit, and a manual run can build any branch. The attestation records the exact commit and ref, so check `--source-ref` and compare the commit it reports with `main`. Owner action: a tag ruleset that limits who can create `mcpb-v*` tags.
 - **A rebuild can't reproduce the archive's sha256.** `mcpb` 2.1.2 stamps zip entries with the build time. `whiteflow.mcpb.contents.sha256` (the files inside) is the reproducible value.
 - **The key scan matches patterns.** It catches the key formats listed above, not every possible secret.
-- Actions are pinned to major tags (`@v7`, `@v4`), as in ci.yml, not to commit SHAs.
+- Actions are pinned to major tags (`@v7`, `@v4`, `@v8`), as in ci.yml, not to commit SHAs.
 - Attestations work on public repositories like this one on every GitHub plan. A private copy would need GitHub Enterprise Cloud.
