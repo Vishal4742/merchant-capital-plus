@@ -26,7 +26,7 @@ test("csp: no later rule overrides /capital (for one header the last matching ru
 // 'self' only. The pay pages still can't reach a chain RPC (no browser chain reads).
 // security 046 L1: /l/[slug] and /p/[slug] never render the pay sheet (they post to /checkout), so they stay strict
 const PAY_SHEET = ["/checkout/:path*", "/pay/:path*"];
-const STRICT = ["/l/:path*", "/p/:path*", "/r/:path*", "/counter/:path*", "/docs", "/merchant/developers"];
+const STRICT = ["/l/:path*", "/p/:path*", "/r/:path*", "/counter/:path*", "/docs", "/merchant/developers", "/connect"];
 const directive = (csp, name) => csp.split("; ").find((d) => d.startsWith(`${name} `)) ?? "";
 
 test("csp: the pay sheet's pages allow Privy's API, its wallet iframe and the WalletConnect relay, nothing else new", () => {

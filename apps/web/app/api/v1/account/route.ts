@@ -26,7 +26,7 @@ export async function GET(request: Request) {
       ],
       timezone: null,
       // the same shape as before 051: "secret_key" + its key id, or "session" with no id (a session id is never shown)
-      credential: { type: viaKey ? "secret_key" : "session", key_id: viaKey ? ctx.credentialId : null, scopes: null, expires_at: null },
+      credential: { type: ctx.source === "mcp_grant" ? "mcp_grant" : viaKey ? "secret_key" : "session", key_id: viaKey ? ctx.credentialId : null, scopes: null, expires_at: null },
       capabilities: { links: true, payments: true, reports: true, customers: false, invoices: false, reminders: false, operations: true },
     });
   });

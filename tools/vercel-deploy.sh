@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Run by .github/workflows/deploy.yml, once per project: tools/vercel-deploy.sh web|relayer|shop.
+# Run by .github/workflows/deploy.yml, once per project: tools/vercel-deploy.sh web|relayer|shop|mcp.
 # If the project's paths changed since the last successful deploy run (or FORCE=1, or there is no usable previous
 # run), builds main here and deploys it to production (prebuilt). Then checks that every production domain of the
 # project serves that new deployment, so a domain left on another project or an old build fails the run.
 set -euo pipefail
-name=${1:?usage: vercel-deploy.sh web|relayer|shop}
+name=${1:?usage: vercel-deploy.sh web|relayer|shop|mcp}
 [ -n "${VERCEL_TOKEN:-}" ] || { echo "::error::VERCEL_TOKEN secret is not set"; exit 1; }
 export VERCEL_ORG_ID=team_f3vbqdrWJjxwwM7g2dphSQcM # arthurgreycode-2623's projects
 vercel() { npx --yes vercel@65.12.1 "$@" --token "$VERCEL_TOKEN"; }
@@ -13,7 +13,16 @@ case $name in
   web)     export VERCEL_PROJECT_ID=prj_qf25l7Cwd8u2Ye9tL1Rlfi6dBjNS; paths=(apps/web packages);     domains=(whiteflow.org whiteflow-app.vercel.app) ;;
   relayer) export VERCEL_PROJECT_ID=prj_UyTxbpvs4friw4Jt2JsQv6EadHY0; paths=(apps/relayer packages); domains=(relayer.whiteflow.org whiteflow-relayer.vercel.app) ;;
   shop)    export VERCEL_PROJECT_ID=prj_KpTcfBJexGJA6yP2EeIxIC9xFmmv; paths=(apps/shop packages);    domains=(shop.whiteflow.org whiteflow-shop.vercel.app) ;;
-  *) echo "::error::unknown project '$name' (web, relayer or shop)"; exit 1 ;;
+  mcp)
+    if [ -z "${VERCEL_MCP_PROJECT_ID:-}" ]; then
+      echo "mcp: no VERCEL_MCP_PROJECT_ID, not deployed"
+      exit 0
+    fi
+    export VERCEL_PROJECT_ID="$VERCEL_MCP_PROJECT_ID"
+    paths=(apps/mcp packages/mcp)
+    domains=()
+    ;;
+  *) echo "::error::unknown project '$name' (web, relayer, shop or mcp)"; exit 1 ;;
 esac
 
 base=$(gh run list --workflow deploy.yml --branch main --status success --limit 1 --json headSha -q '.[0].headSha // empty')

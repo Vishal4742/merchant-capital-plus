@@ -99,7 +99,7 @@ export class WhiteflowClient {
   readonly #sleep: (ms: number) => Promise<void>;
 
   constructor(opts: ClientOptions) {
-    if (!/^[\x21-\x7e]{8,200}$/.test(opts.apiKey)) throw new Error("The API key has spaces, line breaks or other characters a key never has: copy it again.");
+    if (!/^[\x21-\x7e]{8,1024}$/.test(opts.apiKey)) throw new Error("The API key has spaces, line breaks or other characters a key never has: copy it again.");
     this.#key = opts.apiKey;
     this.#base = opts.baseUrl;
     this.#fetch = opts.fetch;

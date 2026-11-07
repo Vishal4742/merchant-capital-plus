@@ -8,6 +8,7 @@ import { PrivyProvider, useIdentityToken, usePrivy } from "@privy-io/react-auth"
 import { useEffect, useRef, useState } from "react";
 import { whitechainTestnet } from "@/lib/privy-config";
 import { clearPrivyStorage } from "@/lib/privy-session";
+import { signInReturn } from "@/lib/sign-in-return";
 
 /** PrivyProvider's config for businesses: email or an external wallet, chain 1874 only, embedded wallets off. */
 export function businessPrivyConfig(wcProjectId: string | null) {
@@ -77,8 +78,7 @@ function Flow() {
           throw new Error(body.error ?? "We couldn't sign you in. Try again.");
         }
         // a full load on purpose: the dashboard sends its own CSP, without Privy (security review 005 F-N4)
-        // eslint-disable-next-line @next/next/no-location-assign-relative-destination
-        window.location.assign("/merchant/settings");
+        window.location.assign(signInReturn(new URLSearchParams(window.location.search).get("returnTo")));
       })
       .catch((e: unknown) => {
         sent.current = false;

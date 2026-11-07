@@ -77,7 +77,7 @@ export async function setupDb() {
 }
 
 export async function resetDb() {
-  const { rows } = await pg.query("SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'app_gw_%' OR table_name LIKE 'app_web_%' OR table_name LIKE 'wf_%'");
+  const { rows } = await pg.query("SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'app_gw_%' OR table_name LIKE 'app_web_%' OR table_name LIKE 'app_mcp_%' OR table_name LIKE 'wf_%'");
   if (rows.length) await pg.exec(`TRUNCATE ${rows.map((r) => r.table_name).join(", ")} CASCADE`);
   // each test names its own signed-in workspaces: one test's signedIn(X) must not give a later test X's linked workspace
   wanted.clear();

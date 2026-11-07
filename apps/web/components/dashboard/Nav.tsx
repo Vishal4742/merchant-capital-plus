@@ -15,6 +15,7 @@ const SECTIONS = [
       { key: "invoices", label: "Invoices", href: "/merchant/invoices", icon: "invoices" },
       { key: "payments", label: "Payments", href: "/merchant/payments", icon: "payments" },
       { key: "connections", label: "Connections", href: "/merchant/connections", icon: "connections" },
+      { key: "ai", label: "AI connections", href: "/merchant/ai", icon: "connections" },
       { key: "settings", label: "Settings", href: "/merchant/settings", icon: "settings" },
     ],
   },

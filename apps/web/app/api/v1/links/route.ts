@@ -23,7 +23,7 @@ export async function POST(request: Request) {
     const key = request.headers.get("idempotency-key");
     if (key === null) {
       // the dashboard may omit it (compatibility); an assistant's or server's key may not: its retries must be safe
-      if (access.ctx.source === "api_key") throw new HttpError(400, "Send an Idempotency-Key header with every secret-key write, so a retry can never create a second link.");
+      if (access.ctx.source !== "session") throw new HttpError(400, "Send an Idempotency-Key header with every secret-key or assistant write, so a retry can never create a second link.");
       const link = linkJson(await createLink(merchant, body));
       await auditV1(access, "links.create", link.id);
       return ok(link, 201);

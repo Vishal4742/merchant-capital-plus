@@ -58,7 +58,7 @@ export interface AuthContext {
   businessId: string | null; // null while a signed-in principal has no active workspace
   role: Role | null;
   scopes: ReadonlySet<Scope>;
-  source: "session" | "api_key";
+  source: "session" | "api_key" | "mcp_grant";
   credentialId: string; // session id or API key id (never the secret itself)
   requestId: string;
 }

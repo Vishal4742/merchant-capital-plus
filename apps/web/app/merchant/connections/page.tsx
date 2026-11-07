@@ -83,58 +83,12 @@ async function ConnectionsLoader() {
       {/* minmax(0,1fr) on every grid down to the MCP <pre>: an `auto` column sizes to the pre's longest line, so each
           level must allow shrinking for the pre to scroll inside its box (the page was 468 px wide at 360 before 051) */}
       <div className="grid grid-cols-[minmax(0,1fr)] gap-8 px-4 py-6 md:px-8 md:py-8">
-        {/* Model Context Protocol (MCP) Section */}
-        <section aria-labelledby="mcp-heading" className="grid grid-cols-[minmax(0,1fr)] gap-4 rounded-[16px] border border-hairline bg-surface p-5 md:p-6 shadow-card">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-hairline pb-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 id="mcp-heading" className="text-[17px] font-semibold text-ink">
-                  Model Context Protocol (MCP)
-                </h2>
-                <span className="inline-flex rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-800 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/60">
-                  Stage 6 Planned
-                </span>
-              </div>
-              <p className="mt-1 text-xs text-ink-muted">
-                Standard interface for AI assistants (Claude Desktop, cursor, agent tools) to draft invoices and query payments.
-              </p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-[minmax(0,1fr)] gap-3 text-sm text-ink-muted">
-            <p>
-              Whiteflow targets protocol version <span className="font-mono text-ink">2025-11-25</span> using{" "}
-              <span className="font-mono text-ink">@modelcontextprotocol/sdk 1.32.2</span> over Streamable HTTP.
-            </p>
-            <div className="rounded-[10px] bg-surface-sunk/70 p-4 border border-hairline">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-ink mb-1.5">
-                Current Architecture State
-              </h3>
-              <p className="text-xs text-ink-muted leading-relaxed">
-                Backend MCP endpoint deploys during <strong>Stage 6</strong> after Stage 2 payment reliability, Stage 3 business identity, and Stage 4 settlement hardening. Assistant tools will support scoped tenant access for drafting invoices and querying on-chain payment records. No private keys are ever stored in connector configuration or exposed in model context.
-              </p>
-            </div>
-
-            <div>
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-ink mb-2">
-                Claude Desktop Configuration Preview
-              </h3>
-              <pre className="overflow-x-auto rounded-[8px] bg-slate-900 p-3.5 text-xs font-mono text-emerald-400">
-{`{
-  "mcpServers": {
-    "whiteflow": {
-      "url": "https://api.whiteflow.io/mcp",
-      "headers": {
-        "Authorization": "Bearer <YOUR_SHOP_API_KEY>"
-      }
-    }
-  }
-}`}
-              </pre>
-            </div>
-          </div>
+        <section aria-labelledby="mcp-heading" className="grid gap-3 rounded-[16px] border border-hairline bg-surface p-5">
+          <h2 id="mcp-heading" className="text-lg font-medium">Connect your AI assistant</h2>
+          <p>Use ChatGPT, Claude or another compatible MCP client to read your testnet payments and create payment links with your permission.</p>
+          <a href="/merchant/ai" className="text-accent underline underline-offset-4">Set up and manage AI connections</a>
+          <p className="text-sm text-ink-muted">An Owner authorizes access through WhiteFlow. Never paste an API key into a chat.</p>
         </section>
-
         {keys === null || webhooks === null ? (
           <p className="text-sm text-ink-muted">Only Owners can see API keys and webhooks.</p>
         ) : (

@@ -1,0 +1,30 @@
+{
+  "name": "@whiteflow/mcp-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "WhiteFlow's hosted MCP endpoint (Streamable HTTP) and its OAuth authorization server, for ChatGPT and Claude. Whitechain Testnet only.",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.ts",
+    "test": "node --test test/",
+    "typecheck": "tsc --noEmit",
+    "build": "node scripts/build.mjs"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@neondatabase/serverless": "1.2.0",
+    "express": "5.3.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.11",
+    "@types/express": "5.0.6",
+    "@types/node": "20.19.43",
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3"
+  }
+}

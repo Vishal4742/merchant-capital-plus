@@ -1,0 +1,102 @@
+✔ whiteflow.mcpb: validated, self-contained, launches from the unpacked archive, discovery equals the manifest (13060.4536ms)
+✔ a claim is stored in Postgres and survives a restart: a new journal instance resumes the same key (6238.1074ms)
+✔ 20 concurrent identical creates, on separate journal instances (separate serverless instances), yield one key and one entry (3694.5968ms)
+✔ concurrent creates with different explicit keys for the same request: one wins, the others are refused (no duplicates) (3495.6544ms)
+✔ tenants are isolated: another merchant's scope never sees or blocks these entries (3816.5396ms)
+✔ the same guards as the file journal: needs-reconciliation blocks an explicit key; an old unresolved write is flagged, not re-sent (4400.3679ms)
+✔ settle persists across instances, and a done write replays inside the window (3544.6281ms)
+✔ F2: an unknown outcome is still resumed with the same key 16 minutes and 23 hours later (296.248ms)
+✔ F2: past the server's 24-hour retention an unresolved write is reported, not silently re-created (35.0689ms)
+✔ F2: more than 500 settled entries never evict an unresolved one (29824.1966ms)
+✔ F2: a rotated key for the same merchant resumes the operation; create_another starts a new one (161.1825ms)
+✔ F3: a reply for a different amount, currency or URL origin is never reported as a success (277.148ms)
+✔ F3: a malformed or oversized 2xx keeps the write unresolved, and the retry uses the same key (162.757ms)
+✔ F4: finalize only requests publication; no tool can approve; the Owner's approval publishes that exact version once (466.9365ms)
+✔ F4: editing the draft cancels the pending approval; the old approval can't publish the new version (591.8667ms)
+✔ F4: an expired or rejected request can't publish, and a total that doesn't add up blocks the request (403.5924ms)
+✔ operations: a settled write is visible by key in the sandbox; an unknown key is refused (108.7701ms)
+✔ round-2 probe: a write reply the connector can't verify is flagged for reconciliation, never re-sent under a new key (49.824ms)
+✔ round-2 probe: the sandbox operation lookup finds a key that contains ':' and '.' (88.6014ms)
+✔ a failed 'done' settle after a successful create keeps the write's identity: the retry sends the SAME key (101.0159ms)
+✔ a failed 'needs_reconciliation' settle after a mismatching reply never becomes 'refused' either (26.3723ms)
+✔ only a definite refusal from WhiteFlow settles 'refused'; an unexpected error leaves the write pending (37.083ms)
+✔ an explicit key on a request that needs reconciliation is refused, like a generated one (28.1097ms)
+✔ an explicit key past the server's retention window is flagged for reconciliation, not re-sent (24.7961ms)
+✔ an explicit key still resumes its own unresolved write inside the window, with the same key (26.1199ms)
+✔ a different explicit key while an identical write is still unresolved is refused (it could duplicate) (18.031ms)
+✔ another merchant's unresolved write never blocks this one (8.9768ms)
+✔ an operation-lookup 404 is never reported as proof the write did not happen (170.9724ms)
+✔ a lookup that says succeeded is shown, but the write isn't settled until its record passes the normal checks (57.352ms)
+✔ payment-link prompts don't require a customer search (0.4181ms)
+✔ invoice prompts check capabilities first and treat approval as pending (8.6515ms)
+✔ exactly the six real tools are listed, and no prompts (6506.3668ms)
+✔ a tool outside the six can't be called even by name (customers and invoices don't exist remotely) (3558.01ms)
+✔ scope is enforced when a tool is called: links:write is needed to create, and nothing reaches the gateway without it (3443.0421ms)
+✔ each read tool needs its own scope (3960.0965ms)
+✔ acknowledging an operation is a write: it needs links:write, plain status needs only links:read (4256.2814ms)
+✔ only a successful, authorized tool call is reported as verification, tied to its grant (3694.922ms)
+✔ a tool that fails (gateway error) is not verification (4018.9187ms)
+✔ the request's own credential goes to the gateway, never anything global; two tenants share nothing (3399.2533ms)
+✔ the credential never appears in any tool output (3473.3533ms)
+✔ demo: customer → draft → finalize → URL → simulated signed payment → paid → in the summary (518.6626ms)
+✔ discount and explicit tax: integer math, one half-up rounding each, shown on the draft (118.5692ms)
+✔ lifecycle refusals: non-USDT invoice, past due date, too precise, names instead of ids, finalize twice (443.7073ms)
+✔ overdue: listed by status, totalled in the summary, and the reminder is a draft that names the right recipient (710.3992ms)
+✔ customers: duplicates are listed, not created, until the merchant confirms a different customer (428.3433ms)
+✔ payment links in the sandbox: INR priced, single-use, paid by a simulated payment (647.8144ms)
+✔ tenancy: another merchant's key sees none of A's customers, links or invoices (404 / empty lists) (534.662ms)
+✔ credentials: an expired key is refused; a key without a scope gets a 403 naming it; neither is echoed (83.33ms)
+✔ idempotency: a retry replays the same record; the same key with another payload fails; a new key makes a new one (1260.2699ms)
+✔ provider events: bad signature and stale timestamp refused, duplicates once, out-of-order never regresses (2685.7274ms)
+✔ under- and overpayment are recorded, and reconcile rebuilds paid totals from verified payments (566.3918ms)
+✔ customer text that gives instructions stays data: the recipient, amounts and tools don't change (366.2263ms)
+✔ no secret leaves the server: not the API key, not the provider's webhook secret, in results or stderr (435.4248ms)
+2026-11-07T02:44:46.457Z whiteflow-mcp info started in sandbox mode (sandbox data in C:\Users\nothi\AppData\Local\Temp\wf-mcp-test-C5HcEe)
+2026-11-07T02:44:46.476Z whiteflow-mcp info started in testnet mode against https://gateway.test
+✔ profile: testnet label, the business time zone falls back to WHITEFLOW_TIMEZONE, no scopes on testnet keys (258.3725ms)
+✔ create_payment_link posts the live shape with the key and an Idempotency-Key, and returns the absolute URL (145.6358ms)
+✔ a lost reply is retried with the same Idempotency-Key, so the gateway can replay instead of duplicating (88.6532ms)
+✖ timeout with an unknown outcome: the tool says it's safe to retry, and the retry (no key given) reuses the same key (36.2652ms)
+✔ a lost reply then 429s, or a 'still being processed' 409, stays ambiguous: the next call reuses the key (review 052 M1) (394.0636ms)
+✔ a definite refusal frees the journal: a corrected request gets a fresh key (122.4981ms)
+✔ 401 and 403 become plain reasons that never contain the key (27.2702ms)
+✔ customers, invoices and reminders refuse plainly on testnet, without calling routes the backend doesn't have (41.4628ms)
+✔ list_payments and get_payment_link: verified records with explorer links; the summary is in the business zone (88.6084ms)
+✔ ids "." and ".." are refused before any fetch: they would be another same-origin path, sent with the key (46.7589ms)
+✔ a dashboard link priced finer than its currency's minor unit (10.555 INR) is shown as stored, not rounded or refused (11.6502ms)
+✔ startup refuses bad settings without repeating the key; sandbox is the default mode (96.1266ms)
+✔ the old MCP_SECRET_KEY alone stops startup, naming WHITEFLOW_API_KEY, instead of silently starting the sandbox (23.3543ms)
+✔ parseMoney: exact minor units at each currency's precision; refuses what it can't represent exactly (5.7965ms)
+✔ decimal and display: no floats, at least two decimals, grouping only for people (8.3835ms)
+✔ invoice totals: Σ qty × price, percent discount and tax each rounded once, half up (2.2209ms)
+✔ dates: periods in the business zone (weeks start Monday), DST-safe day boundaries, range limits (34.9507ms)
+✔ untrusted text: control, zero-width and bidi characters removed, length bounded; emails masked (0.6753ms)
+✔ untrusted text: Unicode tag characters (hidden instructions), line/paragraph separators and the Arabic letter mark removed (0.3151ms)
+✔ journal: resumes unresolved writes, replays an accidental repeat, separates merchants, never evicts unresolved (F2) (343.5795ms)
+ℹ tests 73
+ℹ suites 0
+ℹ pass 72
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 49078.0516
+
+✖ failing tests:
+
+test at test\testnet.test.ts:74:1
+✖ timeout with an unknown outcome: the tool says it's safe to retry, and the retry (no key given) reuses the same key (36.2652ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /didn't answer in time.*resumes this operation .* until 2026-11-07T12:00:00\.000Z, while Whiteflow can still replay it/. Input:
+  
+  "Whiteflow didn't answer in time (https://gateway.test). Calling this tool again with the same input resumes this operation (idempotency key wfmcp_d6852dd7-2dd5-480e-bcff-0169cf042205) until 2026-11-07T12:00:00.000Z, while WhiteFlow can still replay it, so it won't create a duplicate. After that, check the record before creating another."
+  
+      at TestContext.<anonymous> (file:///C:/Users/nothi/.codex/worktrees/whiteflow-mcp-connect/WhiteFlow/packages/mcp/test/testnet.test.ts:82:10)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: "Whiteflow didn't answer in time (https://gateway.test). Calling this tool again with the same input resumes this operation (idempotency key wfmcp_d6852dd7-2dd5-480e-bcff-0169cf042205) until 2026-11-07T12:00:00.000Z, while WhiteFlow can still replay it, so it won't create a duplicate. After that, check the record before creating another.",
+    expected: /didn't answer in time.*resumes this operation .* until 2026-11-07T12:00:00\.000Z, while Whiteflow can still replay it/,
+    operator: 'match',
+    diff: 'simple'
+  }

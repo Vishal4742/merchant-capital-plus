@@ -41,10 +41,16 @@ export function registerOperationTools(server: McpServer, ctx: Ctx): void {
             try {
               const { data } = await ctx.client.operation(entry.key);
               server = { state: data.state, http_status: data.http_status, record_id: data.result_id, at: data.created_at };
-              if (data.state === "succeeded" && entry.outcome === "pending") ctx.journal.settle(profile.scope, entry.key, "done", data.result_id);
+              // A bare "succeeded" is not settled here: the record it names must pass the same semantic checks as a fresh
+              // write (price, currency, URL on a trusted origin). The next identical call resumes with this key, gets the
+              // replayed record and verifies it; until then the entry stays unresolved (batch 058).
+              if (data.state === "succeeded" && entry.outcome === "pending") {
+                server = { ...server, note: "Whiteflow says it succeeded. Verify the record itself (get_payment_link) or repeat the same request: it replays this record and checks it before reporting success." };
+              }
             } catch (error) {
               if (!(error instanceof ApiError) || error.status !== 404) throw error;
-              server = { state: "not_found", note: "Whiteflow has no record of this key: if it's still within 24 hours, the write never happened" };
+              // A missing record is not proof of anything: the lookup can lag the write, forget it, or not cover it.
+              server = { state: "not_found", note: "Whiteflow has no operation record under this key. That is not proof the write didn't happen: check the record itself (get_payment_link, list_payments) before creating another." };
             }
           }
           return {
@@ -58,15 +64,15 @@ export function registerOperationTools(server: McpServer, ctx: Ctx): void {
           };
         };
         if (idempotency_key) {
-          const entry = ctx.journal.find(profile.scope, idempotency_key);
+          const entry = await ctx.journal.find(profile.scope, idempotency_key);
           if (!entry) throw new ToolRefusal("The connector has no record of that idempotency_key for this business.");
           if (acknowledge) {
-            ctx.journal.settle(profile.scope, entry.key, "acknowledged", "the merchant checked the record");
+            await ctx.journal.settle(profile.scope, entry.key, "acknowledged", "the merchant checked the record");
             return { summary: `Marked ${entry.key} as checked by the merchant.`, operation: await describe({ ...entry, outcome: "acknowledged" }) };
           }
           return { summary: `Operation ${entry.key}: ${entry.outcome}.`, operation: await describe(entry) };
         }
-        const unresolved = await Promise.all(ctx.journal.unresolved(profile.scope).map(describe));
+        const unresolved = await Promise.all((await ctx.journal.unresolved(profile.scope)).map(describe));
         return {
           summary: unresolved.length ? `${unresolved.length} write(s) with an unsettled outcome.` : "No unresolved writes.",
           unresolved,

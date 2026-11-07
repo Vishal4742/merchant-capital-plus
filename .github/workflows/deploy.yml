@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: Deploy all three projects, changed or not
+        description: Deploy all configured projects, changed or not
         type: boolean
         default: false
 
@@ -35,7 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        project: [web, relayer, shop]
+        project: [web, relayer, shop, mcp]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -50,5 +50,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FORCE: ${{ inputs.force && '1' || '0' }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_MCP_PROJECT_ID: ${{ vars.VERCEL_MCP_PROJECT_ID }}
           PROJECT: ${{ matrix.project }}
         run: bash tools/vercel-deploy.sh "$PROJECT"

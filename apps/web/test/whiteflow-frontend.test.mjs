@@ -54,8 +54,9 @@ test("Invoices route exists and is backed by on-chain reads", () => {
 test("Connections route exists and discloses honest MCP status", () => {
   const connPage = readFileSync(join(ROOT, "app/merchant/connections/page.tsx"), "utf8");
   assert.match(connPage, /Model Context Protocol \(MCP\)/);
-  assert.match(connPage, /Stage 6/);
-  assert.match(connPage, /2025-11-25/);
+  assert.match(connPage, /href="\/merchant\/ai"/);
+  assert.match(connPage, /testnet payments/);
+  assert.doesNotMatch(connPage, /api\.whiteflow\.io|YOUR_SHOP_API_KEY|Stage 6 Planned/);
   assert.match(connPage, /listKeys/);
   assert.match(connPage, /listWebhooks/);
 });

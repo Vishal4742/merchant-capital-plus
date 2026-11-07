@@ -14,6 +14,7 @@ import { WF_SESSION_COOKIE, contextFromRequest, mutationContext, newId, publicOr
 import { query } from "./db.ts";
 import { HttpError, sharedRateLimit } from "./http.ts";
 import { AuthError, Forbidden, SECRET_KEY_SCOPES, concurrencyConflict, requireScope, type AuthContext, type Role, type Scope } from "./identity.ts";
+import { internalCaller } from "./mcp-principal.ts";
 import { authenticateKey } from "./keys.ts";
 import { readV1Obligations, type ObligationsRead } from "./policies.ts";
 
@@ -248,6 +249,13 @@ export async function legacyAccess(
   scope: Scope,
   { secretKey = false, publishableForbidden = false }: { secretKey?: boolean; publishableForbidden?: boolean } = {},
 ): Promise<LegacyCaller> {
+  const internal = await internalCaller(request);
+  if (internal) {
+    if ("error" in internal) throw new HttpError(internal.status, internal.error);
+    const ctx: LegacyCaller["ctx"] = { principalId: internal.principalId, businessId: internal.businessId, role: null,
+      scopes: new Set<Scope>([scope]), source: "mcp_grant", credentialId: internal.grantId, requestId: requestIdOf(request) };
+    return { ctx, merchant: internal.merchant };
+  }
   if (secretKey && (request.headers.get("authorization") ?? "").startsWith("Bearer ")) return keyAccess(request, scope, publishableForbidden);
   // CSRF only matters when the browser sends the session cookie; without one the caller is simply not signed in (401)
   const csrf = !SAFE_METHODS.has(request.method.toUpperCase()) && cookieFrom(request, WF_SESSION_COOKIE) !== undefined;

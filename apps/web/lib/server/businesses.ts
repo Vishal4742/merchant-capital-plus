@@ -279,6 +279,7 @@ export async function setMemberRole(ctx: AuthContext, input: { principalId: unkn
       : [
           `done AS (UPDATE wf_memberships SET role = $11 WHERE business_id = $1 AND principal_id = $10 AND role = 'owner' AND EXISTS (SELECT 1 FROM actor) RETURNING 1),
            ${REVOKE},
+           mc AS (UPDATE app_mcp_grants SET revoked_at = $6 WHERE business_id = $1 AND approved_by = $10 AND revoked_at IS NULL AND EXISTS (SELECT 1 FROM done)),
            c AS (UPDATE wf_businesses SET owner_count = owner_count - 1 WHERE id = $1 AND EXISTS (SELECT 1 FROM done))`,
           `done AS (UPDATE wf_memberships SET role = $11 WHERE business_id = $1 AND principal_id = $10 AND role <> 'owner' AND EXISTS (SELECT 1 FROM actor) RETURNING 1),
            c AS (SELECT 1)`,
