@@ -31,7 +31,7 @@ export const PROMPTS: PromptDef[] = [
       { name: "purpose", description: "What it's for (optional)" },
     ],
     text:
-      "Help me collect a payment with WhiteFlow. Customer: ${arguments.customer}. Amount: ${arguments.amount}. For: ${arguments.purpose}. " +
+      "Help me collect a payment with Whiteflow. Customer: ${arguments.customer}. Amount: ${arguments.amount}. For: ${arguments.purpose}. " +
       "Use create_payment_link with the amount in the currency I stated. Show me the link's URL, amount, status and what happens on conversion, then offer to check later whether it was paid. " +
       RULES,
   },
@@ -44,7 +44,7 @@ export const PROMPTS: PromptDef[] = [
       { name: "details", description: "Line items, prices and due date, in your words (optional)" },
     ],
     text:
-      "Help me invoice ${arguments.customer} with WhiteFlow: ${arguments.details}. " +
+      "Help me invoice ${arguments.customer} with Whiteflow: ${arguments.details}. " +
       "Find or create the customer, then create_invoice_draft. Show the line items, discount, tax, total and the resolved due date, and wait for my OK before finalize_invoice. " +
       "Then give me the invoice number and payment URL. Invoices are in USDT: if I priced in another currency, ask me for USDT amounts or offer a payment link instead. " +
       RULES,
@@ -55,7 +55,7 @@ export const PROMPTS: PromptDef[] = [
     description: "List overdue invoices and the total outstanding, and offer reminder drafts.",
     arguments: [],
     text:
-      "Review my overdue WhiteFlow invoices. Use list_invoices with status overdue (page through all of them) and get_collection_summary for the outstanding and overdue totals per currency. " +
+      "Review my overdue Whiteflow invoices. Use list_invoices with status overdue (page through all of them) and get_collection_summary for the outstanding and overdue totals per currency. " +
       "List each invoice's number, customer, amount due and days overdue, then offer prepare_invoice_reminder drafts. Reminders are drafts for me to send; nothing is sent automatically. " +
       RULES,
   },
@@ -65,7 +65,7 @@ export const PROMPTS: PromptDef[] = [
     description: "Summarize money collected in a period, with fees, refunds and what's outstanding.",
     arguments: [{ name: "period", description: "e.g. this_week, last_month, or two dates (optional)" }],
     text:
-      "Summarize my WhiteFlow collections for ${arguments.period} (this week if not given). Use get_collection_summary and report gross, fees, refunds and net per currency, " +
+      "Summarize my Whiteflow collections for ${arguments.period} (this week if not given). Use get_collection_summary and report gross, fees, refunds and net per currency, " +
       "the number of payments, and what is outstanding and overdue. Point out anything the backend doesn't report rather than estimating it. " +
       RULES,
   },

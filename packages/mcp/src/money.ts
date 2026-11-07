@@ -62,7 +62,7 @@ export function display(units: bigint, currency: Currency): string {
 
 /** A gateway decimal (any number of decimals up to the currency's) → minor units; for API replies, not user input. */
 export function fromApi(text: string | number | null | undefined, currency: Currency): bigint {
-  return parseMoney(String(text ?? "0"), currency, "an amount from WhiteFlow", { allowZero: true }).units;
+  return parseMoney(String(text ?? "0"), currency, "an amount from Whiteflow", { allowZero: true }).units;
 }
 
 // ---- invoice arithmetic (FR-MCP-14): one rounding per step, half up, to the currency's minor unit -------------------

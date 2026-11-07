@@ -9,8 +9,8 @@ Shots: /Users/vg890/ethglobal-docs/.batches/G4-phase-review/round-2/shots/
 
 ### H1. FR-PAY-7: the live demo shop shows "gas" to the customer
 - Screenshot: shots/shop-375.png, shop-1440.png
-- What: the footer on https://merchant-capital-shop.vercel.app reads "Checkout by Merchant Capital+. No gas or crypto needed." "gas" and "crypto" are banned on customer pages. The source is not in this tree (apps/shop is on origin/relayer), so I could not find the line.
-- Fix: "Checkout by Merchant Capital+. Pay in USDT, no fees for you." Same wording rule as the checkout sheet ("No fees for you.").
+- What: the footer on https://merchant-capital-shop.vercel.app reads "Checkout by Whiteflow. No gas or crypto needed." "gas" and "crypto" are banned on customer pages. The source is not in this tree (apps/shop is on origin/relayer), so I could not find the line.
+- Fix: "Checkout by Whiteflow. Pay in USDT, no fees for you." Same wording rule as the checkout sheet ("No fees for you.").
 - Owner: relayer lane (apps/shop).
 
 ### H2. Customer checkout sheet overflows the viewport at 375 when "Have a discount code?" is opened

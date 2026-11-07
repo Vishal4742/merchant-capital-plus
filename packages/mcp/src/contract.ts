@@ -1,4 +1,4 @@
-// The WhiteFlow merchant API contract the connector speaks (batch 052; API-CONTRACT.md is the prose version), as
+// The Whiteflow merchant API contract the connector speaks (batch 052; API-CONTRACT.md is the prose version), as
 // runtime schemas: every reply is parsed against these before any tool reads it (production review F3). Unknown fields
 // are dropped; strings and lists are bounded, so a faulty or hostile backend can't flood the model.
 // LIVE = served by apps/web on main (testnet). PROPOSED = not on the web backend yet; the sandbox serves every route.

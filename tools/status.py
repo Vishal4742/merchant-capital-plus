@@ -74,7 +74,7 @@ def phases():
 def main():
     log = (ROOT / "HANDOFF_LOG.md").read_text() if (ROOT / "HANDOFF_LOG.md").exists() else ""
     verified = {b for line in re.findall(r"VERIFIED [^:]*", log) for b in re.findall(r"[0-9]{3}-P\d-[\w-]+", line)} | set(re.findall(r"VERIFIED (G\d)(?=: | on )", log))  # gates only as "VERIFIED G<n>:" or "VERIFIED G<n> on"
-    print(f"WhiteFlow status · {time.strftime('%a %H:%M')} IST\n")
+    print(f"Whiteflow status · {time.strftime('%a %H:%M')} IST\n")
     print("Phases (tasks ticked in PHASES.md · gate):")
     for n, name, done, total, gate in phases():
         g = f"{gate} ✔ verified" if gate in verified else f"{gate} open" if gate else ""

@@ -39,7 +39,7 @@ function lock(file: string): () => void {
       } catch {
         // gone between the two calls: try again
       }
-      if (Date.now() > deadline) throw new StateError(`${file} is locked by another WhiteFlow process. Try again in a moment.`);
+      if (Date.now() > deadline) throw new StateError(`${file} is locked by another Whiteflow process. Try again in a moment.`);
       sleepSync(25);
     }
   }

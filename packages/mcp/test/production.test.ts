@@ -107,7 +107,7 @@ test("F3: a reply for a different amount, currency or URL origin is never report
     const r = await call("create_payment_link", ASK);
     assert.equal(r.isError, true, JSON.stringify(wrong));
     assert.equal(r.json.outcome, "needs_reconciliation", JSON.stringify(wrong));
-    assert.match(r.json.error, /doesn't match what was asked|not on a trusted WhiteFlow origin/);
+    assert.match(r.json.error, /doesn't match what was asked|not on a trusted Whiteflow origin/);
     assert.ok(!/Send .* to the customer/.test(r.text), "no share instruction");
   }
 });

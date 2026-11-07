@@ -1,4 +1,4 @@
-// Batch 052 (FR-GW-16 proposed, FR-GW-1, FR-GW-6, FR-GW-9): the routes the WhiteFlow merchant MCP uses with a secret
+// Batch 052 (FR-GW-16 proposed, FR-GW-1, FR-GW-6, FR-GW-9): the routes the Whiteflow merchant MCP uses with a secret
 // key: links (create with a durable Idempotency-Key, list, read one with its paid checkouts), the account profile and
 // the report. Real SQL on PGlite; the FX source and the chain index are faked, nothing leaves the process.
 // Run from apps/web: node --experimental-test-module-mocks --test test/gw-mcp-api.test.mjs

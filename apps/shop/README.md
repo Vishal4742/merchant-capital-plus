@@ -1,6 +1,6 @@
 # Demo shop (AT-14)
 
-A one-product coffee shop wired to the WhiteFlow gateway with the SDK (`packages/sdk`, vendored as `lib/sdk.ts`). Live webhook endpoint: https://merchant-capital-shop.vercel.app/api/webhook.
+A one-product coffee shop wired to the Whiteflow gateway with the SDK (`packages/sdk`, vendored as `lib/sdk.ts`). Live webhook endpoint: https://merchant-capital-shop.vercel.app/api/webhook.
 
 The whole integration is 20 lines:
 - `api/checkout.ts`: `sessions.create` with the shop's secret key, then a 303 to the hosted checkout. The amount is set on the server.

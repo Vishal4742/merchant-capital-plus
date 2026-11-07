@@ -4,7 +4,7 @@ import type { Metadata } from "next";
 import { EditorialHeader } from "@/components/gateway/Frame";
 import { InvestorApp } from "@/components/capital/investor/InvestorApp";
 
-export const metadata: Metadata = { title: "Capital · WhiteFlow" };
+export const metadata: Metadata = { title: "Capital · Whiteflow" };
 
 export default function CapitalPage() {
   return (

@@ -11,7 +11,7 @@ export function Nav() {
   return (
     <header className="lp-nav">
       <div className="wrap">
-        <span className="lp-word">WhiteFlow</span>
+        <span className="lp-word">Whiteflow</span>
         <nav className="links" aria-label="Product">
           <a href="#accept">Payments</a>
           <a href="#settle">Settlement</a>

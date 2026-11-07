@@ -1,4 +1,4 @@
-# Merchant Capital+
+# Whiteflow
 
 **A stablecoin payment gateway for merchants who sell internationally: payment links, payment pages, invoices, QR codes, discount vouchers, multi-currency prices, sales reports and instant settlement in USDT on Whitechain, with a one-line payment button and an SDK. Customers pay with zero gas. Plus Capital: get paid early from future sales.** Testnet only (Whitechain Sepolia).
 
@@ -12,7 +12,7 @@
 - **Easiest to integrate:** a one-line payment button or a small SDK, with signed webhooks.
 
 ### Compared with existing gateways
-| | Whitepay (W Group) | Coinbase Commerce | Merchant Capital+ |
+| | Whitepay (W Group) | Coinbase Commerce | Whiteflow |
 |---|---|---|---|
 | Where the money lands | A WhiteBIT-side account: deposit addresses and off-chain settlement from WhiteBIT balances ([docs](https://docs.whitebit.com/guides/payments-overview)) | Escrow, then settled in USDC | The merchant's own wallet, in the same transaction |
 | Customer pays gas | Not stated; "Pay with WhiteBIT" moves funds off-chain between WhiteBIT accounts | No (EIP-3009 USDC on Base) | No (EIP-3009 USDT on Whitechain) |
@@ -56,7 +56,7 @@ Private-read proof (Phase 1): the app read Whitechain blocks through Nym (e.g. b
 `packages/mcp` is a local MCP server for Claude Code or Claude Desktop. Merchant tools (`create_checkout`, `get_checkout`, `list_payments`, `sales_summary`) use the merchant's own `sk_test_` key and can't move money. An optional payer tool (`pay_checkout`, only with `MCP_PAYER_KEY`) lets an agent pay a checkout without gas, capped at 10 USDT per payment and 25 per day, with `spending_report` listing every payment.
 ```
 cd packages/mcp && npm ci
-claude mcp add merchant-capital --transport stdio --env MCP_SECRET_KEY=sk_test_YOUR_KEY -- node "$PWD/src/index.ts"
+claude mcp add whiteflow --transport stdio --env MCP_SECRET_KEY=sk_test_YOUR_KEY -- node "$PWD/src/index.ts"
 ```
 Parts of it are adapted from [Pixa](https://github.com/soumyacodes007/Pixa) (MIT; licence in `packages/mcp/THIRD_PARTY_LICENSES`; ETHGlobal mentors confirmed this reuse is within Start Fresh).
 
@@ -81,7 +81,7 @@ Contracts: `contracts/` (Solidity 0.8.38, Foundry) · Relayer: `apps/relayer/` (
 Requirements: Node 26, Foundry 1.8.6, git. Everything runs on Whitechain Sepolia (chain 1874); no mainnet funds are needed.
 
 ```bash
-git clone --recursive https://github.com/Vishal4742/merchant-capital-plus && cd merchant-capital-plus
+git clone --recursive https://github.com/Vishal4742/whiteflow && cd whiteflow
 cp .env.example .env          # fill in the values; never commit .env
 
 # Contracts (Foundry; fork tests run against Whitechain Sepolia with the real USDT)

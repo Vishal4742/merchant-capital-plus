@@ -12,7 +12,7 @@ import { EXPLORER_TX, Mismatch, RECORD_ID, replayNote, type Ctx, type Profile } 
 
 const LINK_ID = /^lnk_[A-Za-z0-9_-]{1,40}$/;
 
-/** The link's price as WhiteFlow stored it. The dashboard accepts up to 6 decimals in any currency, so a stored price can
+/** The link's price as Whiteflow stored it. The dashboard accepts up to 6 decimals in any currency, so a stored price can
  *  be finer than the currency's minor unit (e.g. 10.555 INR): then it's shown exactly as stored, never rounded. */
 function price(text: string | null, currency: Currency): { amount: string | null; display: string } {
   if (text === null) return { amount: null, display: "the customer enters the amount" };
@@ -24,12 +24,12 @@ function price(text: string | null, currency: Currency): { amount: string | null
   }
 }
 
-/** A link's URL, only if it's on a trusted WhiteFlow origin; for a read, an untrusted one is refused outright. */
+/** A link's URL, only if it's on a trusted Whiteflow origin; for a read, an untrusted one is refused outright. */
 function readUrl(ctx: Ctx, value: string): string {
   try {
     return ctx.trustedUrl(value, "the link's URL");
   } catch (error) {
-    if (error instanceof Mismatch) throw new ToolRefusal(`WhiteFlow returned a link URL that isn't on a trusted origin (${error.message}). Don't share it; check the link in the dashboard.`);
+    if (error instanceof Mismatch) throw new ToolRefusal(`Whiteflow returned a link URL that isn't on a trusted origin (${error.message}). Don't share it; check the link in the dashboard.`);
     throw error;
   }
 }
@@ -55,7 +55,7 @@ function linkOut(link: Link, url: string, profile: Profile) {
 const conversionNote = (currency: Currency) =>
   currency === "USDT"
     ? "The customer pays this exact amount in USDT on the settlement network."
-    : `Priced in ${currency}. When the customer opens the link, WhiteFlow converts it to USDT at a rate locked for that checkout (shown to the customer); they pay USDT and you receive USDT. The connector did not convert anything.`;
+    : `Priced in ${currency}. When the customer opens the link, Whiteflow converts it to USDT at a rate locked for that checkout (shown to the customer); they pay USDT and you receive USDT. The connector did not convert anything.`;
 
 export function registerLinkTools(server: McpServer, ctx: Ctx): void {
   server.registerTool(
@@ -64,7 +64,7 @@ export function registerLinkTools(server: McpServer, ctx: Ctx): void {
       title: "Create payment link",
       description:
         "Create a hosted payment link and return its URL and status. It is NOT sent to anyone: the merchant shares the URL. Single-use by default (one payment closes it). " +
-        "currency is the price's currency, exactly as the merchant said it (₹ → INR, $ → USD); never convert it yourself. A price not in USDT is converted by WhiteFlow at checkout.",
+        "currency is the price's currency, exactly as the merchant said it (₹ → INR, $ → USD); never convert it yourself. A price not in USDT is converted by Whiteflow at checkout.",
       inputSchema: {
         amount: z.string().max(30).describe('The price as a decimal string in `currency`, e.g. "15000" or "15000.00" (at most 2 decimals for fiat, 6 for USDT).'),
         currency: z.enum(CURRENCIES).describe("The price's currency, as the merchant stated it. Ask if unclear; don't assume."),
@@ -141,7 +141,7 @@ export function registerLinkTools(server: McpServer, ctx: Ctx): void {
           summary: `${replayed ? "Found the payment link already created" : "Created a payment link"} for ${link.amount_display} — ${link.description}. Status: ${link.status}.`,
           link,
           delivered: false,
-          delivery_note: "WhiteFlow did not send this link to anyone. Share the URL with the customer yourself.",
+          delivery_note: "Whiteflow did not send this link to anyone. Share the URL with the customer yourself.",
           settlement_note: conversionNote(price.currency),
           replayed,
           ...(replayed ? { note: replayNote(written, "link") } : {}),
@@ -155,7 +155,7 @@ export function registerLinkTools(server: McpServer, ctx: Ctx): void {
     "get_payment_link",
     {
       title: "Get payment link",
-      description: "A payment link's current status (active, paid, expired, cancelled) and the verified payments made through it, newest first, from WhiteFlow's own records.",
+      description: "A payment link's current status (active, paid, expired, cancelled) and the verified payments made through it, newest first, from Whiteflow's own records.",
       inputSchema: { link_id: z.string().regex(RECORD_ID, "letters, digits, _ or -").describe("The link id, like lnk_…, from create_payment_link.") },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -164,7 +164,7 @@ export function registerLinkTools(server: McpServer, ctx: Ctx): void {
         const profile = await ctx.require("links", "Payment links");
         if (!LINK_ID.test(link_id)) throw new ToolRefusal("link_id must be a link id like lnk_…; find it in the create_payment_link result.");
         const { data: detail } = await ctx.client.getLink(link_id);
-        if (detail.id !== link_id) throw new ToolRefusal("WhiteFlow returned a different link than the one asked for; check it in the dashboard.");
+        if (detail.id !== link_id) throw new ToolRefusal("Whiteflow returned a different link than the one asked for; check it in the dashboard.");
         const payments = detail.paid_checkouts.map((p) => ({
           id: p.payment_id ?? p.session_id,
           amount: decimal(fromApi(p.amount, "USDT"), "USDT"),

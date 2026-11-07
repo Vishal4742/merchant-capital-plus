@@ -8,4 +8,4 @@ Log:
 - 06:12 batch started (phase mode: own checks in ci.md + one reviewer-security pass, because sameAmount decides crediting).
 - 06:16 15dcdef: install docs, types (Priced, priced, refund_amount, test), README test-event skip, strict sameAmount, auto idempotency key; shop copy synced. 48/48 + shop 5/5.
 - 06:21 reviewer-security PASS; F1 (empty key) + F2 (leading-zero group) fixed in 2a89d19.
-- 06:31 owner's rename (via claude-contracts 06:30): Merchant Capital+ → WhiteFlow in SDK/button text + copies, 34cbce1. CI run 42321855775 green.
+- 06:31 owner's rename (via claude-contracts 06:30): Whiteflow → Whiteflow in SDK/button text + copies, 34cbce1. CI run 42321855775 green.

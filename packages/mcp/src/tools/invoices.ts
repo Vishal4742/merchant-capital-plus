@@ -59,7 +59,7 @@ function approvalOut(ctx: Ctx, approval: Approval | null) {
   try {
     review = ctx.trustedUrl(approval.review_url, "the review URL");
   } catch (error) {
-    if (error instanceof Mismatch) throw new ToolRefusal(`WhiteFlow returned a review URL that isn't on a trusted origin (${error.message}).`);
+    if (error instanceof Mismatch) throw new ToolRefusal(`Whiteflow returned a review URL that isn't on a trusted origin (${error.message}).`);
     throw error;
   }
   return { id: approval.id, status: approval.status, revision: approval.revision, total: approval.total, currency: approval.currency, expires_at: approval.expires_at, review_url: review };
@@ -74,7 +74,7 @@ function invoiceOut(ctx: Ctx, invoice: Invoice, profile: Profile) {
     try {
       return ctx.trustedUrl(value, what);
     } catch (error) {
-      if (error instanceof Mismatch) throw new ToolRefusal(`WhiteFlow returned ${what} that isn't on a trusted origin (${error.message}). Don't share it; check the invoice in the dashboard.`);
+      if (error instanceof Mismatch) throw new ToolRefusal(`Whiteflow returned ${what} that isn't on a trusted origin (${error.message}). Don't share it; check the invoice in the dashboard.`);
       throw error;
     }
   };
@@ -128,7 +128,7 @@ function nextFor(invoice: Invoice): string {
   }
   if (invoice.status === "paid") return "Paid in full: nothing to collect.";
   if (invoice.overdue) return "Overdue: offer prepare_invoice_reminder to draft a reminder for the merchant to send.";
-  return "Share the payment URL with the customer (WhiteFlow didn't send it).";
+  return "Share the payment URL with the customer (Whiteflow didn't send it).";
 }
 
 /** A draft as the server stored it must be the draft asked for, with totals equal to the connector's own. */
@@ -173,7 +173,7 @@ export function registerInvoiceTools(server: McpServer, ctx: Ctx): void {
         const profile = await ctx.require("invoices", "Invoices");
         if (input.currency.toUpperCase() !== "USDT") {
           throw new ToolRefusal(`Invoices are issued in USDT, the settlement asset, and the connector never converts currencies. ${input.currency} amounts can't be used as they are.`, {
-            next_action: `Ask the merchant for the USDT amounts, or offer a payment link priced in ${input.currency} (WhiteFlow converts at checkout at a locked rate).`,
+            next_action: `Ask the merchant for the USDT amounts, or offer a payment link priced in ${input.currency} (Whiteflow converts at checkout at a locked rate).`,
           });
         }
         const due = refuse(() => calendarDate(input.due_date, "due_date"));
@@ -263,7 +263,7 @@ export function registerInvoiceTools(server: McpServer, ctx: Ctx): void {
     {
       title: "Request invoice publication",
       description:
-        "Ask to publish a reviewed DRAFT. This doesn't publish by itself: WhiteFlow creates an approval request for this exact version (total, currency, customer), and an Owner of the business approves it on the review page; then the invoice gets its number and payment URL. " +
+        "Ask to publish a reviewed DRAFT. This doesn't publish by itself: Whiteflow creates an approval request for this exact version (total, currency, customer), and an Owner of the business approves it on the review page; then the invoice gets its number and payment URL. " +
         "A conversation 'yes' is not that approval. The connector re-checks the totals first and refuses if they don't add up. Nothing is emailed or sent.",
       inputSchema: { invoice: invoiceRef, idempotency_key: idempotencyKey },
       annotations: WRITE,
@@ -310,7 +310,7 @@ export function registerInvoiceTools(server: McpServer, ctx: Ctx): void {
           summary: `Invoice ${data.invoice.number} for ${untrusted(data.invoice.customer.name, 100)} is open: ${display(total, "USDT")}, due ${dueLabel(data.invoice.due_date, profile)}.`,
           invoice: invoiceOut(ctx, data.invoice, profile),
           delivered: false,
-          delivery_note: "WhiteFlow did not email or send this invoice. Share the payment URL with the customer yourself.",
+          delivery_note: "Whiteflow did not email or send this invoice. Share the payment URL with the customer yourself.",
           ...(written.replayed ? { note: replayNote(written, "finalized invoice") } : {}),
           next_action: nextFor(data.invoice),
           data_notice: DATA_NOTICE,
@@ -322,7 +322,7 @@ export function registerInvoiceTools(server: McpServer, ctx: Ctx): void {
     "get_invoice",
     {
       title: "Get invoice",
-      description: "An invoice's status (draft, awaiting approval, open, overdue, paid), totals, amount paid and still due, due date, payment URL, and its verified payments. Paid status comes only from WhiteFlow's verified payment records.",
+      description: "An invoice's status (draft, awaiting approval, open, overdue, paid), totals, amount paid and still due, due date, payment URL, and its verified payments. Paid status comes only from Whiteflow's verified payment records.",
       inputSchema: { invoice: invoiceRef },
       annotations: READ,
     },
@@ -331,7 +331,7 @@ export function registerInvoiceTools(server: McpServer, ctx: Ctx): void {
         const profile = await ctx.require("invoices", "Invoices");
         const ref = checkRef(invoice);
         const { data } = await ctx.client.getInvoice(ref);
-        if (data.id !== ref && data.number?.toUpperCase() !== ref.toUpperCase()) throw new ToolRefusal("WhiteFlow returned a different invoice than the one asked for; check it in the dashboard.");
+        if (data.id !== ref && data.number?.toUpperCase() !== ref.toUpperCase()) throw new ToolRefusal("Whiteflow returned a different invoice than the one asked for; check it in the dashboard.");
         const out = invoiceOut(ctx, data, profile);
         return {
           summary: `${data.number ?? "Draft " + data.id} for ${out.customer.name}: ${out.status}; ${out.total_display} total, ${out.amount_due_display} due, due ${out.due}.`,
@@ -396,7 +396,7 @@ export function registerInvoiceTools(server: McpServer, ctx: Ctx): void {
           // every link in the text the merchant would send must be on a trusted origin too
           for (const found of data.body.match(/https?:\/\/[^\s<>"')]+/g) ?? []) ctx.trustedUrl(found, "a URL in the reminder text");
         } catch (error) {
-          if (error instanceof Mismatch) throw new ToolRefusal(`The reminder's payment URL isn't on a trusted WhiteFlow origin (${error.message}). Don't send it.`);
+          if (error instanceof Mismatch) throw new ToolRefusal(`The reminder's payment URL isn't on a trusted Whiteflow origin (${error.message}). Don't send it.`);
           throw error;
         }
         return {
@@ -407,7 +407,7 @@ export function registerInvoiceTools(server: McpServer, ctx: Ctx): void {
           body: untrusted(data.body, 2_000),
           payment_url: paymentUrl,
           next_action: data.recipient.email
-            ? "Show the draft to the merchant to review and send themselves. WhiteFlow doesn't send reminders yet; when it does, sending will need an approval the server checks."
+            ? "Show the draft to the merchant to review and send themselves. Whiteflow doesn't send reminders yet; when it does, sending will need an approval the server checks."
             : "There's no email on file for this customer: the merchant sends it through their own channel.",
           data_notice: DATA_NOTICE,
         };

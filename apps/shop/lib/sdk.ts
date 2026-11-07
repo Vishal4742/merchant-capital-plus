@@ -1,4 +1,4 @@
-// WhiteFlow gateway SDK (FR-GW-5): create a checkout, read it, list payments, verify a webhook.
+// Whiteflow gateway SDK (FR-GW-5): create a checkout, read it, list payments, verify a webhook.
 // Server-only: it holds the shop's secret key. The pay button (FR-GW-4) is a separate browser file.
 // No runtime dependencies: global fetch + node:crypto. Not on npm: copy this file into your server code. Node 22.18+
 // runs it as .ts directly; with a TypeScript build (Next.js, tsc) any Node 20+ works. Don't install it under

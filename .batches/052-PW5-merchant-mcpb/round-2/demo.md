@@ -19,7 +19,7 @@
 4.  person: sandbox-cli pay WF-1001 → payment.pending applied; payment.succeeded applied, invoice paid in full
 5.  get_invoice           WF-1001 for Priya Sharma: paid; 60.00 USDT total, 0.00 USDT due.
 6.  get_collection_summary  Monday 2026-11-02 to Saturday 2026-11-07 (Asia/Kolkata): collected 60.00 USDT gross from 1 payment(s), 60.00 USDT net.
-extra: create_payment_link ₹15,000 → ₹15,000.00, active, URL on the sandbox origin, conversion note (WhiteFlow converts at checkout)
+extra: create_payment_link ₹15,000 → ₹15,000.00, active, URL on the sandbox origin, conversion note (Whiteflow converts at checkout)
 extra: INR invoice → refused, not converted; offers USDT amounts or an INR link
 ```
 

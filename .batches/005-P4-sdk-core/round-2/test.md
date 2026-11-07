@@ -10,7 +10,7 @@ VERDICT: PASS
   - A key containing `"` is accepted and is scrubbed from a fetch error.
   - A redirect rejection becomes GatewayError with status 0.
 - Live run against the real apps/web route handlers: create, retrieve, 401, 400 (amount), 400 (items mismatch) and 404 all return the expected GatewayError. The EUR case on a pre-FR-GW-11 server gives: `Checkout aa1339bd-... came back priced in USDT, not EUR: don't send the customer to it. This gateway may not support EUR yet; price in USDT.`
-- CI run for 3c131b4: https://github.com/Vishal4742/merchant-capital-plus/actions/runs/42114755143. Jobs: contracts success, web success, sdk success, secrets success, relayer success.
+- CI run for 3c131b4: https://github.com/Vishal4742/whiteflow/actions/runs/42114755143. Jobs: contracts success, web success, sdk success, secrets success, relayer success.
 
 ## OPEN
 None.

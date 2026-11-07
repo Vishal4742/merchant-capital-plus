@@ -290,7 +290,7 @@ export function Footer() {
           </a>
         </div>
         <div className="ghost" aria-hidden="true">
-          WhiteFlow
+          Whiteflow
         </div>
       </div>
     </footer>

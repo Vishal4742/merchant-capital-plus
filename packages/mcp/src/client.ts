@@ -1,4 +1,4 @@
-// The typed WhiteFlow API client (batch 052): one Bearer key, timeouts, retries of a lost reply with the same
+// The typed Whiteflow API client (batch 052): one Bearer key, timeouts, retries of a lost reply with the same
 // Idempotency-Key, redirects refused (never re-send the key elsewhere), every reply size-capped and parsed against its
 // schema (production review F3), and every error reduced to a plain reason with the key scrubbed. Its `fetch` is the
 // network for testnet, or the in-process sandbox (src/sandbox/backend.ts).
@@ -155,7 +155,7 @@ export class WhiteflowClient {
           continue;
         }
         const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
-        throw new ApiError(0, this.#scrub(`${timedOut ? "WhiteFlow didn't answer in time" : "Couldn't reach WhiteFlow"} (${url.origin}).`), { ambiguous: write });
+        throw new ApiError(0, this.#scrub(`${timedOut ? "Whiteflow didn't answer in time" : "Couldn't reach Whiteflow"} (${url.origin}).`), { ambiguous: write });
       }
       if ((res.status >= 500 || res.status === 429) && !last) {
         if (res.status >= 500) uncertain = true;
@@ -171,7 +171,7 @@ export class WhiteflowClient {
   async #read<S extends z.ZodTypeAny>(schema: S, res: Response, write: boolean, uncertain = false): Promise<Result<z.infer<S>>> {
     const text = await readCapped(res, MAX_RESPONSE_BYTES).catch(() => "");
     if (text === null) {
-      throw new ApiError(502, `WhiteFlow's reply was larger than ${MAX_RESPONSE_BYTES} bytes and was not read.${write ? " The write may or may not have happened." : ""}`, { ambiguous: write });
+      throw new ApiError(502, `Whiteflow's reply was larger than ${MAX_RESPONSE_BYTES} bytes and was not read.${write ? " The write may or may not have happened." : ""}`, { ambiguous: write });
     }
     let json: Record<string, unknown> | null = null;
     try {
@@ -184,30 +184,30 @@ export class WhiteflowClient {
       const parsed = schema.safeParse(json);
       if (parsed.success) return { data: parsed.data, replayed: res.headers.get("idempotent-replayed") === "true" };
       // a success we can't read is not a refusal: for a write it stays unresolved and is resumed with the same key
-      throw new ApiError(502, `WhiteFlow's reply wasn't in the expected format.${write ? " The write may or may not have happened." : ""}`, { ambiguous: write });
+      throw new ApiError(502, `Whiteflow's reply wasn't in the expected format.${write ? " The write may or may not have happened." : ""}`, { ambiguous: write });
     }
     // the backend's words reach the model: bounded and stripped like stored text (security review 052 L5)
     const said = typeof json?.error === "string" ? untrusted(json.error, 300) : null;
     // 429 and "still being processed" (409) say nothing about whether the write happened: keep the same key
     const pending = write && (res.status === 429 || (res.status === 409 && /still being processed/i.test(said ?? "")));
     if (write && !res.ok && res.status !== 422 && (uncertain || pending)) {
-      throw new ApiError(res.status, `${said ? `${this.#scrub(said)} ` : ""}WhiteFlow may or may not have applied this write.`, { ambiguous: true, body: json });
+      throw new ApiError(res.status, `${said ? `${this.#scrub(said)} ` : ""}Whiteflow may or may not have applied this write.`, { ambiguous: true, body: json });
     }
     switch (true) {
       case res.status === 401:
-        throw new ApiError(401, "WhiteFlow didn't accept the API key: it's missing, revoked or expired. Create a new secret key (Developers screen) and update the connector's settings.");
+        throw new ApiError(401, "Whiteflow didn't accept the API key: it's missing, revoked or expired. Create a new secret key (Developers screen) and update the connector's settings.");
       case res.status === 403:
         throw new ApiError(403, this.#scrub(said ?? "This API key isn't allowed to do that."), { body: json });
       case res.status === 404 && !json:
-        throw new ApiError(404, "This WhiteFlow backend doesn't offer that yet.", { unsupported: true });
+        throw new ApiError(404, "This Whiteflow backend doesn't offer that yet.", { unsupported: true });
       case res.status === 429:
-        throw new ApiError(429, "WhiteFlow is rate-limiting this key. Wait a minute, then try again.", { ambiguous: false });
+        throw new ApiError(429, "Whiteflow is rate-limiting this key. Wait a minute, then try again.", { ambiguous: false });
       case res.status >= 500:
-        throw new ApiError(res.status, `WhiteFlow had a problem (${res.status}).${write ? " The write may or may not have happened." : ""}`, { ambiguous: write });
+        throw new ApiError(res.status, `Whiteflow had a problem (${res.status}).${write ? " The write may or may not have happened." : ""}`, { ambiguous: write });
       case res.ok:
-        throw new ApiError(502, `WhiteFlow answered without a JSON body.${write ? " The write may or may not have happened." : ""}`, { ambiguous: write });
+        throw new ApiError(502, `Whiteflow answered without a JSON body.${write ? " The write may or may not have happened." : ""}`, { ambiguous: write });
       default:
-        throw new ApiError(res.status, this.#scrub(said ?? `WhiteFlow refused the request (${res.status}).`), { body: json });
+        throw new ApiError(res.status, this.#scrub(said ?? `Whiteflow refused the request (${res.status}).`), { body: json });
     }
   }
 

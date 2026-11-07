@@ -1,4 +1,4 @@
-# Software Requirements Specification: Merchant Capital+
+# Software Requirements Specification: Whiteflow
 
 | | |
 |---|---|
@@ -13,10 +13,10 @@
 ## 1. Introduction
 
 ### 1.1 Purpose
-This document states what Merchant Capital+ must do, for whom, and how each requirement is accepted. It is the reference for the contracts lane, the frontend lane, the reviewer and the judges' checklist.
+This document states what Whiteflow must do, for whom, and how each requirement is accepted. It is the reference for the contracts lane, the frontend lane, the reviewer and the judges' checklist.
 
 ### 1.2 Scope
-**v2.0 (human, 2026-11-06):** Merchant Capital+ is a **stablecoin payment gateway for merchants who sell internationally**, like Razorpay or Stripe, settling in USDT on Whitechain with zero gas for the payer. It runs **strictly on Whitechain Sepolia (testnet)**; mainnet is a later step, out of scope. Merchants get payment links, payment pages, invoices, QR codes, a one-line payment button and an SDK, discount vouchers, multi-currency prices, sales reports and instant settlements. Financing stays as one extra tab (Capital). A shop on Whitechain can:
+**v2.0 (human, 2026-11-06):** Whiteflow is a **stablecoin payment gateway for merchants who sell internationally**, like Razorpay or Stripe, settling in USDT on Whitechain with zero gas for the payer. It runs **strictly on Whitechain Sepolia (testnet)**; mainnet is a later step, out of scope. Merchants get payment links, payment pages, invoices, QR codes, a one-line payment button and an SDK, discount vouchers, multi-currency prices, sales reports and instant settlements. Financing stays as one extra tab (Capital). A shop on Whitechain can:
 1. get paid in USDT through payment links, payment pages, invoices, QR codes, a payment button, the SDK and a drop-in checkout, where the payer never needs the gas token;
 2. refund in one click and export its books;
 3. raise cash today, either by selling an invoice to investors at a discount, or with an **advance repaid automatically from a share of every future sale**.

@@ -26,7 +26,7 @@ No HIGH or CRITICAL findings. Two MEDIUM and four LOW go under FOLLOW-UP below. 
   refnames can't contain control characters or spaces, so the `::error::` line can't be turned into a second workflow command.
 - **Triggers:** only `workflow_dispatch` and `push` of tags `mcpb-v*`. There is no `pull_request` or `pull_request_target`, so
   someone without write access cannot start the job. A tag pushed in a fork runs and attests under the fork's identity, and
-  `--repo Vishal4742/merchant-capital-plus` rejects it.
+  `--repo Vishal4742/whiteflow` rejects it.
 - **Scan (yml:52-69):** I checked these cases:
   - `mcpb unpack` exits 1 on any error (cli.js:100, unpack.js:92-99), so `bash -e` fails a partial unpack. It also refuses
     zip-slip paths.
@@ -80,7 +80,7 @@ No HIGH or CRITICAL findings. Two MEDIUM and four LOW go under FOLLOW-UP below. 
     - Make the strict command the one people run. Label `--repo`-only as weak ("any workflow, any branch of this repo").
     - Publish the commit SHA in the release notes. Add `--source-digest <commit sha>` to step 3.
     - Give a concrete check that the commit is on `main`:
-      `gh api repos/Vishal4742/merchant-capital-plus/compare/main...<sha> --jq .status` must print `behind` or `identical`.
+      `gh api repos/Vishal4742/whiteflow/compare/main...<sha> --jq .status` must print `behind` or `identical`.
     - Give step 4 the same `--signer-workflow`, `--source-ref` and `--source-digest` pins.
   - (b) Workflow: on tag runs, fail unless `$GITHUB_SHA` is an ancestor of `origin/main`. For example, check out with
     `fetch-depth: 0` and run `git merge-base --is-ancestor "$GITHUB_SHA" origin/main`. Or use the compare API with
@@ -101,7 +101,7 @@ No HIGH or CRITICAL findings. Two MEDIUM and four LOW go under FOLLOW-UP below. 
      `mcpb-release.yml@refs/tags/mcpb-vX`.
   3. It signs Sigstore bundles for any bytes it likes, not only this run's archive. Those bundles pass
      `gh attestation verify --bundle … --signer-workflow … --source-ref …` offline and can be shipped later outside GitHub.
-  4. The same token is good for any cloud OIDC trust that uses a loose `repo:Vishal4742/merchant-capital-plus:*` subject.
+  4. The same token is good for any cloud OIDC trust that uses a loose `repo:Vishal4742/whiteflow:*` subject.
 - **Mitigating factor:** such a dependency could also just backdoor this archive. The token only adds the ability to sign other
   bytes. That is why this is MEDIUM.
 - **Fix:**

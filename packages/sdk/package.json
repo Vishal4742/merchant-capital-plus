@@ -1,8 +1,8 @@
 {
-  "name": "@merchant-capital/sdk",
+  "name": "@whiteflow/sdk",
   "version": "0.1.0",
   "private": true,
-  "description": "WhiteFlow gateway SDK: create a checkout, read a payment, verify a webhook. No runtime dependencies.",
+  "description": "Whiteflow gateway SDK: create a checkout, read a payment, verify a webhook. No runtime dependencies.",
   "type": "module",
   "exports": "./index.ts",
   "scripts": {

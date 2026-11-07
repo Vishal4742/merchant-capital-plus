@@ -50,7 +50,7 @@ export interface Ctx {
   trustedOrigins: string[];
   profile(): Promise<Profile>;
   require(capability: Capability, what: string): Promise<Profile>;
-  /** An absolute https URL on a trusted WhiteFlow origin, or a Mismatch. Relative paths resolve on the gateway. */
+  /** An absolute https URL on a trusted Whiteflow origin, or a Mismatch. Relative paths resolve on the gateway. */
   trustedUrl(value: string, what: string): string;
   write<T>(op: string, payload: unknown, opts: WriteOptions, send: (key: string) => Promise<Result<T>>, verify?: (data: T) => void): Promise<Written<T>>;
 }
@@ -77,7 +77,7 @@ export function makeContext(base: Omit<Ctx, "profile" | "require" | "write" | "t
     async require(capability, what) {
       const profile = await ctx.profile();
       if (profile.account.capabilities[capability]) return profile;
-      throw new ToolRefusal(`${what} ${base.mode === "testnet" ? "isn't available on the WhiteFlow testnet backend yet (planned for the W3 invoices release)." : "isn't available on this backend."}`, {
+      throw new ToolRefusal(`${what} ${base.mode === "testnet" ? "isn't available on the Whiteflow testnet backend yet (planned for the W3 invoices release)." : "isn't available on this backend."}`, {
         supported_on_this_backend: Object.entries(profile.account.capabilities).filter(([, on]) => on).map(([name]) => name),
         next_action: "For a payment now, use create_payment_link. To try the full invoice flow, run the connector in sandbox mode (WHITEFLOW_MODE=sandbox).",
       });
@@ -91,7 +91,7 @@ export function makeContext(base: Omit<Ctx, "profile" | "require" | "write" | "t
       }
       const allowed = [base.client.origin.origin, ...base.trustedOrigins];
       const secure = url.protocol === "https:" || (url.protocol === "http:" && LOCAL_HOSTS.has(url.hostname));
-      if (!secure || url.username || url.password || !allowed.includes(url.origin)) throw new Mismatch(`${what} ${url.origin} is not on a trusted WhiteFlow origin`);
+      if (!secure || url.username || url.password || !allowed.includes(url.origin)) throw new Mismatch(`${what} ${url.origin} is not on a trusted Whiteflow origin`);
       return url.toString();
     },
     async write(op, payload, opts, send, verify) {
@@ -115,10 +115,10 @@ export function makeContext(base: Omit<Ctx, "profile" | "require" | "write" | "t
           // and then re-created under a fresh key (round-2 security probe)
           const reason = error instanceof Mismatch ? error.message : "a reply the connector couldn't verify";
           base.journal.settle(scope, claim.key, "needs_reconciliation", reason);
-          throw new ToolRefusal(`WhiteFlow's reply doesn't match what was asked: ${reason}. Don't share or use this record; the operation is marked for reconciliation.`, {
+          throw new ToolRefusal(`Whiteflow's reply doesn't match what was asked: ${reason}. Don't share or use this record; the operation is marked for reconciliation.`, {
             outcome: "needs_reconciliation",
             idempotency_key: claim.key,
-            next_action: "Tell the merchant. Check the record in the WhiteFlow dashboard before doing anything else with it.",
+            next_action: "Tell the merchant. Check the record in the Whiteflow dashboard before doing anything else with it.",
           });
         }
         base.journal.settle(scope, claim.key, "done");
@@ -128,7 +128,7 @@ export function makeContext(base: Omit<Ctx, "profile" | "require" | "write" | "t
         if (error instanceof ApiError && error.ambiguous) {
           // outcome unknown: the journal keeps it pending, so the next same call resumes it with this key
           throw new ToolRefusal(
-            `${error.message} Calling this tool again with the same input resumes this operation (idempotency key ${claim.key}) until ${until}, while WhiteFlow can still replay it, so it won't create a duplicate. After that, check the record before creating another.`,
+            `${error.message} Calling this tool again with the same input resumes this operation (idempotency key ${claim.key}) until ${until}, while Whiteflow can still replay it, so it won't create a duplicate. After that, check the record before creating another.`,
             { outcome: "unknown", idempotency_key: claim.key, resumable_until: until },
           );
         }

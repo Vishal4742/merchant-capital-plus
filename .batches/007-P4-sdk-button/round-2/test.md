@@ -26,7 +26,7 @@ Stub gateway on 127.0.0.1:4601 serves the real button.js; "evil" origin on :4602
 - `npm test`, typecheck, CI sdk job green: PASS.
 
 ## CI
-Run for 1c5c294: https://github.com/Vishal4742/merchant-capital-plus/actions/runs/42120383710 - conclusion success; jobs secrets, relayer, sdk, contracts, web all success.
+Run for 1c5c294: https://github.com/Vishal4742/whiteflow/actions/runs/42120383710 - conclusion success; jobs secrets, relayer, sdk, contracts, web all success.
 
 ## OPEN
 None blocking. NEEDS THE USER: nothing.

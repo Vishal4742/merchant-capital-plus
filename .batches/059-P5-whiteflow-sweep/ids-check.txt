@@ -1,0 +1,5 @@
+mcplus                     main=122  sweep=122
+MC-Signature               main=42  sweep=42
+mc_session                 main=27  sweep=27
+WHITEFLOW_                 main=79  sweep=79
+merchant-capital-plus-main main=1  sweep=1

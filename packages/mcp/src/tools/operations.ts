@@ -23,7 +23,7 @@ export function registerOperationTools(server: McpServer, ctx: Ctx): void {
     {
       title: "Operation status",
       description:
-        "Writes whose outcome is still unknown or needs reconciliation (after a timeout, a lost reply, or a reply that didn't match the request), or one write by its idempotency_key: what was attempted, when, and what WhiteFlow's records say. " +
+        "Writes whose outcome is still unknown or needs reconciliation (after a timeout, a lost reply, or a reply that didn't match the request), or one write by its idempotency_key: what was attempted, when, and what Whiteflow's records say. " +
         "Pass acknowledge: true only after the merchant has checked the record themselves; it clears the local flag so a new, identical request can be made.",
       inputSchema: {
         idempotency_key: z.string().regex(IDEMPOTENCY_KEY).optional().describe("One operation; leave out to list every unresolved one."),
@@ -44,7 +44,7 @@ export function registerOperationTools(server: McpServer, ctx: Ctx): void {
               if (data.state === "succeeded" && entry.outcome === "pending") ctx.journal.settle(profile.scope, entry.key, "done", data.result_id);
             } catch (error) {
               if (!(error instanceof ApiError) || error.status !== 404) throw error;
-              server = { state: "not_found", note: "WhiteFlow has no record of this key: if it's still within 24 hours, the write never happened" };
+              server = { state: "not_found", note: "Whiteflow has no record of this key: if it's still within 24 hours, the write never happened" };
             }
           }
           return {
