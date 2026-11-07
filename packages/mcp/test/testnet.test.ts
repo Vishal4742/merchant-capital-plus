@@ -218,7 +218,7 @@ test("startup refuses bad settings without repeating the key; sandbox is the def
 
 test("the old MCP_SECRET_KEY alone stops startup, naming WHITEFLOW_API_KEY, instead of silently starting the sandbox", () => {
   const make = (env: Record<string, string>) => () => createServer({ env, stateDir: tempDir(), now: () => NOW });
-  for (const env of [{ MCP_SECRET_KEY: TESTNET_KEY }, { MCP_SECRET_KEY: TESTNET_KEY, WHITEFLOW_MODE: "testnet" }]) {
+  for (const env of [{ MCP_SECRET_KEY: TESTNET_KEY }, { MCP_SECRET_KEY: TESTNET_KEY, WHITEFLOW_MODE: "testnet" }] as Record<string, string>[]) {
     assert.throws(make(env), (e: Error) => /WHITEFLOW_API_KEY/.test(e.message) && !e.message.includes(TESTNET_KEY));
   }
   assert.doesNotThrow(make({ ...ENV, MCP_SECRET_KEY: TESTNET_KEY }));
