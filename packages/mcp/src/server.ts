@@ -14,7 +14,7 @@ import { registerMerchantTools } from "./tools/merchant.ts";
 import { registerPay } from "./tools/pay.ts";
 import { registerSpendingReport } from "./tools/spending-report.ts";
 
-export const DEFAULT_BASE_URL = "https://merchant-capital.vercel.app";
+export const DEFAULT_BASE_URL = "https://whiteflow-app.vercel.app";
 const DEFAULT_PER_PAYMENT = "10"; // USDT (SRS FR-MCP-5)
 const DEFAULT_PER_DAY = "25";
 const SECRET_KEY = /^sk_test_[A-Za-z0-9_-]{16,128}$/;

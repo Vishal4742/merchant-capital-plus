@@ -75,7 +75,7 @@ Use a throwaway test wallet holding a little test USDT. It needs no WBT, since t
 |---|---|---|
 | `MCP_SECRET_KEY` | none | your `sk_test_` key; turns on the merchant tools |
 | `MCP_PAYER_KEY` | none | a test wallet's private key (`0x` + 64 hex); turns on the payer tools |
-| `MCP_BASE_URL` | `https://merchant-capital.vercel.app` | the gateway (https; http only for localhost) |
+| `MCP_BASE_URL` | `https://whiteflow-app.vercel.app` | the gateway (https; http only for localhost) |
 | `MCP_MAX_PER_PAYMENT` | `10` | USDT, at most 100 |
 | `MCP_MAX_PER_DAY` | `25` | USDT, at most 100 |
 
