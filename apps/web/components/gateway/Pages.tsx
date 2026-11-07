@@ -28,10 +28,10 @@ const START: PageForm = {
   max: "",
 };
 
-export function PagesScreen({ pages, origin, merchantName }: { pages: Page[]; origin: string; merchantName: string }) {
+export function PagesScreen({ pages, origin, merchantName, merchantVerified }: { pages: Page[]; origin: string; merchantName: string; merchantVerified: boolean }) {
   return (
     <div className="grid gap-8 px-4 py-6 md:px-8 md:py-8">
-      <NewPage origin={origin} merchantName={merchantName} />
+      <NewPage origin={origin} merchantName={merchantName} merchantVerified={merchantVerified} />
       <section aria-labelledby="your-pages" className="grid gap-4">
         <SectionLabel id="your-pages">Your pages · {pages.length}</SectionLabel>
         {pages.length === 0 ? (
@@ -48,7 +48,7 @@ export function PagesScreen({ pages, origin, merchantName }: { pages: Page[]; or
   );
 }
 
-function NewPage({ origin, merchantName }: { origin: string; merchantName: string }) {
+function NewPage({ origin, merchantName, merchantVerified }: { origin: string; merchantName: string; merchantVerified: boolean }) {
   const router = useRouter();
   const [form, setForm] = useState<PageForm>(START);
   const [busy, setBusy] = useState(false);
@@ -81,6 +81,7 @@ function NewPage({ origin, merchantName }: { origin: string; merchantName: strin
   const preview = {
     slug: "preview",
     merchant_name: merchantName,
+    merchant_verified: merchantVerified,
     title: form.title.trim(),
     description: form.description.trim() || null,
     logo_url: logo,

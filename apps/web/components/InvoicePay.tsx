@@ -9,6 +9,7 @@ import { useRef, useState } from "react";
 import type { Hex } from "viem";
 import { Confirming } from "@/components/Confirming";
 import { HoldButton } from "@/components/HoldButton";
+import { MerchantName } from "@/components/MerchantName";
 import { GuestShort, WalletOption, endWalletSession, loadSigner, useGuestFunds, walletPayer, type WalletVia } from "@/components/WalletPay";
 import { FAILED, errorTone, outcome, type PayAnswer } from "@/lib/outcome";
 import type { InvoicePayTerms } from "@/lib/sign-sale";
@@ -18,6 +19,8 @@ export interface InvoicePayProps {
   invoiceId: string;
   /** The shop's name (/pay serves only the shop's own invoices). */
   merchantName: string;
+  /** our server checked this shop: a verified tick after its name (batch 056) */
+  verified: boolean;
   dueText: string;
   /** The whole invoice, what was paid before (null if nothing), what is still owed, the fee, and owed + fee. */
   invoiceText: string;
@@ -58,7 +61,7 @@ function Row({ term, children }: { term: string; children: React.ReactNode }) {
   );
 }
 
-export function InvoicePay({ invoiceId, merchantName, dueText, invoiceText, paidSoFarText, owedText, feeText, totalText, state, terms, receiptId }: InvoicePayProps) {
+export function InvoicePay({ invoiceId, merchantName, verified, dueText, invoiceText, paidSoFarText, owedText, feeText, totalText, state, terms, receiptId }: InvoicePayProps) {
   const [paid, setPaid] = useState<Paid | null>(state === "paid" ? { receiptId, txHash: null } : null);
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>(state === "pending" ? "confirming" : state === "cancelled" ? "cancelled" : "ready");
@@ -113,7 +116,9 @@ export function InvoicePay({ invoiceId, merchantName, dueText, invoiceText, paid
       <div className="flex items-start justify-between gap-4">
         <div className="grid gap-1">
           <span className="label text-ink-muted">Invoice {invoiceId}</span>
-          <h1 className="title first-letter:uppercase">{merchantName}</h1>
+          <h1 className="title first-letter:uppercase">
+            <MerchantName name={merchantName} verified={verified} />
+          </h1>
         </div>
         <span className={`shrink-0 rounded-pill border border-current px-3 py-0.5 text-xs font-medium tracking-wide ${pill.tone}`}>{pill.label}</span>
       </div>

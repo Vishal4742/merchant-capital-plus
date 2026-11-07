@@ -13,6 +13,7 @@ import {
   currencyField,
   futureTime,
   merchantName,
+  merchantVerified,
   newId,
   newSlug,
   ok,
@@ -188,6 +189,7 @@ export const publicLinkJson = (link: Link) => {
   return {
     slug: link.slug,
     merchant_name: merchantName(getAddress(link.merchant)),
+    merchant_verified: merchantVerified(link.merchant),
     amount: decimal(link.amount),
     currency: link.currency,
     description: link.description,

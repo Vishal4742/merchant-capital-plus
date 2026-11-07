@@ -7,6 +7,7 @@ import { InvoicePay } from "@/components/InvoicePay";
 import { StaticScene } from "@/components/StaticScene";
 import { merchantConfig, payConfig } from "@/lib/config";
 import { readInvoice, readRelayFee, type Invoice } from "@/lib/onchain";
+import { merchantVerified } from "@/lib/server/http";
 import { invoiceAttempt, invoiceLock } from "@/lib/sessions";
 import { invoiceState, isShopInvoice, pageState } from "@/lib/settle";
 import { formatUsdt } from "@/lib/usdt";
@@ -62,6 +63,7 @@ async function InvoiceLoader({ params }: Pick<PageProps<"/pay/[invoiceId]">, "pa
     <InvoicePay
       invoiceId={invoiceId}
       merchantName={shop.merchantName}
+      verified={merchantVerified(shop.merchant)}
       dueText={new Date(Number(invoice.dueDate) * 1000).toLocaleDateString("en-IN", { dateStyle: "medium", timeZone: "Asia/Kolkata" })}
       invoiceText={formatUsdt(invoice.amount)}
       paidSoFarText={invoice.paid > 0n ? formatUsdt(invoice.paid) : null}

@@ -123,6 +123,13 @@ export function merchantName(merchant: Address): string {
   return `${merchant.slice(0, 6)}…${merchant.slice(-4)}`;
 }
 
+/** Whether the pay pages show this shop's verified tick: only for a shop we actually checked (SRS v3.0 FR-BIZ-5), as a
+ * name is the merchant's own text. ponytail: one checked shop today, the operator's configured MERCHANT_ADDRESS; a
+ * per-merchant flag (World ID, FR-WLD-1, or business checks) replaces this body when it exists. */
+export function merchantVerified(merchant: string): boolean {
+  return merchantConfig()?.merchant.toLowerCase() === merchant.toLowerCase();
+}
+
 export const newId = (prefix: string) => `${prefix}_${randomBytes(12).toString("base64url")}`;
 
 const BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
