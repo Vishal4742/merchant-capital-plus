@@ -5,7 +5,8 @@
 import { Button, buttonClasses } from "@/components/Button";
 import { HeroScene } from "./HeroScene";
 import { HeroSheet } from "./HeroSheet";
-import { WhiteflowMark } from "@/components/WhiteflowMark";
+import { ThemeToggle } from "@/components/ThemeToggle";
+import { WhiteFlowMark } from "@/components/WhiteFlowMark";
 
 export function Nav() {
   return (
@@ -23,6 +24,7 @@ export function Nav() {
           <a href="#capital">Advances</a>
         </nav>
         <div className="right">
+          <ThemeToggle className="border-glass-edge bg-glass-fill text-glass-ink backdrop-blur-[20px] hover:border-glass-ink" />
           <a className={buttonClasses("glass", "h-10! px-4! text-sm")} href="/merchant">
             Sign in
           </a>
