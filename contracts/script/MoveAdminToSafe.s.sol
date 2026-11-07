@@ -114,7 +114,7 @@ contract MoveAdminToSafe is Script {
 
     /// @notice The text each owner signs (personal_sign) to prove it holds its key.
     function ownerMessage(address owner) public pure returns (string memory) {
-        return string.concat("Merchant Capital+ admin Safe: I hold the key of ", vm.toString(owner), " on chain 1874");
+        return string.concat("WhiteFlow admin Safe: I hold the key of ", vm.toString(owner), " on chain 1874");
     }
 
     /// @notice Safe.setup for the final Safe: the owners at threshold 2, and acceptOwnership on every target.

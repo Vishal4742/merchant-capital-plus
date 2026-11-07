@@ -189,3 +189,9 @@ test("GET /api/v1/reports works with a secret key, in the asked time zone; pk 40
   assert.equal((await reportRoute(req("GET", "/api/v1/reports?tz=Mars/Olympus", { headers: bearer(sk) }))).status, 400);
   assert.equal((await reportRoute(req("GET", "/api/v1/reports", { headers: bearer(pk) }))).status, 403);
 });
+
+test("GET /api/v1/reports is rate limited per merchant: 30 a minute, then 429 (each call reads the chain index; review M1)", async () => {
+  const get = () => reportRoute(req("GET", "/api/v1/reports", { headers: bearer(otherSk) }));
+  for (let i = 0; i < 30; i++) assert.equal((await get()).status, 200);
+  assert.equal((await get()).status, 429);
+});

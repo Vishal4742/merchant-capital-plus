@@ -24,6 +24,7 @@ import { logFailure, merchantVouchers } from "@/lib/gateway-server";
 import { setupSteps } from "@/lib/onboarding";
 import { merchantInvoices, paidLogs, readPayment, readRelayFee, type Invoice, type PaidLog, type PaymentRecord } from "@/lib/onchain";
 import { relayerHealth } from "@/lib/relay";
+import { ackView, acksFor, type InvoiceAck } from "@/lib/server/invoice-acks";
 import { listKeys } from "@/lib/server/keys";
 import { linkStatus, listLinks } from "@/lib/server/links";
 import { listPayments } from "@/lib/sessions";
@@ -55,7 +56,10 @@ function wbt(value: string | null): string {
   return Number.isFinite(n) ? `${n.toFixed(4)} WBT` : "—";
 }
 
-function invoiceRows(invoices: Invoice[], logs: PaidLog[]): InvoiceRow[] {
+/** This invoice's acks, only those signed for its own terms (security 047 L1), or null. */
+const ackOf = (acks: Map<string, InvoiceAck[]> | null, invoice: Invoice) => ackView(acks?.get(invoice.id.toString()) ?? [], invoice);
+
+function invoiceRows(invoices: Invoice[], logs: PaidLog[], acks: Map<string, InvoiceAck[]> | null): InvoiceRow[] {
   // the payment that completed each invoice: its last Paid log (a part-paid invoice has several)
   const paidBy = new Map(logs.filter((log) => log.invoiceId !== 0n).map((log) => [log.invoiceId, log.paymentId.toString()]));
   return invoices.flatMap((invoice) =>
@@ -69,6 +73,7 @@ function invoiceRows(invoices: Invoice[], logs: PaidLog[]): InvoiceRow[] {
             status: invoice.status,
             paidText: invoice.status === "open" && invoice.paid > 0n ? formatUsdt(invoice.paid) : null,
             receiptId: invoice.status === "paid" ? (paidBy.get(invoice.id) ?? null) : null,
+            ack: ackOf(acks, invoice),
           },
         ],
   );
@@ -205,6 +210,9 @@ async function Dashboard() {
         readRelayFee(pay.merchantPay).catch(logged("fee read")),
       ])
     : [null, null, null, null];
+  // which open invoices their debtor acknowledged (batch 047); unreadable, the list shows "Not acknowledged yet"
+  const openIds = (invoices ?? []).filter((invoice) => invoice.status === "open").map((invoice) => invoice.id);
+  const acks = pay ? await acksFor(pay.merchantPay, openIds).catch((error: unknown) => (logFailure("dashboard: debtor acks", error), null)) : null;
   // our checkout records only label the chain's payments: unreadable, the chain's rows still show
   const candidates = paymentRows((await sessions) ?? [], logs ?? []);
   // amounts and what is left to refund, read on chain per payment (one multicall), never from the index
@@ -287,7 +295,7 @@ async function Dashboard() {
         </div>
 
         {pay && isShopWallet ? (
-          <Invoices merchant={merchant} merchantPay={pay.merchantPay} invoices={invoices ? invoiceRows(invoices, logs ?? []) : null} today={today} feeText={feeText} />
+          <Invoices merchant={merchant} merchantPay={pay.merchantPay} invoices={invoices ? invoiceRows(invoices, logs ?? [], acks) : null} today={today} feeText={feeText} />
         ) : (
           // the menu's Invoices lands here too; /pay serves only the demo shop's invoices (human, 2026-11-06 02:3x)
           <section className={`${card} scroll-mt-4`} aria-labelledby="invoices">

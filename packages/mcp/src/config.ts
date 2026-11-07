@@ -5,7 +5,7 @@ import { gatewayOrigin } from "./client.ts";
 import { validZone } from "./dates.ts";
 
 export type Mode = "sandbox" | "testnet";
-export const DEFAULT_BASE_URL = "https://merchant-capital.vercel.app"; // the deployed WhiteFlow gateway (testnet)
+export const DEFAULT_BASE_URL = "https://whiteflow.org"; // the deployed WhiteFlow gateway (testnet)
 const TESTNET_KEY = /^sk_test_[A-Za-z0-9_-]{16,128}$/;
 const SANDBOX_KEY = /^wf_sbx_[A-Za-z0-9_-]{32}$/;
 
@@ -37,7 +37,8 @@ export function parseConfig(rawEnv: Record<string, string | undefined>): Config 
   const zone = env.WHITEFLOW_TIMEZONE?.trim() || null;
   if (zone && !validZone(zone)) throw new Error("WHITEFLOW_TIMEZONE must be an IANA time zone like Asia/Kolkata or Europe/London.");
   if (env.MCP_PAYER_KEY) warnings.push("MCP_PAYER_KEY is ignored: the WhiteFlow connector never signs or pays (pay_checkout was removed). Delete it from your config.");
-  if (env.MCP_SECRET_KEY && !key) warnings.push("MCP_SECRET_KEY is no longer read: set WHITEFLOW_API_KEY and WHITEFLOW_MODE=testnet instead.");
+  // A refusal, not a warning: the old README's setup would otherwise start the sandbox silently.
+  if (env.MCP_SECRET_KEY && !key) throw new Error("MCP_SECRET_KEY is no longer read: set WHITEFLOW_API_KEY (your sk_test_ key) and WHITEFLOW_MODE=testnet instead, or remove MCP_SECRET_KEY to use the sandbox.");
   const trustedOrigins = (env.WHITEFLOW_TRUSTED_ORIGINS ?? "").split(",").map((o) => o.trim()).filter(Boolean).map((o) => gatewayOrigin(o, "WHITEFLOW_TRUSTED_ORIGINS").origin);
 
   if (mode === "testnet") {

@@ -133,6 +133,13 @@ test("create: the wallet sends createInvoice(no customer, amount, due date, rand
   assert.notEqual(again.sent[0].args[3], args[3], "a fresh random refHash each time, never a hash of the label");
 });
 
+test("create with a customer wallet (batch 047, security H1): it is createInvoice's customer, so only it can acknowledge", async () => {
+  const { provider, sent } = fakeWallet({ newId: 13n });
+  const customer = "0x5555555555555555555555555555555555555555";
+  await createInvoice(await connectMerchant(provider, MERCHANT, MERCHANT_PAY), 25_000_000n, 1_900_000_000n, customer);
+  assert.equal(sent[0].args[0], customer);
+});
+
 test("the wallet must be the signed-in merchant, and is moved to chain 1874 first", async () => {
   const other = fakeWallet({ account: "0x4444444444444444444444444444444444444444" });
   await assert.rejects(connectMerchant(other.provider, MERCHANT, MERCHANT_PAY), /Switch your wallet to 0x37F9…42B1/);

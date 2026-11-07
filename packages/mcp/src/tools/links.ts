@@ -8,7 +8,7 @@ import { DateError, calendarDate, dateIn, endOfDay, labelled } from "../dates.ts
 import { CURRENCIES, MoneyError, decimal, display, fromApi, parseMoney, type Currency } from "../money.ts";
 import { DATA_NOTICE, ToolRefusal, untrusted } from "../safety.ts";
 import { createAnother, idempotencyKey } from "./business.ts";
-import { EXPLORER_TX, Mismatch, replayNote, type Ctx, type Profile } from "./context.ts";
+import { EXPLORER_TX, Mismatch, RECORD_ID, replayNote, type Ctx, type Profile } from "./context.ts";
 
 const LINK_ID = /^lnk_[A-Za-z0-9_-]{1,40}$/;
 
@@ -156,7 +156,7 @@ export function registerLinkTools(server: McpServer, ctx: Ctx): void {
     {
       title: "Get payment link",
       description: "A payment link's current status (active, paid, expired, cancelled) and the verified payments made through it, newest first, from WhiteFlow's own records.",
-      inputSchema: { link_id: z.string().max(64).describe("The link id, like lnk_…, from create_payment_link.") },
+      inputSchema: { link_id: z.string().regex(RECORD_ID, "letters, digits, _ or -").describe("The link id, like lnk_…, from create_payment_link.") },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     ({ link_id }) =>

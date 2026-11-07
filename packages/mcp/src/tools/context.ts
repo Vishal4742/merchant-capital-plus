@@ -12,6 +12,9 @@ import { ToolRefusal, type Logger, type Reply } from "../safety.ts";
 const PROFILE_TTL_MS = 60_000;
 export const EXPLORER_TX = "https://explorer.testnet.whitechain.io/tx/";
 export const IDEMPOTENCY_KEY = /^[A-Za-z0-9_.:-]{8,100}$/;
+/** A record id that goes into a URL path (the same rule as the sandbox routes): "." or ".." would make it another
+ *  same-origin path, sent with the Bearer key. */
+export const RECORD_ID = /^[\w-]{1,64}$/;
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 export type Capability = Exclude<keyof Account["capabilities"], "operations" | "approvals">;

@@ -1,6 +1,6 @@
 {
   "name": "@whiteflow/merchant-mcp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "WhiteFlow Merchant MCP: payment links, customers, invoices, payments and collection summaries from an MCP client (stdio). Testnet or a labelled local sandbox.",
   "type": "module",
