@@ -93,7 +93,7 @@ export class WebhookSignatureError extends Error {
  *  Commas count only as thousands separators ("10,00" is refused, never read as 1000). */
 export function sameAmount(a: string, b: string): boolean {
   const units = (s: string) => {
-    const m = /^(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,6}))?$/.exec(String(s).trim());
+    const m = /^([1-9]\d{0,2}(?:,\d{3})+|\d+)(?:\.(\d{1,6}))?$/.exec(String(s).trim());
     return m ? BigInt(m[1].replaceAll(",", "")) * 1_000_000n + BigInt((m[2] ?? "").padEnd(6, "0")) : null;
   };
   const x = units(a);
@@ -180,7 +180,7 @@ export class Gateway {
         throw new GatewayError(400, "orderId must be 1-40 characters with no spaces at either end: it comes back as the payment's reference.");
       }
       // Always send a key, so a retried POST can't create a second checkout (the server returns the same session).
-      const key = opts.idempotencyKey ?? randomUUID();
+      const key = opts.idempotencyKey || randomUUID(); // || so an empty string also gets a real key
       const session = await this.#call<CreatedSession>("POST", "api/v1/sessions", { ...rest, amount: String(amount), reference: orderId }, key);
       // A gateway without FR-GW-11 ignores `currency` and would charge 25 EUR as 25 USDT; the quote is the proof.
       const want = params.currency ?? "USDT", got = session.priced?.currency ?? "USDT";
