@@ -2,6 +2,7 @@
 // Manage API credentials, webhook endpoints, and Model Context Protocol (MCP) connectivity.
 import { connection } from "next/server";
 import { Suspense } from "react";
+import { buttonClasses } from "@/components/Button";
 import { Shell } from "@/components/dashboard/Shell";
 import { ApiKeys, type KeyRow } from "@/components/gateway/ApiKeys";
 import { Account, EditorialHeader, Problem, SignedOut } from "@/components/gateway/Frame";
@@ -87,51 +88,47 @@ async function ConnectionsLoader() {
         <section aria-labelledby="mcp-heading" className="grid grid-cols-[minmax(0,1fr)] gap-4 rounded-[16px] border border-hairline bg-surface p-5 md:p-6 shadow-card">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-hairline pb-4">
             <div>
-              <div className="flex items-center gap-2">
-                <h2 id="mcp-heading" className="text-[17px] font-semibold text-ink">
-                  Model Context Protocol (MCP)
-                </h2>
-                <span className="inline-flex rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-800 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/60">
-                  Stage 6 Planned
-                </span>
-              </div>
+              <h2 id="mcp-heading" className="text-[17px] font-semibold text-ink">
+                Model Context Protocol (MCP)
+              </h2>
               <p className="mt-1 text-xs text-ink-muted">
-                Standard interface for AI assistants (Claude Desktop, cursor, agent tools) to draft invoices and query payments.
+                Run collections from your AI assistant: payment links, payments and summaries, plus invoices, customers and
+                reminders in the sandbox. It can&apos;t move money, and publishing needs the Owner&apos;s approval.
               </p>
             </div>
+            {/* a plain download: Claude Desktop installs a .mcpb when it's opened */}
+            <a className={buttonClasses("primary", "h-10! px-4! text-sm")} href="/downloads/whiteflow.mcpb" download>
+              Add to Claude Desktop
+            </a>
           </div>
 
-          <div className="grid grid-cols-[minmax(0,1fr)] gap-3 text-sm text-ink-muted">
-            <p>
-              Whiteflow targets protocol version <span className="font-mono text-ink">2025-11-25</span> using{" "}
-              <span className="font-mono text-ink">@modelcontextprotocol/sdk 1.32.2</span> over Streamable HTTP.
-            </p>
-            <div className="rounded-[10px] bg-surface-sunk/70 p-4 border border-hairline">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-ink mb-1.5">
-                Current Architecture State
-              </h3>
-              <p className="text-xs text-ink-muted leading-relaxed">
-                Backend MCP endpoint deploys during <strong>Stage 6</strong> after Stage 2 payment reliability, Stage 3 business identity, and Stage 4 settlement hardening. Assistant tools will support scoped tenant access for drafting invoices and querying on-chain payment records. No private keys are ever stored in connector configuration or exposed in model context.
-              </p>
-            </div>
+          <ol className="grid list-decimal gap-1.5 pl-5 text-sm text-ink-muted">
+            <li>Download <span className="font-mono text-ink">whiteflow.mcpb</span> and open it: Claude Desktop installs it.</li>
+            <li>
+              Keep <span className="font-mono text-ink">Mode: sandbox</span> to try it with no key, or choose{" "}
+              <span className="font-mono text-ink">testnet</span> and paste an <span className="font-mono text-ink">sk_test_</span> key
+              from API keys above.
+            </li>
+            <li>Ask Claude: &ldquo;Create a 2 USDT payment link for an espresso.&rdquo;</li>
+          </ol>
+          <p className="break-all text-xs text-ink-muted">
+            SHA-256 <span className="font-mono">8fc2f72830d78ce926319cc98fd5370d26c0c132c8a1c68a97b8130865ff0019</span>
+          </p>
 
-            <div>
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-ink mb-2">
-                Claude Desktop Configuration Preview
-              </h3>
-              <pre className="overflow-x-auto rounded-[8px] bg-slate-900 p-3.5 text-xs font-mono text-emerald-400">
+          <div>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink">Other MCP clients (stdio)</h3>
+            <pre className="overflow-x-auto rounded-[8px] bg-slate-900 p-3.5 font-mono text-xs text-emerald-400">
 {`{
   "mcpServers": {
     "whiteflow": {
-      "url": "https://api.whiteflow.io/mcp",
-      "headers": {
-        "Authorization": "Bearer <YOUR_SHOP_API_KEY>"
-      }
+      "command": "node",
+      "args": ["/path/to/packages/mcp/dist/bundle/server/index.mjs"],
+      "env": { "WHITEFLOW_MODE": "testnet", "WHITEFLOW_API_KEY": "sk_test_…" }
     }
   }
 }`}
-              </pre>
-            </div>
+            </pre>
+            <p className="mt-2 text-xs text-ink-muted">A hosted connector URL (MCP 2025-11-25, Streamable HTTP) comes in Stage 6.</p>
           </div>
         </section>
 
