@@ -9,8 +9,8 @@ const instrumentSerif = Instrument_Serif({ variable: "--font-instrument-serif", 
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Merchant Capital+",
-  description: "Get paid in USDT and raise cash from your future sales.",
+  title: "WhiteFlow — Business Payments Workspace",
+  description: "One invoice. Clear settlement. Request business payments, accept supported crypto, and settle exact USDT to Whitechain.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

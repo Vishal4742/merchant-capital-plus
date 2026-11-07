@@ -20,7 +20,7 @@ This builds `dist/whiteflow.mcpb`, plus `whiteflow.mcpb.sha256` (the archive) an
 |---|---|---|
 | Mode | `sandbox` | `testnet` to use the real gateway |
 | WhiteFlow secret key | empty | testnet only: your `sk_test_` key. Marked sensitive |
-| Gateway URL | `https://merchant-capital.vercel.app` | testnet only |
+| Gateway URL | `https://whiteflow.org` | testnet only |
 | Business time zone | `UTC` | e.g. `Asia/Kolkata`. Used for due dates and "this week" |
 
 Check the archive before installing: `sha256sum dist/whiteflow.mcpb` (PowerShell: `Get-FileHash dist\whiteflow.mcpb`) must match `whiteflow.mcpb.sha256`. The archive's hash changes on every pack, because `mcpb` 2.1.2 stamps zip entries with the current time. The contents hash stays the same for the same source. A checksum only helps if you got it from a channel you trust: the archive isn't signed yet, and nothing proves who built it (see "what production needs").

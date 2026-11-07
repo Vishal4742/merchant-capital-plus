@@ -77,6 +77,7 @@ test("an advance's JSON carries principal, cap and holdback_pct; an invoice's ca
     principal: "100.00", face: "110.00", price: "100.00", cap: "110.00", holdback_pct: 20, // Q12: face always (an advance's face = its cap)
     maturity: new Date((NOW + 30 * 86400) * 1000).toISOString(), offer_deadline: new Date((NOW + 3600) * 1000).toISOString(),
     units_left: "85000000", status: "open", arkiv: { entity_key: "0xabc", matches: true, terms: { claimId: "1" } },
+    debtor_acknowledged: false, debtor_ack: null, // batch 047: from our database, for invoices only
   });
   const inv = capital.offerJson(i, NOW);
   assert.equal(inv.kind, "invoice");

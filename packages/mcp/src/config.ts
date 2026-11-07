@@ -5,7 +5,7 @@ import { gatewayOrigin } from "./client.ts";
 import { validZone } from "./dates.ts";
 
 export type Mode = "sandbox" | "testnet";
-export const DEFAULT_BASE_URL = "https://merchant-capital.vercel.app"; // the deployed WhiteFlow gateway (testnet)
+export const DEFAULT_BASE_URL = "https://whiteflow.org"; // the deployed WhiteFlow gateway (testnet)
 const TESTNET_KEY = /^sk_test_[A-Za-z0-9_-]{16,128}$/;
 const SANDBOX_KEY = /^wf_sbx_[A-Za-z0-9_-]{32}$/;
 

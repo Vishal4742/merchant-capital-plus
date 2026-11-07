@@ -118,6 +118,7 @@ test("public render info has no merchant-private fields; unknown slug is a 404",
     items: data.items,
     open_amount: null,
     merchant_name: "Bandra Beans",
+    merchant_verified: true,
   });
   assert.equal((await publicPage(req("GET", "/api/v1/public/pages/nope"), params({ slug: "nope" }))).status, 404);
   assert.equal((await pay("nope", { items: [{ name: "Cookie", qty: 2 }] })).status, 404);

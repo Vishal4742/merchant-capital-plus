@@ -1,4 +1,4 @@
-# CI for Merchant Capital+ (the same checks the pipeline's ci agent runs locally; AGENTS.md "Done means verified").
+# CI for WhiteFlow (the same checks the pipeline's ci agent runs locally; AGENTS.md "Done means verified").
 # Speed (human 2026-11-06 05:59): docs-only pushes skip CI, a newer push cancels the older run on the same
 # branch, and each job runs only when its own folder (or this workflow) changed. The secret scan always runs.
 name: ci
