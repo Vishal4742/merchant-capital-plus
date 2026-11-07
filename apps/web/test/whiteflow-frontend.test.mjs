@@ -56,6 +56,9 @@ test("Connections route exists and discloses honest MCP status", () => {
   assert.match(connPage, /Model Context Protocol \(MCP\)/);
   assert.match(connPage, /Stage 6/);
   assert.match(connPage, /2025-11-25/);
+  // the working connector is offered as a download, and no made-up hosted URL is shown
+  assert.match(connPage, /href="\/downloads\/whiteflow\.mcpb" download/);
+  assert.doesNotMatch(connPage, /api\.whiteflow\.io/);
   assert.match(connPage, /listKeys/);
   assert.match(connPage, /listWebhooks/);
 });
