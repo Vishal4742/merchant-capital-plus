@@ -4,7 +4,7 @@ import { test, before, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import dns from "node:dns/promises";
-import { setupDb, resetDb, signedIn, req, params, MERCHANT, OTHER_MERCHANT } from "./gw-helpers.mjs";
+import { setupDb, resetDb, seedWorkspace, signedIn, req, params, MERCHANT, OTHER_MERCHANT } from "./gw-helpers.mjs";
 
 const { POST: create, GET: list } = await import("../app/api/v1/webhooks/route.ts");
 const { DELETE: remove } = await import("../app/api/v1/webhooks/[id]/route.ts");
@@ -295,6 +295,7 @@ test("secrets never reach the logs", async () => {
 
 test("batch 008: a shop's setup script registers and lists webhooks with its secret key (AT-14); publishable and revoked keys can't", async () => {
   const { createKey, revokeKey } = await import("../lib/server/keys.ts");
+  await seedWorkspace(MERCHANT); // batch 051: a secret key manages webhooks once its wallet is linked to a workspace
   const sk = await createKey(MERCHANT, "shop server", "sk");
   const pk = await createKey(MERCHANT, "pay button", "pk");
   const bearer = (key) => ({ authorization: `Bearer ${key}` });
