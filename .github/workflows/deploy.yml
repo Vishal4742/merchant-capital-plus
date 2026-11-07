@@ -4,9 +4,12 @@ name: deploy
 # (`git.deploymentEnabled: false` in each apps/*/vercel.json), because the Hobby plan
 # allows 100 deployments a day and every push used to create 3.
 #
-# After main changes it waits for a quiet spell: a later push cancels this run, so a
-# burst of merges deploys once. Then it builds main here and deploys it (prebuilt) to
-# production, only for the projects whose folders changed since the last successful run.
+# Every push to main deploys at once: one job per project, in parallel. Each job deploys
+# only if the project's folder or packages/ changed since the last successful run, then
+# checks that the project's production domains serve the new deployment.
+# Runs never cancel each other: a push during a deploy waits for it, and every push in
+# that time collapses into one follow-up run (a concurrency group keeps one pending run),
+# so a burst of merges costs at most two deploys per project, and none is lost.
 on:
   push:
     branches: [main]
@@ -20,7 +23,7 @@ on:
 
 concurrency:
   group: vercel-deploy
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -28,21 +31,24 @@ permissions:
 
 jobs:
   deploy:
+    name: deploy ${{ matrix.project }}
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [web, relayer, shop]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Wait for a quiet spell
-        if: github.event_name == 'push'
-        run: sleep 600
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 26
-      - name: Deploy the projects that changed
+      - name: Deploy if it changed, then check its domains
         env:
           GH_TOKEN: ${{ github.token }}
           FORCE: ${{ inputs.force && '1' || '0' }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: bash tools/vercel-deploy.sh
+          PROJECT: ${{ matrix.project }}
+        run: bash tools/vercel-deploy.sh "$PROJECT"

@@ -7,10 +7,9 @@ import { ApiKeys, type KeyRow } from "@/components/gateway/ApiKeys";
 import { Account, EditorialHeader, Problem, SignedOut } from "@/components/gateway/Frame";
 import { Setup } from "@/components/gateway/Setup";
 import { Webhooks, type WebhookRow } from "@/components/gateway/Webhooks";
-import { authSecret } from "@/lib/auth";
 import { keyOf, setupSteps, webhookOf } from "@/lib/gateway-dev";
 import { readFailure } from "@/lib/gateway-server";
-import { currentMerchant } from "@/lib/merchant-session";
+import { currentWorkspace } from "@/lib/merchant-session";
 import { keyJson, listKeys } from "@/lib/server/keys";
 import { deliveredEvents, listWebhooks } from "@/lib/server/webhooks";
 
@@ -71,17 +70,21 @@ async function read(merchant: `0x${string}`): Promise<{ keys: Read<KeyRow>; webh
 
 async function ConnectionsLoader() {
   await connection();
-  const merchant = await currentMerchant();
-  if (!merchant) return <SignedOut available={Boolean(authSecret())} />;
-
-  const { keys, webhooks } = await read(merchant);
+  const workspace = await currentWorkspace();
+  if (!workspace) return <SignedOut />;
+  const { merchant } = workspace;
+  // batch 051 (032 R2-1): keys and webhooks are Owner-only, on this page as in the API
+  const owner = workspace.scopes.has("keys:manage");
+  const { keys, webhooks } = owner ? await read(merchant) : { keys: null, webhooks: null };
 
   return (
     <Shell active="connections" privateReads={false} account={<Account merchant={merchant} />}>
       {header}
-      <div className="grid gap-8 px-4 py-6 md:px-8 md:py-8">
+      {/* minmax(0,1fr) on every grid down to the MCP <pre>: an `auto` column sizes to the pre's longest line, so each
+          level must allow shrinking for the pre to scroll inside its box (the page was 468 px wide at 360 before 051) */}
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-8 px-4 py-6 md:px-8 md:py-8">
         {/* Model Context Protocol (MCP) Section */}
-        <section aria-labelledby="mcp-heading" className="grid gap-4 rounded-[16px] border border-hairline bg-surface p-5 md:p-6 shadow-card">
+        <section aria-labelledby="mcp-heading" className="grid grid-cols-[minmax(0,1fr)] gap-4 rounded-[16px] border border-hairline bg-surface p-5 md:p-6 shadow-card">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-hairline pb-4">
             <div>
               <div className="flex items-center gap-2">
@@ -98,7 +101,7 @@ async function ConnectionsLoader() {
             </div>
           </div>
 
-          <div className="grid gap-3 text-sm text-ink-muted">
+          <div className="grid grid-cols-[minmax(0,1fr)] gap-3 text-sm text-ink-muted">
             <p>
               WhiteFlow targets protocol version <span className="font-mono text-ink">2025-11-25</span> using{" "}
               <span className="font-mono text-ink">@modelcontextprotocol/sdk 1.32.2</span> over Streamable HTTP.
@@ -132,16 +135,22 @@ async function ConnectionsLoader() {
           </div>
         </section>
 
-        {/* Integration Setup Checklist */}
-        {"rows" in keys && "rows" in webhooks && (
-          <Setup steps={setupSteps({ keys: keys.rows, hooks: webhooks.rows, delivered: webhooks.delivered })} />
+        {keys === null || webhooks === null ? (
+          <p className="text-sm text-ink-muted">Only Owners can see API keys and webhooks.</p>
+        ) : (
+          <>
+            {/* Integration Setup Checklist */}
+            {"rows" in keys && "rows" in webhooks && (
+              <Setup steps={setupSteps({ keys: keys.rows, hooks: webhooks.rows, delivered: webhooks.delivered })} />
+            )}
+
+            {/* API Keys */}
+            {"error" in keys ? <Problem>{keys.error}</Problem> : <ApiKeys keys={keys.rows} />}
+
+            {/* Webhooks */}
+            {"error" in webhooks ? <Problem>{webhooks.error}</Problem> : <Webhooks hooks={webhooks.rows} />}
+          </>
         )}
-
-        {/* API Keys */}
-        {"error" in keys ? <Problem>{keys.error}</Problem> : <ApiKeys keys={keys.rows} />}
-
-        {/* Webhooks */}
-        {"error" in webhooks ? <Problem>{webhooks.error}</Problem> : <Webhooks hooks={webhooks.rows} />}
       </div>
     </Shell>
   );
