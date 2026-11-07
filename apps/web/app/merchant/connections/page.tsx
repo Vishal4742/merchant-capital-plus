@@ -14,6 +14,21 @@ import { currentWorkspace } from "@/lib/merchant-session";
 import { keyJson, listKeys } from "@/lib/server/keys";
 import { deliveredEvents, listWebhooks } from "@/lib/server/webhooks";
 
+// Any MCP client runs the same stdio server from this site (built from packages/mcp; sandbox unless WHITEFLOW_MODE=testnet).
+const MCP_PKG = "https://whiteflow.org/downloads/whiteflow-mcp.tgz";
+const MCP_ARGS = ["-y", `--package=${MCP_PKG}`, "whiteflow-mcp"];
+const MCP_SERVER = { command: "npx", args: MCP_ARGS };
+const CURSOR_INSTALL = `cursor://anysphere.cursor-deeplink/mcp/install?name=whiteflow&config=${Buffer.from(JSON.stringify(MCP_SERVER)).toString("base64")}`;
+const VSCODE_INSTALL = `vscode:mcp/install?${encodeURIComponent(JSON.stringify({ name: "whiteflow", ...MCP_SERVER }))}`;
+const AGENT_SETUPS: [string, string][] = [
+  ["Claude Code", `claude mcp add whiteflow -- npx ${MCP_ARGS.join(" ")}`],
+  ["Codex (~/.codex/config.toml)", `[mcp_servers.whiteflow]\ncommand = "npx"\nargs = [${MCP_ARGS.map((a) => `"${a}"`).join(", ")}]`],
+  [
+    "Gemini CLI, Windsurf, Cline, Zed and other clients (JSON)",
+    JSON.stringify({ mcpServers: { whiteflow: { ...MCP_SERVER, env: { WHITEFLOW_MODE: "testnet", WHITEFLOW_API_KEY: "sk_test_…" } } } }, null, 2),
+  ],
+];
+
 const ist = (iso: string) => new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata" });
 const istTime = (iso: string) => new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata" });
 
@@ -115,20 +130,33 @@ async function ConnectionsLoader() {
             SHA-256 <span className="font-mono">8fc2f72830d78ce926319cc98fd5370d26c0c132c8a1c68a97b8130865ff0019</span>
           </p>
 
-          <div>
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink">Other MCP clients (stdio)</h3>
-            <pre className="overflow-x-auto rounded-[8px] bg-slate-900 p-3.5 font-mono text-xs text-emerald-400">
-{`{
-  "mcpServers": {
-    "whiteflow": {
-      "command": "node",
-      "args": ["/path/to/packages/mcp/dist/bundle/server/index.mjs"],
-      "env": { "WHITEFLOW_MODE": "testnet", "WHITEFLOW_API_KEY": "sk_test_…" }
-    }
-  }
-}`}
-            </pre>
-            <p className="mt-2 text-xs text-ink-muted">A hosted connector URL (MCP 2025-11-25, Streamable HTTP) comes in Stage 6.</p>
+          <div className="grid grid-cols-[minmax(0,1fr)] gap-3 border-t border-hairline pt-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-ink">Any other AI agent</h3>
+              <div className="flex flex-wrap gap-2">
+                <a className={buttonClasses("quiet", "h-9! px-3.5! text-sm")} href={CURSOR_INSTALL}>
+                  Add to Cursor
+                </a>
+                <a className={buttonClasses("quiet", "h-9! px-3.5! text-sm")} href={VSCODE_INSTALL}>
+                  Add to VS Code
+                </a>
+              </div>
+            </div>
+            <p className="text-sm text-ink-muted">
+              Every MCP client runs the same server with one command (Node 20 or newer). It starts in the sandbox; add{" "}
+              <span className="font-mono text-ink">WHITEFLOW_MODE=testnet</span> and{" "}
+              <span className="font-mono text-ink">WHITEFLOW_API_KEY=sk_test_…</span> for the live gateway.
+            </p>
+            {AGENT_SETUPS.map(([client, setup]) => (
+              <div key={client}>
+                <p className="mb-1.5 text-xs font-medium text-ink">{client}</p>
+                <pre className="overflow-x-auto rounded-[8px] bg-slate-900 p-3.5 font-mono text-xs text-emerald-400">{setup}</pre>
+              </div>
+            ))}
+            <p className="break-all text-xs text-ink-muted">
+              Package SHA-256 <span className="font-mono">d45ac86f84bcd0d72ff387bd4a1d5b56ef53d58743f66b51ecd74a618ad4c2cf</span>. A hosted connector URL (MCP 2025-11-25, Streamable HTTP)
+              comes in Stage 6.
+            </p>
           </div>
         </section>
 
