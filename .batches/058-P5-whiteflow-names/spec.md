@@ -25,7 +25,7 @@ in #43, which merges after both G5 runs.
   `tokens.css` (a comment). Docs and the README: claude-research's (asked).
 
 ## Acceptance criteria
-- [ ] `git grep "Merchant Capital" apps/web/app apps/web/components apps/web/lib` lists only invoice-ack.ts and tokens.css.
+- [ ] `git grep "Whiteflow" apps/web/app apps/web/components apps/web/lib` lists only invoice-ack.ts and tokens.css.
 - [ ] apps/web typecheck, lint and `npm test` pass.
 - [ ] After the deploy, whiteflow-app.vercel.app's `<title>` is "Whiteflow — Business Payments Workspace".
 

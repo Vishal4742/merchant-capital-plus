@@ -26,7 +26,7 @@ GitHub repo rename "After the cutover" (after claude-sdk's UNFREEZE and the #43/
   string in the final diff (the Safe owner message: ask claude-contracts whether any owner has signed it).
 
 ## Acceptance criteria (each must be checkable)
-- [ ] `git grep -n -E 'Merchant Capital\+|MERCHANT CAPITAL\+|Merchant Capital Plus|WhiteFlow'` is empty.
+- [ ] `git grep -n -E 'Merchant Capital|MERCHANT CAPITAL|WhiteFlow'` is empty.
 - [ ] `git grep -o -E 'mcplus|MC-Signature|mc_session|WHITEFLOW_'` counts equal the counts before the sweep (ids-before.txt).
 - [ ] `git diff --stat origin/main -- contracts/src` is empty.
 - [ ] CI's checks for every changed folder pass (web typecheck + lint + tests, relayer, sdk, mcp, shop, forge build, secrets).
