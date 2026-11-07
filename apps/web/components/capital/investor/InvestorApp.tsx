@@ -6,6 +6,8 @@
 import type { ReactNode } from "react";
 import { Button } from "@/components/Button";
 import { PrivateReads } from "@/components/dashboard/PrivateReads";
+import { ThemeToggle } from "@/components/ThemeToggle";
+import { plainToggle } from "@/components/gateway/Frame";
 import { short } from "./format";
 import { Holdings } from "./Holdings";
 import { OfferBook } from "./OfferBook";
@@ -48,6 +50,7 @@ export function InvestorApp({ view, header }: InvestorAppProps) {
             ))}
           </nav>
           <div className="ml-auto flex items-center gap-2">
+            <ThemeToggle className={plainToggle} />
             <WalletChip state={state} connect={connect} />
           </div>
         </div>

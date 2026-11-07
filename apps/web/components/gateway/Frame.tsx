@@ -1,9 +1,12 @@
 // Shared pieces of the WhiteFlow gateway screens:
 // Editorial header, card styles, input field tokens, account badges, and signed-out states.
 import type { ReactNode } from "react";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { WhiteFlowWordmark } from "@/components/WhiteFlowLogo";
 import { LegacyAccess, WorkspaceSignOut } from "@/components/workspace/LegacyAccess";
 
+/** The day/night switch on a plain surface (batch 060); the landing dresses it as glass instead. */
+export const plainToggle = "border-hairline text-ink-muted hover:border-accent hover:text-ink";
 export const card = "grid min-w-0 content-start gap-4 rounded-[16px] border border-hairline bg-surface p-5 md:p-6 shadow-card";
 export const field = "h-11 w-full min-w-0 rounded-[8px] border border-hairline bg-surface px-3 text-ink text-sm focus:border-accent focus:ring-1 focus:ring-accent transition-colors";
 export const textLink = "inline-flex min-h-10 items-center text-sm font-medium text-accent underline underline-offset-4 hover:text-accent-hover transition-colors";
@@ -75,8 +78,9 @@ export function PlainPage({ children }: { children: ReactNode }) {
         <a href="/" className="inline-flex min-h-10 items-center">
           <WhiteFlowWordmark />
         </a>
-        <span className="text-xs font-medium text-ink-muted uppercase tracking-wider">
-          Business Payments Workspace
+        <span className="flex items-center gap-3">
+          <span className="text-xs font-medium text-ink-muted uppercase tracking-wider max-sm:hidden">Business Payments Workspace</span>
+          <ThemeToggle className={plainToggle} />
         </span>
       </header>
       {children}
