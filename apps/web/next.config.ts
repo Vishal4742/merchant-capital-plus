@@ -76,6 +76,8 @@ const nextConfig: NextConfig = {
       { source: "/merchant/developers", headers: csp },
       // /docs loads nothing third-party either, and hosts "Simulate a payment" (security review 006 F3)
       { source: "/docs", headers: csp },
+      // /mcp (connect an AI assistant) is public and loads nothing third-party; its install links are plain navigations
+      { source: "/mcp", headers: csp },
     ];
   },
   partialPrefetching: true,
