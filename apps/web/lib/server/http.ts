@@ -54,7 +54,11 @@ export function signedInMerchant(request: Request): Address {
 
 /** The request body as a JSON object, at most `maxBytes`. */
 export async function readJson(request: Request, maxBytes = 16_384): Promise<Record<string, unknown>> {
-  const text = await request.text();
+  return jsonObject(await request.text(), maxBytes);
+}
+
+/** A body already read as text (a route that also hashes it for Idempotency-Key, batch 052) → a JSON object. */
+export function jsonObject(text: string, maxBytes = 16_384): Record<string, unknown> {
   if (text.length > maxBytes) throw new HttpError(413, "That request is too large.");
   let body: unknown;
   try {
