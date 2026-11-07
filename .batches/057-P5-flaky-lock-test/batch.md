@@ -8,3 +8,4 @@ Log:
 - 05:57 Cause: PGlite now() has millisecond resolution (scratchpad pgclock.mjs: 4 distinct values in 20 back-to-back statements). claimPayment's token is until::text = now() + 300 s. The test lapses the first lock by hand and re-claims at once, so first claim and re-claim can share one millisecond: same token, and releasePayment(first) deletes the re-taken lock. Production can't: a re-claim needs the old until < now(), so its token is strictly later.
 - 05:59 Proof: a probe (claim, lapse by hand, re-claim, 200 times) got the same token back 106 of 200 times.
 - 06:04 Fix (test only): wait 2 ms before the re-claim. 30/30 runs pass; mutation (releasePayment ignoring its token) makes "a stale token deletes nothing" fail, so the test still guards it.
+- 06:13 round-1 ci: VERDICT PASS (tsc 0, lint 0, 703/701/0 fail/2 skipped, lapsed-lock 0 of 20 failures; build skipped, test-only diff).
