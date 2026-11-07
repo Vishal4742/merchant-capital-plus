@@ -163,6 +163,14 @@ test("a secret API key still works exactly as before", async () => {
   assert.equal((await accountRoute(req("GET", "/api/v1/account", { headers: bearer(key) }))).status, 200);
 });
 
+test("review 058 R1 M2: an assistant grant's link create must carry an Idempotency-Key, like a secret key's", async () => {
+  await grant();
+  const res = await createLinkRoute(req("POST", "/api/v1/links", { body: { amount: "25", currency: "USDT", description: "Beans" }, headers: bearer(token()) }));
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /Idempotency-Key/);
+  assert.equal((await query("SELECT count(*)::int AS n FROM app_gw_links"))[0].n, 0);
+});
+
 test("payments and reports each need their own scope: a grant without them is 403", async () => {
   await grant({ scopes: "account:read links:read" });
   const t = token();

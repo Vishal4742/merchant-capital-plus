@@ -19,8 +19,9 @@ const material = (entries: Entry[]) => JSON.stringify(entries.map(({ last: _last
 
 export class JournalBusy extends Error {
   readonly expose = true;
-  constructor() {
-    super("Too many requests are changing this business's write journal at once. Try again in a moment; nothing was created.");
+  constructor(whileClaiming = false) {
+    // "nothing was created" is only true before anything was sent, i.e. while claiming a key (code review 058 H1)
+    super(`Too many requests are changing this business's write journal at once. Try again in a moment${whileClaiming ? "; nothing was sent" : ""}.`);
   }
 }
 
@@ -54,7 +55,12 @@ export class PgJournal implements JournalPort {
 
   async claim(scope: string, op: string, payload: unknown, opts: ClaimOptions = {}): Promise<Claim> {
     const now = this.#now();
-    const result = await this.#change<Claim | JournalRefusal>(scope, (entries) => decideClaim(entries, scope, op, payload, opts, now));
+    let result: Claim | JournalRefusal;
+    try {
+      result = await this.#change<Claim | JournalRefusal>(scope, (entries) => decideClaim(entries, scope, op, payload, opts, now));
+    } catch (error) {
+      throw error instanceof JournalBusy ? new JournalBusy(true) : error;
+    }
     if (result instanceof JournalRefusal) throw result;
     return result;
   }

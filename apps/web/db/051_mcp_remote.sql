@@ -68,3 +68,5 @@ CREATE TABLE IF NOT EXISTS app_mcp_tokens (
   revoked_at BIGINT
 );
 CREATE INDEX IF NOT EXISTS app_mcp_tokens_grant ON app_mcp_tokens (grant_id);
+-- revoking a refresh token ends its whole family (review 058 R1 M3)
+CREATE INDEX IF NOT EXISTS app_mcp_tokens_family ON app_mcp_tokens (family_id);

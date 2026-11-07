@@ -20,7 +20,8 @@ export async function POST(request: Request) {
     const key = request.headers.get("idempotency-key");
     if (key === null) {
       // the dashboard may omit it (compatibility); an assistant's or server's key may not: its retries must be safe
-      if (via === "secret_key") throw new HttpError(400, "Send an Idempotency-Key header with every secret-key write, so a retry can never create a second link.");
+      // (review 058 R1 M2: an assistant grant counts as a server too, not only a secret key)
+      if (via !== "session") throw new HttpError(400, "Send an Idempotency-Key header with every secret-key or assistant write, so a retry can never create a second link.");
       return ok(linkJson(await createLink(merchant, body)), 201);
     }
     if (!key || key.length > MAX_IDEMPOTENCY_KEY) throw new HttpError(400, `Idempotency-Key must be 1 to ${MAX_IDEMPOTENCY_KEY} characters.`);
