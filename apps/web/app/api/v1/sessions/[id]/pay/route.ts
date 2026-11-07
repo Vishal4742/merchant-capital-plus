@@ -88,9 +88,17 @@ async function payShopSession(id: string, session: Session, pay: Pay, { from: pa
     if (validBefore > BigInt(Math.floor(session.expiresAt / 1000))) return fail(400, LONGER_THAN_CHECKOUT);
     const result = await relaySale({ relayerUrl: pay.relayerUrl, merchant: session.merchant, orderRef: session.orderRef, from: payer, amount: session.amount, validBefore, salt, signature });
     if (!result.ok) {
-      if (result.unknown) await markPending(id, { from: payer, validBefore }); // it may settle: the chain decides later
+      if (result.unknown) await markPending(id, { from: payer, validBefore, ...(result.txHash && { txHash: result.txHash }) }); // it may settle: the chain decides later; the relayer's tx reference is kept (A14)
       // a refusal can mean the order is already paid (OrderPaid): show the receipt, never "start again"
-      else if (result.refused && (await findPayment(session, pay.merchantPay, payer))) return Response.json({ receiptId: id, txHash: null });
+      else if (result.refused) {
+        const found = await findPayment(session, pay.merchantPay, payer);
+        if (found) return Response.json({ receiptId: id, txHash: null });
+        if (found === undefined) {
+          // review F4: the chain read failed, so it may be paid already: keep it pending (Don't pay again), like payCheckout
+          await markPending(id, { from: payer, validBefore });
+          return fail(504, UNKNOWN);
+        }
+      }
       return fail(result.status, result.message);
     }
     return await recordRelayed(id, session, sale, payer, result, { from: payer, validBefore });
@@ -150,7 +158,7 @@ async function payCheckout(id: string, session: Session, pay: Pay, { from: payer
     const result = await relaySale({ relayerUrl: pay.relayerUrl, merchant: session.merchant, orderRef: session.orderRef, from: payer, amount: price, validBefore, salt, signature });
     if (!result.ok) {
       if (result.unknown) {
-        await markPending(id, attempt); // it may settle at this price: the chain decides later, and the hold stays frozen
+        await markPending(id, { ...attempt, ...(result.txHash && { txHash: result.txHash }) }); // it may settle at this price: the chain decides later, the hold stays frozen, the tx reference is kept (A14)
         return fail(result.status, result.message);
       }
       if (!result.refused) return await refuse(result.status, result.message); // busy or bad input: nothing was sent
@@ -183,7 +191,7 @@ async function recordRelayed(
     return null;
   });
   if (!paymentId) {
-    await markPending(id, attempt); // the relayer says it went through: never invite a second payment
+    await markPending(id, { ...attempt, txHash: result.txHash }); // the relayer says it went through: never invite a second payment; keep its tx reference (A14)
     return fail(504, UNKNOWN);
   }
   announcePaid(await recordPayment(id, { txHash: result.txHash, blockNumber: result.blockNumber, paymentId, from: payer, paidAt: Date.now(), amount: sale.amount }), sale.amount);

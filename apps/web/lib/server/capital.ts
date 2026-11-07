@@ -187,6 +187,26 @@ export const claimHolders = async (claimId: bigint, { read = defaultRead }: Deps
 /** CapitalMarket.quote in USDT base units (quoteCost formats it). */
 export const quoteUnits = async (claimId: bigint, units: bigint, { read = defaultRead }: Deps = {}) => (await market(read, "quote", [claimId, units])) as bigint;
 
+/** CON-11, fail closed (batch 050 round 2, review L4): does `merchant` carry V1 Capital obligations? The same rule
+ *  as CapitalMarket.hasClaimsOn: a running or listed advance (advanceOf != 0, which covers liensOf), or an invoice
+ *  claim of theirs that isn't cancelled or settled and still has units outstanding. Any failed or unexpected read
+ *  throws (the caller refuses), and so does a book larger than chainOffers reads (it would skip older offers). */
+export async function v1Obligations(merchant: Address, { read = defaultRead }: Deps = {}): Promise<boolean> {
+  const advance = await market(read, "advanceOf", [merchant]);
+  if (typeof advance !== "bigint") throw new Error("advanceOf: unexpected answer");
+  if (advance !== 0n) return true;
+  const count = await market(read, "offerCount");
+  if (typeof count !== "bigint") throw new Error("offerCount: unexpected answer");
+  if (count > BigInt(MAX_OFFERS)) throw new Error("the offer book is too large to check completely");
+  const mine = (await chainOffers({ read })).filter((o) => o.kind === "invoice" && !o.cancelled && !o.settled && o.merchant.toLowerCase() === merchant.toLowerCase());
+  for (const o of mine) {
+    const left = await market(read, "outstanding", [o.claimId]);
+    if (typeof left !== "bigint") throw new Error("outstanding: unexpected answer");
+    if (left !== 0n) return true;
+  }
+  return false;
+}
+
 /** The merchant's running advance (FR-ADV-1), or null: what is still owed, the cap and the holdback. */
 export async function merchantAdvance(merchant: Address, { read = defaultRead }: Deps = {}) {
   const claimId = (await market(read, "advanceOf", [merchant])) as bigint;

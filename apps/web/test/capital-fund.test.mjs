@@ -150,6 +150,8 @@ test("the relayer's refusals become the web's plain messages", async () => {
     [{ reply: { status: 422, json: { code: "replay" } } }, 409, /already sent/],
     [{ reply: { status: 503, json: { code: "gas_price_cap" } } }, 503, BUSY],
     [{ reply: { status: 429, json: { code: "rate_limited" } } }, 503, BUSY],
+    // batch 031 round 3 (A10): the relayer's temporary payer cooldown gets its own message, not "busy"
+    [{ reply: { status: 429, json: { code: "payer_cooldown", retry_after_s: 120 } } }, 429, /paused for about 2 minutes.*Nothing was charged/],
     [{ reply: { status: 403, json: {}, headers: { "x-vercel-mitigated": "challenge" } } }, 503, BUSY],
     [{ reply: { status: 502, json: { code: "rpc_error", txHash: TX } } }, 504, UNKNOWN],
     [{ throws: new Error("socket hang up") }, 504, UNKNOWN],
